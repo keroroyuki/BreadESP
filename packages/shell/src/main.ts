@@ -1,0 +1,40 @@
+// PRD: §4, §10 — Electron main entry. Hosts the Bridge and wires IPC handlers.
+// AI Agent: keep IPC channel naming prefixes per PRD §6.6 (sim:/fw:/dbg:/proj:/bb:/per:).
+import { app, BrowserWindow } from 'electron';
+import { join } from 'node:path';
+import { registerIpcHandlers } from './ipc/handlers.js';
+import { ProjectManager } from './project/ProjectManager.js';
+import { QemuRunner } from './qemu/QemuRunner.js';
+import { GdbBridge } from './debugger/GdbBridge.js';
+import { PeripheralManager } from './peripherals/PeripheralManager.js';
+import { registerBuiltins } from '@breadesp/peripherals';
+
+async function bootstrap() {
+  // Singletons shared across IPC handlers.
+  registerBuiltins();
+  const project = new ProjectManager();
+  const qemu = new QemuRunner();
+  const gdb = new GdbBridge();
+  const peripherals = new PeripheralManager();
+
+  await registerIpcHandlers({ project, qemu, gdb, peripherals });
+
+  await app.whenReady();
+  const win = new BrowserWindow({
+    width: 1280, height: 800,
+    webPreferences: {
+      preload: join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  // Dev: load Vite dev server; Prod: load built index.html.
+  if (process.env.VITE_DEV_SERVER_URL) {
+    await win.loadURL(process.env.VITE_DEV_SERVER_URL);
+  } else {
+    await win.loadFile(join(__dirname, '../../ui/dist/index.html'));
+  }
+}
+
+bootstrap().catch((err) => { console.error(err); process.exit(1); });
