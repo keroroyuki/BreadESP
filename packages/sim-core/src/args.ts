@@ -9,6 +9,8 @@ export interface QemuArgsInput {
   chip: ChipKind;
   /** GDB stub port to expose (e.g. 1234). */
   gdbPort?: number;
+  /** QMP control channel (TCP on loopback) so the Bridge can start/pause the VM. */
+  qmpPort?: number;
   /** DBus forward socket path (custom device -> Bridge). */
   dbusSocket?: string;
   /** Disable all networking (PRD §9 sandbox). */
@@ -21,12 +23,17 @@ export function buildQemuArgs(input: QemuArgsInput): string[] {
   const argv: string[] = [
     input.qemuBin,
     '-machine', machine,
-    '-drive', `file=${input.firmwareElf},if=mtdblock,format=raw,readonly=off`,
+    // espressif/qemu boots the ELF directly via -kernel: segments are loaded into
+    // memory and execution starts at the ELF entry. (-drive if=mtdblock is NOT
+    // supported by this build; if=mtd requires padded 2/4/8/16 MB flash images.)
+    '-kernel', input.firmwareElf,
     '-serial', 'stdio',                 // UART0 -> stdout (PRD §F-SER-1)
     '-nographic',
   ];
 
   if (input.gdbPort) argv.push('-gdb', `tcp::${input.gdbPort}`);
+  // QMP listens on TCP loopback (Node cannot reach AF_UNIX sockets on Windows).
+  if (input.qmpPort) argv.push('-qmp', `tcp:127.0.0.1:${input.qmpPort},server=on,wait=off`);
   if (input.noNetwork !== false) argv.push('-nic', 'none');   // PRD §9
   // DBus forward device: custom QEMU device that pipes bus traffic to a unix socket.
   // TODO(PRD §4.2): implement the device in packages/sim-core device source (C).
