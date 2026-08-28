@@ -1,0 +1,462 @@
+# BreadESP 开发计划与规范
+
+> 本文件是 BreadESP 项目的**执行手册**，配合 [`PRD.md`](../PRD.md)（需求真相源）使用。
+> PRD 回答"做什么"，本文件回答"怎么做、按什么顺序、按什么规范"。
+> AI Agent 在开始任一开发任务前 MUST 同时阅读 PRD 对应章节与本文件对应阶段。
+
+---
+
+## 目录
+1. [总体策略](#1-总体策略)
+2. [里程碑与阶段划分](#2-里程碑与阶段划分)
+3. [分阶段开发步骤](#3-分阶段开发步骤)
+4. [代码风格规范](#4-代码风格规范)
+5. [Git 提交规范](#5-git-提交规范)
+6. [分支与发布流程](#6-分支与发布流程)
+7. [测试规范](#7-测试规范)
+8. [文档规范](#8-文档规范)
+9. [AI Agent 协作规范](#9-ai-agent-协作规范)
+10. [注意事项与风险点](#10-注意事项与风险点)
+11. [环境与工具链](#11-环境与工具链)
+12. [验收检查清单](#12-验收检查清单)
+
+---
+
+## 1. 总体策略
+
+### 1.1 核心原则
+- **PRD 优先**：任何实现冲突以 PRD 为准；需求变更先改 PRD 再改代码。
+- **垂直切片**：每个阶段交付一条"端到端可演示"的最小链路，而非按层横切。
+- **契约先行**：接口（PRD §6）先冻结再实现，禁止"边写边定接口"。
+- **可测先行**：每个模块落地即配测试；无测试的代码视为未完成。
+- **二进制零入库**：QEMU/工具链一律按需拉取，仓库永不包含二进制。
+
+### 1.2 工程节奏
+- 以"阶段（Phase）→ 里程碑（Milestone）→ 任务（Task）"三级拆解。
+- 每个任务对应一个可独立提交的 PR/commit 组。
+- 每个里程碑结束做一次回归验证（跑 §12 验收清单）。
+
+---
+
+## 2. 里程碑与阶段划分
+
+| 阶段 | 名称 | 目标 | 预估 | 里程碑标志 |
+|---|---|---|---|---|
+| P0 | 技术验证 | QEMU-ESP32 跑通 blink，GDB 能接上 | 1–2 周 | `M0` |
+| P1 | MVP 核心 | 加载 ELF + LED/按键/OLED + 调试 + 串口 | 4–6 周 | `M1` |
+| P2 | 显示与音频 | ST7789 TFT + 蜂鸣器 + 喇叭(I2S) + 示波器 | 4–6 周 | `M2` |
+| P3 | 输入类外设 | 麦克风(I2S/ADC) + 旋钮 + 温湿度传感器 | 3–4 周 | `M3` |
+| P4 | 多芯片与工程化 | S3/C3/C6 + 项目管理 + PlatformIO 集成 | 4–6 周 | `M4` |
+| P5 | 生态与扩展 | 外设插件 SDK + 本地外设目录 + 文档站 | 持续 | `M5` |
+
+> 预估基于"AI 生成 + 人工审查"节奏；纯人工需 ×2–3。
+
+### 2.1 里程碑验收标志
+- **M0**：`blink.elf` 启动，UART 打印 `Hello`，GDB 断在 `app_main`。
+- **M1**：UI 拖拽 LED 连 GPIO2，OLED 显示固件绘制的文字，可断点单步。
+- **M2**：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
+- **M3**：麦克风波形注入后固件能读到采样值。
+- **M4**：切换芯片型号后同一工程可在 ESP32/S3 跑通。
+- **M5**：第三方包 `registerPeripheral()` 后 UI 自动出现新器件。
+
+---
+
+## 3. 分阶段开发步骤
+
+### Phase 0 — 技术验证（M0）
+
+**目标**：打通"固件 → QEMU → 串口 + GDB"最关键链路，验证可行性。
+
+| # | 任务 | 产物 | 验收 |
+|---|---|---|---|
+| 0.1 | 搭建 monorepo 与工具链 | 已有骨架，`pnpm install` 通过 | `pnpm typecheck` 0 错误 |
+| 0.2 | 实现 `scripts/fetch-qemu.mjs` 真实下载 | 按 host 解析 release 资产、校验 checksum | `qemu-system-xtensa --version` 可执行 |
+| 0.3 | 准备黄金固件 `blink.elf` + 测试用例 | `packages/sim-core/fixtures/blink.elf` | 文件存在且为 Xtensa ELF |
+| 0.4 | 实现 `QemuRunner.load/start` 真实启动 | stdout→uart 事件 | UART 收到 `Hello ESP32` |
+| 0.5 | 实现 `GdbBridge` 连接 + 断点 | `setBreakpoint('app_main')` | GDB 停在 app_main |
+| 0.6 | ELF 架构校验（e_machine==0x5a Xtensa） | `ProjectManager` 加载前校验 | 非目标 ELF 报错拒绝 |
+
+**禁止在 P0 做**：UI 美化、外设模型、网表校验扩展。
+
+### Phase 1 — MVP 核心（M1，对齐 PRD §8）
+
+**目标**：端到端可演示的虚拟面包板最小可用版。
+
+| # | 任务 | 产物 | 验收 |
+|---|---|---|---|
+| 1.1 | 补齐 preload↔handlers IPC 通道对齐 | `sim:load/onUart` 等 | 无"未注册通道"错误 |
+| 1.2 | 实现 QEMU 自定义设备 `breadesp-dbus`（C） | 独立 QEMU 构建产物 | 总线事务能序列化到 socket |
+| 1.3 | 实现 `DBusChannel` 帧协议（长度前缀 JSON） | Node 侧解析器 | 收到一条 I2C 事务 |
+| 1.4 | 实现 `NetlistResolver` I2C/GPIO 解析 | 按 address/pin 路由 | OLED 事务落到 oled1 |
+| 1.5 | 完善 `PeripheralManager` 路由 + 快照节流 | 30fps 上限 | UI 不卡顿 |
+| 1.6 | `ssd1306` 命令集补全（gfx 库常用路径） | 显存更新正确 | Adafruit_GFX demo 正常 |
+| 1.7 | `BreadboardCanvas` 拖拽放置 + 连线编辑 | 可视化连线 | 网表与布局分离持久化 |
+| 1.8 | 工程保存/加载（`.breadesp` 目录） | ProjectManager | 关闭重开恢复原样 |
+| 1.9 | 调试面板：断点/单步/变量/寄存器 | Inspector | 可看 `app_main` 局部变量 |
+| 1.10 | 串口控制台双向（输出+注入） | SerialConsole | 键入回车被固件读到 |
+
+**M1 回归**：跑 §12 的 M1 清单全部通过。
+
+### Phase 2 — 显示与音频（M2）
+
+| # | 任务 | 产物 |
+|---|---|---|
+| 2.1 | `st7789` SPI 命令解释 + rgb565 帧缓冲 | TFT 彩屏渲染 |
+| 2.2 | `TftRenderer`（rgb565→ImageData） | UI Canvas |
+| 2.3 | `buzzer` PWM 频率→WebAudio 方波 | 发声 |
+| 2.4 | `speaker` I2S PCM→WebAudio 播放 | 音频流 |
+| 2.5 | `Oscilloscope` 抓 GPIO/PWM/I2S 时序 | 波形面板 |
+| 2.6 | 仿真速度倍率 + 暂停/继续（QMP） | sim 控制 |
+
+### Phase 3 — 输入类外设（M3）
+
+| # | 任务 | 产物 |
+|---|---|---|
+| 3.1 | `mic` I2S 输入注入 | 固件读到采样 |
+| 3.2 | 本地麦克风采集→注入 | 实时输入 |
+| 3.3 | 波形生成器面板 | 正弦/方波/噪声 |
+| 3.4 | 旋钮、温湿度传感器模型 | 扩展外设集 |
+
+### Phase 4 — 多芯片与工程化（M4）
+
+| # | 任务 | 产物 |
+|---|---|---|
+| 4.1 | sim-core 支持 S3/C3/C6 machine 映射 | 多芯片 |
+| 4.2 | 工程向导（选芯片/选模板） | 新建流程 |
+| 4.3 | PlatformIO/IDF 工程关联（自动发现 build/*.elf） | 联动 |
+| 4.4 | 条件断点 / watchpoint | 调试增强 |
+| 4.5 | DAP 适配器（接入 VS Code） | 跨工具调试 |
+
+### Phase 5 — 生态与扩展（M5）
+
+| # | 任务 | 产物 |
+|---|---|---|
+| 5.1 | 外设插件 SDK 稳定化 + 版本化 | 第三方可扩展 |
+| 5.2 | 本地外设目录扫描 | 离线市场 |
+| 5.3 | 外设打包模板（脚手架） | 降低门槛 |
+| 5.4 | 文档站 + 教程 | 可用性 |
+
+---
+
+## 4. 代码风格规范
+
+### 4.1 总则
+- 语言：TypeScript（`strict: true`），C（QEMU 设备，遵循 QEMU 上游风格）。
+- UI 文案、日志、错误信息：英文。文档与注释：可中文。
+- 一切对外可复用类型/接口放包内 `types.ts`，禁止散落。
+
+### 4.2 命名
+- **文件**：`kebab-case.ts`；React 组件文件 `PascalCase.tsx`。
+- **类型/接口**：`PascalCase`，接口不加 `I` 前缀（`interface Peripheral` 非 `IPeripheral`）。
+- **函数/变量**：`camelCase`。
+- **常量**：`UPPER_SNAKE_CASE`。
+- **枚举**：`PascalCase` 类型名 + `PascalCase` 成员。
+- **私有字段**：前缀 `_` 仅用于与公开 API 区分时；其余用 `private`/`#`。
+- **事件/IPC 通道**：`域:动作` 小写（PRD §6.6，如 `sim:start`）。
+
+### 4.3 TypeScript 约束
+- 禁止 `any`；遇不确定用 `unknown` + 类型守卫。
+- 禁止 `// @ts-ignore`；必须用 `// @ts-expect-error: <原因>` 且附近有 TODO。
+- 禁止 `as` 断言除非边界（IPC 入参），且 MUST 注释为何安全。
+- 函数返回类型显式标注（公共 API）。
+- 优先 `interface` 描述对象形状，`type` 用于联合/映射。
+- 导入：统一 ESM `import`，禁用 `require`（C 代码除外）。
+- 路径：包间用 workspace 包名，包内用相对路径。
+
+### 4.4 React 约束
+- 函数组件 + Hooks，禁用 class 组件。
+- 状态：跨组件用 Zustand store；局部用 `useState`/`useReducer`。
+- 副作用：`useEffect` 依赖数组 MUST 完整，禁用空数组+闭包旧值。
+- 样式：内联 style 用于布局骨架，复用样式抽 `const`；M5 再评估 CSS-in-JS。
+- 列表 key：用业务 id（`instanceId`），禁用数组下标。
+
+### 4.5 格式化（硬约束）
+- 缩进：2 空格。
+- 引号：单引号（JS/TS）；C 遵循 QEMU 上游（Tab）。
+- 行尾：无分号结尾争议 → **统一加分号**。
+- 行宽：120。
+- 末尾换行：文件以一个 `\n` 结尾。
+- 工具：Prettier + ESLint（M0 配置完成）。
+
+### 4.6 注释
+- 文件头：`// PRD: §X.Y — <一句话职责>`。
+- TODO：`// TODO(PRD §X.Y): <动作>`，便于全局检索。
+- 公共 API：JSDoc 简述 + `@param`/`@returns`（仅当非显而易见时）。
+- 禁止"死代码注释"——删除即删，不留 `// 旧逻辑`。
+
+### 4.7 错误处理
+- 边界（IPC 入参、文件 IO、子进程）MUST try/catch 并产出可读错误。
+- 内部不变式用 `assert`/throw，禁用静默吞错。
+- 错误信息 MUST 含上下文（哪个 instanceId / 哪条事务）。
+- 用户可见错误用英文短句 + 错误码前缀（如 `[BB-001] ...`）。
+
+---
+
+## 5. Git 提交规范
+
+### 5.1 提交粒度
+- 一个 commit = 一个逻辑变更（一个任务或其子步骤）。
+- 禁止"杂项更新"巨型 commit；拆分到可单独 review。
+- 每个 commit 必须能独立通过 `pnpm typecheck`。
+
+### 5.2 Commit Message 格式（Conventional Commits + scope）
+
+```
+<type>(<scope>): <subject>
+
+<body 可选>
+
+<footer 可选>
+```
+
+- **type**：`feat | fix | refactor | docs | test | chore | build | ci | perf`
+- **scope**：包名或模块，如 `shell`、`ui`、`peripherals`、`sim-core`、`netlist`、`prd`、`docs`
+- **subject**：祈使句、英文、≤50 字符、首字母小写、末尾无句号
+- **body**：说明"为什么"（非"做了什么"），每行 ≤72 字符
+- **footer**：`Refs: PRD §X.Y`、`Breaking:`、`Closes #N`
+
+**示例**：
+```
+feat(peripherals): implement SSD1306 data write path
+
+Covers the Adafruit_GFX common draw path (page addressing mode).
+Command set is partial; full set deferred to M2.
+
+Refs: PRD §F-PER-3
+```
+
+```
+fix(shell): handle duplicate instanceId in PeripheralManager
+
+Previously applyNetlist leaked old instances on re-apply.
+```
+
+### 5.3 PRD 关联
+- 任何改动 PRD 契约（§6）或目录（§7）的 commit，footer MUST 含 `Breaking:` 与 `Refs: PRD §X.Y`，且 PRD 改动在**同一 commit 或其前序 commit**。
+
+### 5.4 禁止项
+- 禁止 `--no-verify` 跳过 hook。
+- 禁止提交二进制（QEMU/ELF 除外，ELF 进 fixtures）。
+- 禁止提交 `node_modules/`、`dist/`、`*.log`。
+- 禁止一个 commit 同时含"功能"与"格式化全文件"——拆开。
+
+---
+
+## 6. 分支与发布流程
+
+### 6.1 分支模型
+- `main`：稳定主干，始终可构建可演示。
+- `dev`：集成分支，PR 目标。
+- `feat/<scope>-<short>`：功能分支。
+- `fix/<scope>-<short>`：修复分支。
+- `release/vX.Y.Z`：发布分支。
+
+### 6.2 流程
+1. 从 `dev` 切功能分支。
+2. 每个任务一个或多个 commit，推送前本地跑 `pnpm typecheck && pnpm test`。
+3. PR 到 `dev`，CI 必须绿。
+4. 里程碑达成：`dev` → `main` 的 PR，打 tag `vX.Y.Z`（里程碑号）。
+
+### 6.3 版本号
+- 遵循 SemVer。
+- 0.x 期间：M0–M1 为 `0.1.x`，M2 为 `0.2.x`，依此类推。
+- 1.0：M4 完成、文档齐全、有集成测试覆盖。
+
+### 6.4 Tag 命名
+- `v0.1.0-m1`、`v0.2.0-m2`...里程碑发布用 `-mN` 后缀。
+
+---
+
+## 7. 测试规范
+
+### 7.1 测试分层
+- **单元**：纯函数/模型（peripherals、netlist、MiParser）。Vitest。
+- **集成**：跨包链路（DBusChannel↔PeripheralManager）。Vitest + mock QEMU。
+- **端到端**：真实 `blink.elf` 黄金用例，跑通断言 UART/快照。Node 脚本。
+
+### 7.2 覆盖目标
+- peripherals、netlist、MiParser：单元覆盖 ≥80%。
+- shell 的 QemuRunner/GdbBridge：集成测试用 mock 子进程。
+- 不强求 UI 组件测试（M5 再加）。
+
+### 7.3 测试风格
+- 文件：`<被测>.test.ts`，与源同目录或 `tests/` 下。
+- 命名：`describe('module', () => { it('does X when Y', ...) })`。
+- 断言用 `expect`；禁用 `toBeNull()` 滥用，优先正向断言。
+- 黄金固件路径：`packages/sim-core/fixtures/`，测试用相对路径引用。
+
+---
+
+## 8. 文档规范
+
+### 8.1 文档分两类
+- **契约文档**：`PRD.md`、`docs/architecture.md`、`docs/peripheral-sdk.md`。改动 = 破坏性变更，需 review。
+- **过程文档**：`docs/dev-plan.md`（本文件）、`CHANGELOG.md`、`README.md`。随代码演进。
+
+### 8.2 CHANGELOG
+- 维护 `CHANGELOG.md`（Keep a Changelog 格式）。
+- 每个 PR 在 `Unreleased` 段补一行，格式 `- <type>: <摘要> (#PR)`。
+
+### 8.3 AI 可读性
+- 所有文档用清晰标题层级 + 编号，便于 AI 定位。
+- 交叉引用用相对链接（`[PRD §6](../PRD.md#6-核心接口契约6)`）。
+- 代码示例 MUST 可粘贴运行（无伪代码）。
+
+---
+
+## 9. AI Agent 协作规范
+
+### 9.1 任务接洽
+- 收到任务先读 PRD 对应章节 + 本文件对应阶段，确认范围。
+- 范围外内容：**不做**，仅记 `TODO(PRD)` 留给后续，不擅自扩展。
+- 每个生成的文件头 MUST 注 `// PRD: §X.Y`。
+
+### 9.2 自检清单（每次提交前）
+- [ ] `pnpm typecheck` 0 错误
+- [ ] 新增/改动接口与 PRD §6 一致
+- [ ] 新文件落在 PRD §7 路径下
+- [ ] 无 `any`/`@ts-ignore`/`require`（C 除外）
+- [ ] 无二进制入库
+- [ ] 有对应测试或标注 `TODO`
+- [ ] commit message 符合 §5.2
+- [ ] 改动 PRD 的同步更新 PRD
+
+### 9.3 禁止行为
+- 禁止"顺便"重构未在本任务范围的代码。
+- 禁止引入未列在 PRD §5 的运行时依赖。
+- 禁止删除既有测试以让其通过。
+- 禁止在 commit 中混入多个无关变更。
+- 禁止用 `console.log` 留调试输出（用 `log()` 通道）。
+
+### 9.4 不确定时
+- 接口含糊 → 停下，先在 PRD 提 issue（注释 `// TODO(PRD §X.Y): 接口待澄清`），交付最小可运行实现。
+- 不得靠"猜测接口"推进。
+
+---
+
+## 10. 注意事项与风险点
+
+### 10.1 技术风险
+| 风险 | 触发 | 对策 |
+|---|---|---|
+| QEMU-ESP32 外设覆盖不全 | P1.2 实现 dbus 设备 | 自写设备模型；参考 Renode 模型可移植 |
+| Xtensa 指令边界 case | 调试偶发错位 | 锁定 QEMU 版本；黄金固件回归 |
+| I2S/ADC 音频同步抖动 | M2/M3 | 真实采样率时钟 + 缓冲；声明非实时 |
+| Konva 大量节点卡顿 | M2 屏幕多 | 帧缓冲直渲 Canvas，非逐图元 |
+| Electron contextIsolation 限制 | preload 暴露不全 | 所有跨进程走 preload 暴露 API，renderer 不直连 Node |
+
+### 10.2 流程风险
+- **范围蔓延**：严格按阶段任务表，新想法记入"未来工作"而非即做。
+- **契约漂移**：AI 改名 → §4.2 + §9.2 自检拦截。
+- **二进制污染**：`.gitignore` + hook 双保险。
+
+### 10.3 安全注意
+- QEMU 子进程 `-nic none`，禁用网络（PRD §9）。
+- ELF 加载前校验 `e_machine`，防恶意固件崩溃 QEMU。
+- Bridge 不执行任意外部命令；`spawn` 仅限配置的 qemu/gdb 路径。
+
+### 10.4 性能注意
+- 外设快照节流：同一 instanceId 同类型 ≤30fps。
+- DBus socket 帧批量合并：高频小事务合并为一帧。
+- UI 渲染用 `requestAnimationFrame`，禁止每事务触发 setState。
+
+---
+
+## 11. 环境与工具链
+
+### 11.1 开发依赖
+- Node ≥20，pnpm ≥9。
+- QEMU-ESP32：`scripts/fetch-qemu.mjs` 拉取。
+- GDB：`xtensa-esp32-elf-gdb`（随 ESP-IDF 提供，或单独安装）。
+- 编译固件：Arduino CLI 或 ESP-IDF（用户侧，非仓库依赖）。
+
+### 11.2 环境变量
+- `BREADESP_QEMU_BIN`：QEMU 二进制绝对路径（handlers 使用）。
+- `BREADESP_GDB_BIN`：GDB 二进制路径。
+- `VITE_DEV_SERVER_URL`：dev 模式 UI 加载地址（Electron main 使用）。
+- `BREADESP_LOG_DIR`：日志目录（默认 `~/.breadesp/logs`）。
+
+### 11.3 脚本命令
+| 命令 | 作用 |
+|---|---|
+| `pnpm install` | 安装依赖 |
+| `pnpm typecheck` | 全仓类型检查 |
+| `pnpm test` | 全仓测试 |
+| `pnpm fetch-qemu` | 下载 QEMU 二进制 |
+| `pnpm dev` | 启动 Electron + Vite dev |
+| `pnpm build` | 构建所有包 |
+
+---
+
+## 12. 验收检查清单
+
+### M0 清单
+- [ ] `pnpm install && pnpm typecheck` 通过
+- [ ] `pnpm fetch-qemu` 下载成功且可执行
+- [ ] `blink.elf` 启动后 UART 输出可见
+- [ ] GDB 断点命中 `app_main`
+- [ ] 非 Xtensa ELF 被拒绝加载
+- [ ] 无二进制入库（`git log --diff-filter=A -- '*.bin'` 为空）
+
+### M1 清单
+- [ ] UI 可拖拽 LED/按键/OLED 到画布
+- [ ] 可连线到 GPIO 并保存工程
+- [ ] LED 随 GPIO2 电平亮灭（blink）
+- [ ] OLED 渲染固件绘制文字
+- [ ] 按键点击注入 GPIO 输入被固件读取
+- [ ] 可设断点、单步、看全局变量
+- [ ] 串口可输出可注入
+- [ ] 关闭重开工程恢复原样
+- [ ] peripherals 单元测试通过
+
+### M2 清单
+- [ ] TFT 渲染 rgb565 彩图
+- [ ] 蜂鸣器按 PWM 频率发声
+- [ ] 喇叭播放 I2S 正弦波
+- [ ] 示波器显示 GPIO 波形
+- [ ] 仿真可暂停/继续/调速
+
+### M3 清单
+- [ ] 麦克风注入后固件读到采样
+- [ ] 本地麦克风实时输入可用
+- [ ] 波形生成器可选正弦/方波/噪声
+
+### M4 清单
+- [ ] 同一工程可在 ESP32 与 ESP32-S3 跑通
+- [ ] PlatformIO 工程 `build/*.elf` 自动被发现
+- [ ] 条件断点/watchpoint 可用
+- [ ] DAP 接入 VS Code 可调试
+
+### M5 清单
+- [ ] 第三方包 `registerPeripheral()` 后 UI 自动出现新器件
+- [ ] 外设打包脚手架可生成可发布包
+- [ ] 文档站与教程上线
+
+---
+
+## 附录 A：常用命令速查
+
+```bash
+# 初始化
+pnpm install
+pnpm fetch-qemu
+
+# 日常
+pnpm typecheck
+pnpm test
+pnpm dev
+
+# 单包
+pnpm --filter @breadesp/peripherals test
+
+# Lint（M0 配置后）
+pnpm lint
+pnpm format
+```
+
+## 附录 B：参考资料
+- QEMU-ESP32: https://github.com/espressif/qemu
+- ESP-IDF: https://docs.espressif.com/projects/esp-idf/
+- GDB Machine Interface: https://sourceware.org/gdb/current/onlinedocs/gdb/GDB_002fMI.html
+- Conventional Commits: https://www.conventionalcommits.org/
+- Wokwi（竞品参考）: https://wokwi.com/
