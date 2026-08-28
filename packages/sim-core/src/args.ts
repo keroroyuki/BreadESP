@@ -29,9 +29,14 @@ export function buildQemuArgs(input: QemuArgsInput): string[] {
     '-kernel', input.firmwareElf,
     '-serial', 'stdio',                 // UART0 -> stdout (PRD §F-SER-1)
     '-nographic',
+    // Freeze at reset: execution gates on QMP `cont` (QemuRunner.start()) or a
+    // GDB `continue` once the stub client attached — otherwise the guest runs to
+    // app_main before any debugger can arm breakpoints (PRD §F-SIM-1, F-DBG-1).
+    '-S',
   ];
 
-  if (input.gdbPort) argv.push('-gdb', `tcp::${input.gdbPort}`);
+  // Loopback only: the stub must not be reachable from other hosts (PRD §9 sandbox).
+  if (input.gdbPort) argv.push('-gdb', `tcp:127.0.0.1:${input.gdbPort}`);
   // QMP listens on TCP loopback (Node cannot reach AF_UNIX sockets on Windows).
   if (input.qmpPort) argv.push('-qmp', `tcp:127.0.0.1:${input.qmpPort},server=on,wait=off`);
   if (input.noNetwork !== false) argv.push('-nic', 'none');   // PRD §9

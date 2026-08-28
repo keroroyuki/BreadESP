@@ -34,9 +34,15 @@ describe('buildQemuArgs', () => {
     expect(argv).not.toContain('-nic');
   });
 
+  it('freezes the VM at reset (-S) so load() runs no guest code', () => {
+    const argv = buildQemuArgs(BASE);
+    expect(argv).toContain('-S');
+  });
+
   it('adds GDB stub and QMP listeners when ports are given', () => {
     const argv = buildQemuArgs({ ...BASE, gdbPort: 1234, qmpPort: 4321 });
-    expect(argv).toEqual(expect.arrayContaining(['-gdb', 'tcp::1234']));
+    // Stub binds loopback only (PRD §9 sandbox).
+    expect(argv).toEqual(expect.arrayContaining(['-gdb', 'tcp:127.0.0.1:1234']));
     expect(argv).toEqual(
       expect.arrayContaining(['-qmp', 'tcp:127.0.0.1:4321,server=on,wait=off']),
     );
