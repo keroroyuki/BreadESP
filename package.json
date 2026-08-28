@@ -1,0 +1,23 @@
+{
+  "name": "breadesp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ESP32 virtual breadboard simulator (PRD §1.1)",
+  "license": "MIT",
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "dev": "pnpm --filter @breadesp/shell dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "fetch-qemu": "node scripts/fetch-qemu.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  }
+}

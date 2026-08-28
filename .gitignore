@@ -1,0 +1,11 @@
+node_modules/
+.pnpm-store/
+dist/
+*.log
+.DS_Store
+
+# QEMU binaries fetched on demand (PRD §5, §10.6)
+packages/sim-core/bin/
+
+# Logs (PRD §9)
+*.breadesp/logs/

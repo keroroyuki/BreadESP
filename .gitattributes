@@ -1,0 +1,8 @@
+# Line endings: enforce LF everywhere (matches .prettierrc endOfLine: lf)
+* text=auto eol=lf
+
+# Binary artifacts (defensive; QEMU bin/ is git-ignored anyway)
+*.bin binary
+*.exe binary
+*.a binary
+*.tar.xz binary
