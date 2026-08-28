@@ -123,8 +123,10 @@ export class QemuRunner extends EventEmitter {
 
   /** Instruction-level single step needs the GDB bridge. */
   async step(): Promise<void> {
-    // TODO(PRD §F-SIM-1): implement via GDB/MI `-exec-step-instruction` in task P0.5.
-    throw new Error('[BB-105] single-step requires the GDB bridge (task P0.5)');
+    // TODO(PRD §F-SIM-1): route through GdbBridge `-exec-step-instruction` when
+    // the debug panel wires the IPC layer (dev-plan task 1.9); GdbBridge.step()
+    // provides the MI command since P0.5.
+    throw new Error('[BB-105] single-step requires the GDB bridge (dev-plan task 1.9)');
   }
 
   /** Stop the VM (reset back to idle). */
