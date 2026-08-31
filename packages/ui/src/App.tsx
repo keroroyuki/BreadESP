@@ -1,6 +1,7 @@
 // PRD: §4, §F-BB — Top-level layout. Three columns: palette | breadboard | inspector.
 import { useEffect } from 'react';
 import { useSimulationStore } from './store/simulationStore';
+import { useProjectStore } from './store/projectStore';
 import { bridge } from './ipc/bridge';
 import { BreadboardCanvas } from './components/Breadboard/BreadboardCanvas';
 import { Palette } from './components/Palette/Palette';
@@ -10,6 +11,7 @@ import { ScreenView } from './components/ScreenView/ScreenView';
 
 export function App() {
   const status = useSimulationStore((s) => s.status);
+  const netlist = useProjectStore((s) => s.netlist);
 
   useEffect(() => {
     // Subscribe to peripheral snapshots (Bridge -> UI).
@@ -17,6 +19,15 @@ export function App() {
     const unsubStatus = bridge.sim.onStatus((s) => useSimulationStore.getState().setStatus(s as never));
     return () => { unsubSnap(); unsubStatus(); };
   }, []);
+
+  useEffect(() => {
+    // UI edits the netlist -> Bridge rebuilds peripheral instances + routing
+    // (PRD §4.2 steps 1-2). Moving nodes only changes the layout, so this
+    // effect does not re-fire on drag (F-BB-4 separation).
+    bridge.bb.applyNetlist(netlist).catch((err) => {
+      console.error('[BB-UI] applyNetlist failed:', err);
+    });
+  }, [netlist]);
 
   return (
     <div style={layout}>
