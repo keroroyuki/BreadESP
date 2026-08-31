@@ -61,13 +61,27 @@ registerPeripheral(myLedFactory);
 - `waveform`：示波器用。
 - `text`：文本面板。
 
-## 5. 版本与兼容
+**节流约定**：`ctx.emitSnapshot` 经 `PeripheralManager` 按 `(instanceId, type)`
+做 30fps 上限节流（安静期首帧立即发射，窗口内 last-write-wins 合并，trailing 冲刷）。
+外设模型只需在每次状态变化时正常 emit，无需自己做去抖；UI 最终总能收敛到最新状态。
+
+## 5. 生命周期与 `dispose()`
+
+`Peripheral.dispose?()` 是可选方法，在以下时机被调用：
+
+- 网表重新应用（`applyNetlist`）——所有旧实例先被 dispose 再替换；
+- `PeripheralManager.dispose()` 整体拆除。
+
+实现 `dispose()` 用于释放定时器、解除事件订阅等资源；不实现则无副作用。
+注意：`applyNetlist` 是原子操作，新网表中任一实例创建失败时旧的实例与路由保持原样。
+
+## 6. 版本与兼容
 
 - `kind` 全局唯一；冲突时后注册者报错。
 - `version` 用语义化版本；破坏性改动 MUST 升 major。
 - 新增可选 `props` 向后兼容，无需升版本。
 
-## 6. 测试约定
+## 7. 测试约定
 
 每个外设 MUST 至少有一个单元测试（见 `packages/peripherals/tests/ssd1306.test.ts`），
 覆盖"收到一条典型事务 → 产生预期快照"的路径。

@@ -34,8 +34,32 @@ QEMU-ESP32 默认外设模型不全。我们在 QEMU 源码中新增一个 devic
 4. `NetlistResolver` 根据网表路由：I2C 按 7 位地址（`props.address`，缺省回退
    `factory.defaults.address`）；GPIO 按 `mcu.GPIO<n>` 连线（同一引脚多外设全收）。
    `PeripheralManager.route()` 只投递到解析出的实例，不再广播。
-5. `PeripheralManager` 调用 `oled1.onTransaction(tx)`。
-6. SSD1306 模型更新显存 → `ctx.emitSnapshot(pixels)` → 推送 UI Canvas 渲染。
+5. `PeripheralManager` 调用 `oled1.onTransaction(tx)`。单个外设模型抛错只记录
+   `[BB-201]` 日志（含 instanceId/事务上下文），不阻断同事务投递给其他实例。
+6. SSD1306 模型更新显存 → `ctx.emitSnapshot(pixels)` → 30fps 节流门（见 §3.1）
+   → `snapshot` 事件 → 推送 UI Canvas 渲染。
+
+### 3.1 快照节流（PRD §9 性能预算）
+
+高频总线事务（如 I2C 每毫秒刷屏）不能逐条直达 UI。`PeripheralManager` 对每个
+`(instanceId, snapshot type)` 维护一个节流槽，保证发射间隔 ≥ 1000/30 ms：
+
+- **前沿立即发射**：安静期后的第一帧快照立即发出，保证低延迟。
+- **窗口内合并**：距上次发射不足一个间隔的快照进入 pending（last-write-wins，
+  只保留最新状态），由定时器在窗口结束点冲刷。
+- **重置语义**：重新 `applyNetlist` 会重建所有实例并清空节流槽（含取消未触发的
+  trailing 冲刷），已销毁实例的陈旧 pending 永远不会到达 UI。
+- UI 端只需按 `instanceId` 应用最新快照即可收敛到正确状态。
+
+### 3.2 路由健壮性
+
+- **原子换网表**：`applyNetlist` 先在临时 map 中构建全部实例（重复 instanceId 报
+  `[BB-200]`、未知 kind 直接抛错），任何实例创建失败都会 dispose 掉半成品并保留
+  旧实例与旧路由，网表不会被部分应用。
+- **换表即换实例**：新网表提交前先 dispose 全部旧实例，防止旧模型持有失效状态。
+- **错误隔离**：`route()` 对每个目标的 `onTransaction` 单独 try/catch（见 §3 第 5 步）。
+- **可注入时钟**：节流窗口的时间源可从构造函数注入（默认 `Date.now`），测试用合成时钟
+  确定性验证 30fps 上限。
 
 ## 4. 调试链路
 
