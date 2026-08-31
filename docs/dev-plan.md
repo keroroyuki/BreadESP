@@ -85,8 +85,8 @@
 | # | 任务 | 产物 | 验收 | 状态 |
 |---|---|---|---|---|
 | 1.1 | 补齐 preload↔handlers IPC 通道对齐 | `sim:load/onUart` 等 | 无"未注册通道"错误 | 已完成 2026-08-31 |
-| 1.2 | 实现 QEMU 自定义设备 `breadesp-dbus`（C） | 独立 QEMU 构建产物 | 总线事务能序列化到 socket | 未开始 |
-| 1.3 | 实现 `DBusChannel` 帧协议（长度前缀 JSON） | Node 侧解析器 | 收到一条 I2C 事务 | 未开始 |
+| 1.2 | 实现 QEMU 自定义设备 `breadesp-dbus`（C） | 独立 QEMU 构建产物 | 总线事务能序列化到 socket | 已完成 2026-08-31 |
+| 1.3 | 实现 `DBusChannel` 帧协议（长度前缀 JSON） | Node 侧解析器 | 收到一条 I2C 事务 | 已完成 2026-08-31 |
 | 1.4 | 实现 `NetlistResolver` I2C/GPIO 解析 | 按 address/pin 路由 | OLED 事务落到 oled1 | 未开始 |
 | 1.5 | 完善 `PeripheralManager` 路由 + 快照节流 | 30fps 上限 | UI 不卡顿 | 未开始 |
 | 1.6 | `ssd1306` 命令集补全（gfx 库常用路径） | 显存更新正确 | Adafruit_GFX demo 正常 | 未开始 |
@@ -372,9 +372,13 @@ Previously applyNetlist leaked old instances on re-apply.
 
 ### 11.2 环境变量
 - `BREADESP_QEMU_BIN`：QEMU 二进制绝对路径（handlers 使用）。
+- `BREADESP_QEMU_DBUS_BIN`：带 `breadesp-dbus` 设备的 QEMU 二进制路径（e2e 测试门控）。
 - `BREADESP_GDB_BIN`：GDB 二进制路径。
 - `VITE_DEV_SERVER_URL`：dev 模式 UI 加载地址（Electron main 使用）。
 - `BREADESP_LOG_DIR`：日志目录（默认 `~/.breadesp/logs`）。
+- `BREADESP_DOCKER_MIRROR`：Docker Hub 镜像前缀（如 `docker.1ms.run/`，构建设备版 QEMU 时）。
+- `BREADESP_SUBPROJECT_MIRRORS`：QEMU meson wrap 子项目镜像模板列表（逗号分隔，`{name}` 占位）。
+- `BREADESP_MSYS2_DIR`：Windows MSYS2 根目录（默认 `C:\msys64`）。
 
 ### 11.3 脚本命令
 | 命令 | 作用 |
@@ -383,6 +387,8 @@ Previously applyNetlist leaked old instances on re-apply.
 | `pnpm typecheck` | 全仓类型检查 |
 | `pnpm test` | 全仓测试 |
 | `pnpm fetch-qemu` | 下载 QEMU 二进制 |
+| `node scripts/build-qemu-device.mjs [--target linux-docker\|windows-msys2]` | 构建 breadesp-dbus 设备版 QEMU |
+| `node scripts/make-blink-elf.mjs` / `make-i2c-elf.mjs` | 重新生成测试固件 |
 | `pnpm dev` | 启动 Electron + Vite dev |
 | `pnpm build` | 构建所有包 |
 
@@ -400,7 +406,7 @@ Previously applyNetlist leaked old instances on re-apply.
 
 > 验证记录（2026-08-31 复验）：`pnpm typecheck` 0 错误；全仓测试 73 通过 + 1 跳过，含真实 QEMU UART e2e（`qemu-uart.e2e.test.ts`）通过；GDB 断点 e2e 需设 `BREADESP_GDB_BIN`，已于 2026-08-29 对真实 QEMU + `xtensa-esp32-elf-gdb` 验证通过（见 CHANGELOG）；入库二进制仅 `fixtures/blink.elf`（§5.4 允许的 ELF fixture），无 `*.bin` 入库。
 
-### M1 清单（进行中，任务 1.1 已完成）
+### M1 清单（进行中，任务 1.1–1.3 已完成：IPC 对齐、breadesp-dbus 设备与独立 QEMU 构建、DBusChannel 帧协议；dbus e2e 已在真实 QEMU 上验证）
 - [ ] UI 可拖拽 LED/按键/OLED 到画布
 - [ ] 可连线到 GPIO 并保存工程
 - [ ] LED 随 GPIO2 电平亮灭（blink）

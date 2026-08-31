@@ -299,6 +299,21 @@ AI 生成 IPC 处理时 MUST 遵循命名前缀：
 
 所有 IPC 参数与返回 MUST 为 JSON 可序列化（Uint8Array 用 number[]）。
 
+### 6.7 DBus 帧协议（QEMU 自定义设备 → Bridge）
+`breadesp-dbus` 设备在 realize 时主动连接 Bridge 监听的 socket（TCP `host`/`port`，或 POSIX `socket` 路径），随后把拦截到的总线事务以长度前缀 JSON 帧推送：
+
+```
+frame   := <uint32 LE payload-length> <payload UTF-8>
+payload := {"v":1,"tx":[<tx>,...]};    // v=协议版本，tx=本帧批量事务
+tx      := {"kind":"i2c"|"gpio","bus":0,"target":<7bit addr|pin>,
+           "dir":"write","ts":<QEMU 虚拟时钟 ns>,"data":[byte,...]}
+```
+
+- `ts` 为 QEMU 虚拟时钟纳秒；DBusChannel 反序列化时换算为逻辑毫秒（§6.3 契约）。
+- 帧 MUST 以 bottom-half 批量冲刷（同一条指令触发的多笔事务进同一帧）。
+- 接收端 MUST 容错：畸形帧/版本不匹配直接丢弃，流继续；超长（>64MB）前缀断开连接。
+- 设备侧拦截策略：I2C 用通配从机（只 ACK 未被 QEMU 内建外设占用的地址）；GPIO 用 DPORT(0x3ff44000)/APB(0x60004000) 双基地址影子 MMIO，透传原始读写。
+
 ---
 
 ## 7. 目录结构（硬约束，§7）
@@ -312,7 +327,12 @@ my-idea/
 ├── tsconfig.base.json
 ├── .gitignore
 ├── scripts/
-│   └── fetch-qemu.mjs          # 按需下载 QEMU-ESP32 二进制
+│   ├── fetch-qemu.mjs          # 按需下载 QEMU-ESP32 二进制
+│   ├── build-qemu-device.mjs   # 构建 breadesp-dbus 设备版 QEMU（Docker Linux / MSYS2）
+│   ├── make-blink-elf.mjs      # 生成 blink.elf 金样固件
+│   ├── make-i2c-elf.mjs        # 生成 i2c.elf 固件（GPIO+I2C 事务）
+│   └── lib/
+│       └── xtensa-elf.mjs      # 共享 Xtensa 汇编器 + ELF32 写入器
 ├── docs/
 │   ├── architecture.md
 │   └── peripheral-sdk.md
@@ -385,10 +405,18 @@ my-idea/
     └── sim-core/             # QEMU 二进制占位 + 启动参数构造
         ├── package.json
         ├── tsconfig.json
-        ├── bin/               # gitignored，QEMU 二进制
-        └── src/
-            ├── args.ts        # 构造 QEMU 命令行
-            └── index.ts
+        ├── bin/               # gitignored，QEMU 二进制（含 qemu-breadesp/ 设备版）
+        ├── build/             # gitignored，QEMU 设备构建工作区（源码 checkout）
+        ├── device/
+        │   └── breadesp_dbus.c  # breadesp-dbus QEMU 自定义设备（§4.2, §6.7）
+        ├── fixtures/
+        │   ├── blink.elf        # 金样固件（make-blink-elf.mjs 生成）
+        │   └── i2c.elf          # GPIO+I2C 事务固件（make-i2c-elf.mjs 生成）
+        ├── src/
+        │   ├── args.ts        # 构造 QEMU 命令行（含 dbus 通道参数）
+        │   ├── elf.ts         # ELF 解析（入口/符号）
+        │   └── index.ts
+        └── tests/
 ```
 
 ---
