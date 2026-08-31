@@ -53,6 +53,10 @@ registerPeripheral(myLedFactory);
 > TODO(PRD §6.1): 基于 `pins[].role` 的连线合法性校验（如 i2c-sda 不能接到 gpio-out）在
 > 后续里程碑补齐。
 
+> UI 侧复用：面包板画布（`packages/ui`）直接读取 `factory.pins` 渲染引脚圆点并驱动
+> pin→pin 连线交互（渲染进程 import 本包的注册表），因此 `pins` 的 id/role/optional
+> 同时决定画布连线交互与 Bridge 侧路由语义。
+
 ## 4. 渲染快照（PRD §6.4）
 
 - `pixels`：帧缓冲（mono/rgb565/argb8888），UI 端按 format 解码到 Canvas。

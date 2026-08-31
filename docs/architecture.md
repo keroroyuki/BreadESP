@@ -106,3 +106,28 @@ any --error--> error
 - QEMU `-nic none` 禁用网络（PRD §9）。
 - ELF 加载前校验 e_machine 字段为 Xtensa（防加载非目标固件崩溃）。
 - Bridge 子进程以受限权限运行；不自动执行任何外部命令。
+
+## 8. 面包板编辑（UI 侧，P1.7）
+
+画布（`packages/ui` Konva Stage）上的编辑操作遵循"逻辑/视觉分离"（PRD §F-BB-4）：
+
+| 操作 | 改动的数据 | 是否下发 Bridge |
+|---|---|---|
+| 拖放放置外设 | `netlist.peripherals` + `layout.items` | 是（重建实例） |
+| 拖动移动节点 | 仅 `layout.items` | 否 |
+| pin → pin 连线 | 仅 `netlist.wires` | 是（重建路由） |
+| 删除节点 / 连线 | netlist（连带清理悬空连线） | 是 |
+
+- **两个持久化半区**：`netlist.json`（逻辑）与 `layout.json`（`{version:1, items:[{instanceId,x,y,kind}]}`，
+  与 `ProjectManager.newProject` 写出的形状一致）互不包含对方字段；store 提供独立序列化函数
+  （`toNetlistFile` / `toLayoutFile`），网表经任意编辑序列后始终通过 `validateNetlist`。
+- **变更下发**：`App` 以对象标识订阅 netlist，经 `bb:applyNetlist` 让 `PeripheralManager`
+  原子重建实例与路由（PRD §4.2 步骤 1–2）；移动节点不改变 netlist 标识，因此拖动不触发重建。
+- **pin 锚点单一来源**：`components/Breadboard/pinLayout.ts` 纯函数把 Wire 端点换算为画布坐标，
+  引脚圆点与连线贝塞尔共享同一公式，永不漂移；pin 元数据直接复用 `@breadesp/peripherals`
+  的 `factory.pins`（渲染进程 import 纯 TS 注册表）。
+- **连线约束（MVP）**：UI 仅允许 外设 pin ↔ MCU GPIO 连线（外设↔外设不可路由，见 §3）；
+  自环与重复连线（含端点对调）在 store 层拒绝；删除实例时其连线一并移除，避免悬空端点。
+- **id 确定性**：实例与连线 id 用 `prefix-<最小可用序号>` 生成，加载已有工程后不冲突。
+- MCU 节点固定在画布左侧，暴露 ESP32 可用 GPIO（6-11/20/24/28-31 为 flash/不存在，不显示）；
+  画布内 LED 由 `level` 快照实时点亮，按键按压经 `per:driveInput` 注入。
