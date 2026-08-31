@@ -1,6 +1,8 @@
 // PRD: §6.6 — Secure preload bridge. Exposes a typed API to the renderer.
 // All IPC parameters/returns are JSON-serializable (PRD §6.6).
 import { contextBridge, ipcRenderer } from 'electron';
+import type { LayoutFile, Netlist } from '@breadesp/netlist';
+import type { ProjectData } from './project/ProjectManager.js';
 
 /** DBus forward channel — mirrors QemuDbusChannel in sim-core (PRD §6.7). */
 export interface SimDbusChannel {
@@ -59,10 +61,12 @@ const api = {
   },
   // proj:*
   proj: {
-    new: (p: unknown) => ipcRenderer.invoke('proj:new', p),
-    open: (p: unknown) => ipcRenderer.invoke('proj:open', p),
-    save: (p: unknown) => ipcRenderer.invoke('proj:save', p),
-    saveAs: (p: unknown) => ipcRenderer.invoke('proj:saveAs', p),
+    new: (p: { dir: string }) => ipcRenderer.invoke('proj:new', p),
+    // IPC boundary: invoke is untyped over the wire; the main side validates
+    // the whole project before returning it (openProject), so this is safe.
+    open: (p: { dir: string }) => ipcRenderer.invoke('proj:open', p) as Promise<ProjectData>,
+    save: (p: { netlist: Netlist; layout: LayoutFile }) => ipcRenderer.invoke('proj:save', p),
+    saveAs: (p: { dir: string; netlist: Netlist; layout: LayoutFile }) => ipcRenderer.invoke('proj:saveAs', p),
     close: () => ipcRenderer.invoke('proj:close'),
   },
   // bb:*

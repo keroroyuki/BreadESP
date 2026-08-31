@@ -1,11 +1,21 @@
 // PRD: §6.6 — Thin typed wrapper around window.breadesp (exposed by preload.ts).
 // Renderer never touches Node directly.
+import type { LayoutFile, Netlist } from '@breadesp/netlist';
 
 /** DBus forward channel — mirrors SimDbusChannel in shell/src/preload.ts (PRD §6.7). */
 interface SimDbusChannel {
   socket?: string;
   host?: string;
   port?: number;
+}
+
+/** ProjectData — mirrors ProjectManager in shell/src/project/ProjectManager.ts (PRD §F-PROJ-1). */
+interface ProjectData {
+  dir: string;
+  meta: { version: 1; createdAt: number; updatedAt: number };
+  netlist: Netlist;
+  layout: LayoutFile;
+  firmwareElf: string | null;
 }
 
 /** Payload of `sim:load` — mirrors shell/src/preload.ts (PRD §6.6). */
@@ -40,9 +50,9 @@ interface BridgeApi {
   };
   proj: {
     new: (p: { dir: string }) => Promise<void>;
-    open: (p: { dir: string }) => Promise<unknown>;
-    save: (p: { netlist: unknown }) => Promise<void>;
-    saveAs: (p: { dir: string; netlist: unknown }) => Promise<void>;
+    open: (p: { dir: string }) => Promise<ProjectData>;
+    save: (p: { netlist: Netlist; layout: LayoutFile }) => Promise<void>;
+    saveAs: (p: { dir: string; netlist: Netlist; layout: LayoutFile }) => Promise<void>;
     close: () => Promise<void>;
   };
   bb: { applyNetlist: (p: unknown) => Promise<void>; getNetlist: () => Promise<unknown>; };

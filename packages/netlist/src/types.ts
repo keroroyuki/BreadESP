@@ -33,3 +33,22 @@ export interface Netlist {
 
 /** Sentinel instanceId representing the MCU itself. */
 export const MCU_INSTANCE_ID = 'mcu' as const;
+
+// PRD: §F-BB-4, §F-PROJ-1 — layout.json types (the visual half of board
+// persistence). Coordinates live here and ONLY here: netlist.json never
+// carries positions, layout.json never carries wiring. Shared by the shell
+// (disk read/write in ProjectManager) and the UI (store/serialization).
+
+/** One placed peripheral on the canvas (visual only). */
+export interface LayoutItem {
+  instanceId: string;
+  x: number;
+  y: number;
+  kind: string;
+}
+
+/** On-disk layout.json shape. */
+export interface LayoutFile {
+  version: 1;
+  items: LayoutItem[];
+}

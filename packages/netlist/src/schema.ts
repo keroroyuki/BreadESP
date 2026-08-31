@@ -27,3 +27,16 @@ export const netlistSchema = z.object({
   peripherals: z.array(peripheralInstanceSchema),
   wires: z.array(wireSchema),
 });
+
+// PRD: §F-BB-4, §F-PROJ-1 — layout.json schema (visual half; mirrors types.ts).
+export const layoutItemSchema = z.object({
+  instanceId: z.string().min(1),
+  x: z.number().finite(),
+  y: z.number().finite(),
+  kind: z.string().min(1),
+});
+
+export const layoutSchema = z.object({
+  version: z.literal(1),
+  items: z.array(layoutItemSchema),
+});

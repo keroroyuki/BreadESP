@@ -3,8 +3,7 @@
 // coordinates, and this module is the single place translating a wire endpoint
 // into canvas coordinates, so rendered pins and wire anchors can never drift.
 import { getFactory, registerBuiltins, type PinDescriptor } from '@breadesp/peripherals';
-import { MCU_INSTANCE_ID, type Wire, type WireEndpoint } from '@breadesp/netlist';
-import type { LayoutItem } from '../../store/projectStore';
+import { MCU_INSTANCE_ID, type LayoutItem, type Wire, type WireEndpoint } from '@breadesp/netlist';
 
 /** Peripheral node box size (visual only — PRD §F-BB-4). */
 export const NODE_W = 150;

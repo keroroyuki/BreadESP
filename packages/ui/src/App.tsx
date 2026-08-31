@@ -6,6 +6,7 @@ import { bridge } from './ipc/bridge';
 import { BreadboardCanvas } from './components/Breadboard/BreadboardCanvas';
 import { Palette } from './components/Palette/Palette';
 import { Inspector } from './components/Inspector/Inspector';
+import { ProjectToolbar } from './components/ProjectToolbar/ProjectToolbar';
 import { SerialConsole } from './components/SerialConsole/SerialConsole';
 import { ScreenView } from './components/ScreenView/ScreenView';
 
@@ -35,6 +36,7 @@ export function App() {
         <strong>BreadESP</strong>
         <span style={{ marginLeft: 12 }}>sim: {status}</span>
       </header>
+      <ProjectToolbar />
       <div style={main}>
         <Palette />
         <BreadboardCanvas />

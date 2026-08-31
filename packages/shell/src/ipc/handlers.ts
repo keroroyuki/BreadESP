@@ -1,5 +1,6 @@
 // PRD: §6.6 — IPC handler registration. Bridges renderer calls to Bridge services.
 import { ipcMain, type BrowserWindow } from 'electron';
+import type { LayoutFile, Netlist } from '@breadesp/netlist';
 import type { ProjectManager } from '../project/ProjectManager.js';
 import type { QemuRunner } from '../qemu/QemuRunner.js';
 import type { GdbBridge } from '../debugger/GdbBridge.js';
@@ -47,12 +48,16 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   // proj:*
   ipcMain.handle('proj:new', async (_e, p: { dir: string }) => project.newProject(p.dir));
   ipcMain.handle('proj:open', async (_e, p: { dir: string }) => project.openProject(p.dir));
-  ipcMain.handle('proj:save', async (_e, p: { netlist: unknown }) => project.saveNetlist(p.netlist as never));
-  ipcMain.handle('proj:saveAs', async (_e, p: { dir: string; netlist: unknown }) => {
+  // IPC boundary: payloads arrive as plain JSON data; saveProject re-validates
+  // both halves before anything is written (PRD §6.6).
+  ipcMain.handle('proj:save', async (_e, p: { netlist: Netlist; layout: LayoutFile }) =>
+    project.saveProject(p.netlist, p.layout));
+  ipcMain.handle('proj:saveAs', async (_e, p: { dir: string; netlist: Netlist; layout: LayoutFile }) => {
     await project.newProject(p.dir);
-    await project.saveNetlist(p.netlist as never);
+    await project.saveProject(p.netlist, p.layout);
   });
   ipcMain.handle('proj:close', async () => project.close());
+  // TODO(PRD §F-PROJ-1): expose project.importFirmware once the firmware-picking UI lands.
 
   // bb:*
   ipcMain.handle('bb:applyNetlist', async (_e, p: unknown) => peripherals.applyNetlist(p as never));

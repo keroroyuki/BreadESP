@@ -5,20 +5,7 @@
 // layout.json, PRD §F-PROJ-1); App forwards netlist edits to the Bridge via
 // `bb:applyNetlist` so peripheral instances and routing follow the logic half.
 import { create } from 'zustand';
-import type { Netlist, WireEndpoint } from '@breadesp/netlist';
-
-export interface LayoutItem {
-  instanceId: string;
-  x: number;
-  y: number;
-  kind: string;
-}
-
-/** On-disk layout.json shape (PRD §F-BB-4: visual only, never wiring). */
-export interface LayoutFile {
-  version: 1;
-  items: LayoutItem[];
-}
+import type { LayoutFile, LayoutItem, Netlist, WireEndpoint } from '@breadesp/netlist';
 
 const EMPTY_NETLIST: Netlist = { version: 1, chip: 'esp32', peripherals: [], wires: [] };
 
@@ -29,6 +16,10 @@ interface ProjectState {
   setDir: (dir: string) => void;
   setNetlist: (netlist: Netlist) => void;
   setLayout: (items: LayoutItem[]) => void;
+  /** Hydrate both halves from a Bridge-validated opened project (PRD §F-PROJ-2). */
+  loadProject: (p: { dir: string; netlist: Netlist; layout: LayoutFile }) => void;
+  /** New/close: empty halves, optionally pointing at a fresh skeleton dir. */
+  resetProject: (dir: string | null) => void;
   addPeripheral: (kind: string, x: number, y: number) => string;
   movePeripheral: (instanceId: string, x: number, y: number) => void;
   removePeripheral: (instanceId: string) => void;
@@ -54,6 +45,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   setDir: (dir) => set({ dir }),
   setNetlist: (netlist) => set({ netlist }),
   setLayout: (items) => set({ layout: items }),
+  loadProject: (p) => set({ dir: p.dir, netlist: p.netlist, layout: p.layout.items }),
+  resetProject: (dir) => set({ dir, netlist: EMPTY_NETLIST, layout: [] }),
 
   addPeripheral: (kind, x, y) => {
     const { netlist, layout } = get();
