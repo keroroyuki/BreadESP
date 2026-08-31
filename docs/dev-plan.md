@@ -53,7 +53,7 @@
 
 ### 2.1 里程碑验收标志
 - **M0**（已达成 2026-08-31）：`blink.elf` 启动，UART 打印 `Hello`，GDB 断在 `app_main`。
-- **M1**（进行中，任务 1.1 已完成）：UI 拖拽 LED 连 GPIO2，OLED 显示固件绘制的文字，可断点单步。
+- **M1**（进行中，任务 1.1–1.6 已完成）：UI 拖拽 LED 连 GPIO2，OLED 显示固件绘制的文字，可断点单步。
 - **M2**（未开始）：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
 - **M3**（未开始）：麦克风波形注入后固件能读到采样值。
 - **M4**（未开始）：切换芯片型号后同一工程可在 ESP32/S3 跑通。
@@ -89,7 +89,7 @@
 | 1.3 | 实现 `DBusChannel` 帧协议（长度前缀 JSON） | Node 侧解析器 | 收到一条 I2C 事务 | 已完成 2026-08-31 |
 | 1.4 | 实现 `NetlistResolver` I2C/GPIO 解析 | 按 address/pin 路由 | OLED 事务落到 oled1 | 已完成 2026-08-31 |
 | 1.5 | 完善 `PeripheralManager` 路由 + 快照节流 | 30fps 上限 | UI 不卡顿 | 已完成 2026-08-31 |
-| 1.6 | `ssd1306` 命令集补全（gfx 库常用路径） | 显存更新正确 | Adafruit_GFX demo 正常 | 未开始 |
+| 1.6 | `ssd1306` 命令集补全（gfx 库常用路径） | 显存更新正确 | Adafruit_GFX demo 正常 | 已完成 2026-08-31 |
 | 1.7 | `BreadboardCanvas` 拖拽放置 + 连线编辑 | 可视化连线 | 网表与布局分离持久化 | 未开始 |
 | 1.8 | 工程保存/加载（`.breadesp` 目录） | ProjectManager | 关闭重开恢复原样 | 未开始 |
 | 1.9 | 调试面板：断点/单步/变量/寄存器 | Inspector | 可看 `app_main` 局部变量 | 未开始 |
@@ -406,7 +406,7 @@ Previously applyNetlist leaked old instances on re-apply.
 
 > 验证记录（2026-08-31 复验）：`pnpm typecheck` 0 错误；全仓测试 73 通过 + 1 跳过，含真实 QEMU UART e2e（`qemu-uart.e2e.test.ts`）通过；GDB 断点 e2e 需设 `BREADESP_GDB_BIN`，已于 2026-08-29 对真实 QEMU + `xtensa-esp32-elf-gdb` 验证通过（见 CHANGELOG）；入库二进制仅 `fixtures/blink.elf`（§5.4 允许的 ELF fixture），无 `*.bin` 入库。
 
-### M1 清单（进行中，任务 1.1–1.5 已完成：IPC 对齐、breadesp-dbus 设备与独立 QEMU 构建、DBusChannel 帧协议、NetlistResolver I2C/GPIO 路由、PeripheralManager 路由健壮性 + 30fps 快照节流；dbus 与路由 e2e 已在真实 QEMU 上验证——OLED 事务落到 oled1，持续 1ms 事务流被压到 ≤30fps）
+### M1 清单（进行中，任务 1.1–1.6 已完成：IPC 对齐、breadesp-dbus 设备与独立 QEMU 构建、DBusChannel 帧协议、NetlistResolver I2C/GPIO 路由、PeripheralManager 路由健壮性 + 30fps 快照节流、SSD1306 命令集补全；dbus 与路由 e2e 已在真实 QEMU 上验证——OLED 事务落到 oled1，持续 1ms 事务流被压到 ≤30fps，Adafruit_GFX begin()+display() 帧路径显存更新正确）
 - [ ] UI 可拖拽 LED/按键/OLED 到画布
 - [ ] 可连线到 GPIO 并保存工程
 - [ ] LED 随 GPIO2 电平亮灭（blink）
