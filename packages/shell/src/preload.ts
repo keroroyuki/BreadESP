@@ -52,12 +52,34 @@ const api = {
   },
   // dbg:*
   dbg: {
+    connect: () => ipcRenderer.invoke('dbg:connect'),
+    disconnect: () => ipcRenderer.invoke('dbg:disconnect'),
+    status: () => ipcRenderer.invoke('dbg:status'),
     setBreakpoint: (p: unknown) => ipcRenderer.invoke('dbg:setBreakpoint', p),
     removeBreakpoint: (p: unknown) => ipcRenderer.invoke('dbg:removeBreakpoint', p),
+    clearBreakpoints: () => ipcRenderer.invoke('dbg:clearBreakpoints'),
+    listBreakpoints: () => ipcRenderer.invoke('dbg:listBreakpoints'),
     continue: () => ipcRenderer.invoke('dbg:continue'),
     step: () => ipcRenderer.invoke('dbg:step'),
+    stepOver: () => ipcRenderer.invoke('dbg:stepOver'),
     vars: () => ipcRenderer.invoke('dbg:vars'),
     regs: () => ipcRenderer.invoke('dbg:regs'),
+    evaluate: (p: { expr: string }) => ipcRenderer.invoke('dbg:evaluate', p),
+    onStopped: (cb: (info: unknown) => void) => {
+      const h = (_e: unknown, info: unknown) => cb(info);
+      ipcRenderer.on('dbg:stopped', h);
+      return () => ipcRenderer.removeListener('dbg:stopped', h);
+    },
+    onRunning: (cb: () => void) => {
+      const h = () => cb();
+      ipcRenderer.on('dbg:running', h);
+      return () => ipcRenderer.removeListener('dbg:running', h);
+    },
+    onExit: (cb: (code: number) => void) => {
+      const h = (_e: unknown, code: number) => cb(code);
+      ipcRenderer.on('dbg:exit', h);
+      return () => ipcRenderer.removeListener('dbg:exit', h);
+    },
   },
   // proj:*
   proj: {

@@ -27,6 +27,30 @@ interface SimLoadInput {
   dbus?: SimDbusChannel;
 }
 
+/** One row of the debug panel's breakpoint list — mirrors shell GdbBridge (PRD §F-DBG-1). */
+export interface BreakpointRow {
+  id: number;
+  address: string | null;
+  location: string | null;
+  enabled: boolean;
+}
+
+/** One frame variable — mirrors shell GdbBridge (PRD §F-DBG-3 局部变量). */
+export interface VarInfo {
+  name: string;
+  scope: 'arg' | 'local';
+  value: string | null;
+}
+
+/** Stop frame — mirrors shell GdbBridge StoppedInfo (PRD §F-DBG-2). */
+export interface StoppedInfo {
+  reason: string | null;
+  breakpointNumber?: string;
+  frame: { addr: string; func?: string; file?: string; line?: string } | null;
+  threadId: string | null;
+  stoppedThreads: string[];
+}
+
 interface BridgeApi {
   sim: {
     load: (p: SimLoadInput) => Promise<void>;
@@ -41,12 +65,22 @@ interface BridgeApi {
   };
   fw: { load: (p: unknown) => Promise<void>; listSymbols: () => Promise<unknown[]>; };
   dbg: {
-    setBreakpoint: (p: { at: string }) => Promise<unknown>;
+    connect: () => Promise<{ connected: boolean }>;
+    disconnect: () => Promise<void>;
+    status: () => Promise<{ connected: boolean }>;
+    setBreakpoint: (p: { at: string }) => Promise<{ id: number; address: string; enabled: boolean }>;
     removeBreakpoint: (p: { id: number }) => Promise<void>;
+    clearBreakpoints: () => Promise<void>;
+    listBreakpoints: () => Promise<BreakpointRow[]>;
     continue: () => Promise<void>;
     step: () => Promise<void>;
-    vars: () => Promise<Record<string, unknown>>;
-    regs: () => Promise<Record<string, unknown>>;
+    stepOver: () => Promise<void>;
+    vars: () => Promise<VarInfo[]>;
+    regs: () => Promise<Record<string, string>>;
+    evaluate: (p: { expr: string }) => Promise<string>;
+    onStopped: (cb: (info: StoppedInfo) => void) => () => void;
+    onRunning: (cb: () => void) => () => void;
+    onExit: (cb: (code: number) => void) => () => void;
   };
   proj: {
     new: (p: { dir: string }) => Promise<void>;

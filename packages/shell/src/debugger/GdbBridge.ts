@@ -14,6 +14,24 @@ import { parseMiLine, type MiRecord, type MiTuple, type MiValue } from './MiPars
 
 export interface BreakpointInfo { id: number; address: string; enabled: boolean; }
 
+/** One row of the debug panel's breakpoints list (PRD §F-DBG-1). */
+export interface BreakpointRow {
+  id: number;
+  address: string | null;
+  /** Original location as entered, e.g. "app_main" or "*0x40080048". */
+  location: string | null;
+  enabled: boolean;
+}
+
+/** One frame variable of the current stop (PRD §F-DBG-3: 局部变量). */
+export interface VarInfo {
+  name: string;
+  /** 'arg' when GDB flags it as an argument, otherwise 'local'. */
+  scope: 'arg' | 'local';
+  /** GDB's rendering of the value; null when not evaluated (complex type). */
+  value: string | null;
+}
+
 export interface FrameInfo {
   addr: string;
   func?: string;
@@ -135,6 +153,94 @@ export class GdbBridge extends EventEmitter {
     await this.send('-exec-step-instruction');
   }
 
+  /** Step over the next instruction (PRD §F-DBG-2 单步跨过). */
+  async stepOver(): Promise<void> {
+    await this.send('-exec-next-instruction');
+  }
+
+  /**
+   * Frame variables of the current stop (PRD §F-DBG-3 局部变量) via
+   * `-stack-list-variables --simple-values`; complex-typed entries arrive
+   * name-only. Requires DWARF for the containing function (fixtures since P1.9).
+   */
+  async vars(): Promise<VarInfo[]> {
+    const rec = await this.send('-stack-list-variables --simple-values');
+    const list = asList(rec.payload?.variables);
+    return list.map((entry) => {
+      const t = asRecord(entry);
+      return {
+        name: miString(t.name),
+        scope: miString(t.arg) === '1' ? 'arg' : 'local',
+        value: t.value !== undefined ? miString(t.value) : null,
+      };
+    });
+  }
+
+  /**
+   * All target registers as `name -> hex value` (PRD §F-DBG-3 寄存器).
+   * `-data-list-register-names` and `-data-list-register-values x` share the
+   * same index space; empty name slots are skipped.
+   */
+  async regs(): Promise<Record<string, string>> {
+    const namesRec = await this.send('-data-list-register-names');
+    const names = asList(namesRec.payload?.['register-names']).map(miString);
+    const valuesRec = await this.send('-data-list-register-values x');
+    const values = new Map<number, string>();
+    for (const entry of asList(valuesRec.payload?.['register-values'])) {
+      const t = asRecord(entry);
+      values.set(Number(miString(t.number)), miString(t.value));
+    }
+    const regs: Record<string, string> = {};
+    names.forEach((name, i) => {
+      if (name === '') return;
+      const v = values.get(i);
+      if (v !== undefined) regs[name] = v;
+    });
+    return regs;
+  }
+
+  /**
+   * Evaluate one expression in the current frame context (PRD §F-DBG-3 全局变量:
+   * globals/memory like `led_state` or `*(unsigned int*)0x3ff44004`).
+   */
+  async evaluate(expr: string): Promise<string> {
+    const quoted = `"${expr.replace(/"/g, '\\"')}"`;
+    const rec = await this.send(`-data-evaluate-expression ${quoted}`);
+    return miString(rec.payload?.value);
+  }
+
+  /** Current breakpoints from `-break-list` (PRD §F-DBG-1). */
+  async listBreakpoints(): Promise<BreakpointRow[]> {
+    const rec = await this.send('-break-list');
+    // MI shape: ^done,BreakpointTable={nr_rows="1",...,body=[bkpt={...}]} —
+    // `body` lives INSIDE BreakpointTable (wire-verified against esp-gdb 16.3).
+    const table = asRecord(rec.payload?.BreakpointTable);
+    const body = asList(table.body);
+    return body.map((entry) => {
+      const bkpt = asRecord(asRecord(entry).bkpt);
+      return {
+        id: Number(bkpt.number),
+        address: bkpt.addr !== undefined ? miString(bkpt.addr) : null,
+        location: bkpt['original-location'] !== undefined ? miString(bkpt['original-location']) : null,
+        enabled: miString(bkpt.enabled) !== 'n',
+      };
+    });
+  }
+
+  /**
+   * Delete every breakpoint (PRD §F-DBG-1 清空断点). MI's `-break-delete`
+   * rejects an empty argument list, so the ids are enumerated first.
+   */
+  async clearBreakpoints(): Promise<void> {
+    const ids = (await this.listBreakpoints()).map((b) => b.id);
+    if (ids.length > 0) await this.send(`-break-delete ${ids.join(' ')}`);
+  }
+
+  /** Whether a GDB process is attached and alive (IPC dbg:status, P1.9). */
+  isConnected(): boolean {
+    return this.proc !== null && !this.exited;
+  }
+
   /** Graceful shutdown: `-gdb-exit`, hard kill after a grace period. Idempotent. */
   async stop(): Promise<void> {
     const proc = this.proc;
@@ -151,10 +257,6 @@ export class GdbBridge extends EventEmitter {
       }
     });
   }
-
-  /** Request vars/regs (TODO: implement MI commands). */
-  async vars(): Promise<Record<string, unknown>> { /* TODO(PRD §F-DBG-3) */ return {}; }
-  async regs(): Promise<Record<string, unknown>> { /* TODO(PRD §F-DBG-3) */ return {}; }
 
   /** Send one tokenized MI command; resolves/rejects with its result record. */
   private send(cmd: string): Promise<MiRecord> {
@@ -272,6 +374,11 @@ function assertReadable(path: string, message: string): void {
 /** Narrow an MI value to a tuple, tolerating absent/malformed payloads. */
 function asRecord(v: MiValue | undefined): MiTuple {
   return v !== null && typeof v === 'object' && !Array.isArray(v) ? v as MiTuple : {};
+}
+
+/** Narrow an MI value to a list, tolerating absent/malformed payloads. */
+function asList(v: MiValue | undefined): MiValue[] {
+  return Array.isArray(v) ? v : [];
 }
 
 function miString(v: MiValue | undefined): string {

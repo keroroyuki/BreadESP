@@ -2,6 +2,7 @@
 import { useEffect } from 'react';
 import { useSimulationStore } from './store/simulationStore';
 import { useProjectStore } from './store/projectStore';
+import { useDebuggerStore } from './store/debuggerStore';
 import { bridge } from './ipc/bridge';
 import { BreadboardCanvas } from './components/Breadboard/BreadboardCanvas';
 import { Palette } from './components/Palette/Palette';
@@ -18,7 +19,11 @@ export function App() {
     // Subscribe to peripheral snapshots (Bridge -> UI).
     const unsubSnap = bridge.per.onSnapshot((s) => useSimulationStore.getState().applySnapshot(s as never));
     const unsubStatus = bridge.sim.onStatus((s) => useSimulationStore.getState().setStatus(s as never));
-    return () => { unsubSnap(); unsubStatus(); };
+    // Debugger pushes (dev-plan task P1.9): async stops refresh the panel.
+    const unsubStopped = bridge.dbg.onStopped((info) => useDebuggerStore.getState().onStop(info));
+    const unsubRunning = bridge.dbg.onRunning(() => useDebuggerStore.getState().onRunning());
+    const unsubExit = bridge.dbg.onExit((code) => useDebuggerStore.getState().onExit(code));
+    return () => { unsubSnap(); unsubStatus(); unsubStopped(); unsubRunning(); unsubExit(); };
   }, []);
 
   useEffect(() => {

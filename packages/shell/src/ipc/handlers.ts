@@ -25,7 +25,15 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   });
   ipcMain.handle('sim:start', async () => qemu.start());
   ipcMain.handle('sim:pause', async () => qemu.pause());
-  ipcMain.handle('sim:step', async () => qemu.step());
+  // Instruction-level stepping is a GDB stub capability (PRD §F-SIM-1 +
+  // §F-DBG-2): route through the bridge, which the debug panel attaches
+  // lazily via dbg:connect (dev-plan task P1.9).
+  ipcMain.handle('sim:step', async () => {
+    if (!gdb.isConnected()) {
+      throw new Error('[BB-105] single-step requires the debugger attached; call dbg:connect first');
+    }
+    return gdb.step();
+  });
   ipcMain.handle('sim:reset', async () => qemu.reset());
   ipcMain.handle('sim:status', async () => qemu.getStatus());
 
@@ -37,13 +45,35 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   });
   ipcMain.handle('fw:listSymbols', async () => { /* TODO(PRD §F-FW-4): via gdb info functions */ return []; });
 
-  // dbg:*
+  // dbg:* (dev-plan task P1.9 — debug panel surface, PRD §F-DBG-1..5)
+  // Connection is lazy: QemuRunner.load() always arms the GDB stub, the panel
+  // attaches at any time via dbg:connect with the port/ELF it remembers.
+  ipcMain.handle('dbg:connect', async () => {
+    if (gdb.isConnected()) return { connected: true }; // idempotent attach
+    const gdbPort = qemu.getGdbPort();
+    const firmwareElf = qemu.getFirmwareElf();
+    if (gdbPort === null || firmwareElf === null) {
+      throw new Error('[BB-115] no firmware loaded; call sim:load before attaching the debugger');
+    }
+    const gdbBin = process.env.BREADESP_GDB_BIN;
+    if (gdbBin === undefined) {
+      throw new Error('[BB-110] BREADESP_GDB_BIN is not set; cannot spawn xtensa-esp32-elf-gdb');
+    }
+    await gdb.start({ gdbBin, elfPath: firmwareElf, targetHost: '127.0.0.1', port: gdbPort });
+    return { connected: true };
+  });
+  ipcMain.handle('dbg:disconnect', async () => gdb.stop());
+  ipcMain.handle('dbg:status', async () => ({ connected: gdb.isConnected() }));
   ipcMain.handle('dbg:setBreakpoint', async (_e, p: { at: string }) => gdb.setBreakpoint(p.at));
   ipcMain.handle('dbg:removeBreakpoint', async (_e, p: { id: number }) => gdb.removeBreakpoint(p.id));
+  ipcMain.handle('dbg:clearBreakpoints', async () => gdb.clearBreakpoints());
+  ipcMain.handle('dbg:listBreakpoints', async () => gdb.listBreakpoints());
   ipcMain.handle('dbg:continue', async () => gdb.continue());
   ipcMain.handle('dbg:step', async () => gdb.step());
+  ipcMain.handle('dbg:stepOver', async () => gdb.stepOver());
   ipcMain.handle('dbg:vars', async () => gdb.vars());
   ipcMain.handle('dbg:regs', async () => gdb.regs());
+  ipcMain.handle('dbg:evaluate', async (_e, p: { expr: string }) => gdb.evaluate(p.expr));
 
   // proj:*
   ipcMain.handle('proj:new', async (_e, p: { dir: string }) => project.newProject(p.dir));
@@ -74,4 +104,9 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   // QemuRunner only emits 'error' when listened for; subscribing here also
   // keeps the message out of the 'log' fallback (dev-plan task P1.1).
   qemu.on('error', (err: Error) => deps.win?.webContents.send('sim:error', err.message));
+  // Debugger stop/run/exit pushes (dev-plan task P1.9): async stops (breakpoint
+  // hits, step ends) update the panel without a renderer poll.
+  gdb.on('stopped', (info: unknown) => deps.win?.webContents.send('dbg:stopped', info));
+  gdb.on('running', () => deps.win?.webContents.send('dbg:running'));
+  gdb.on('exit', (code: number) => deps.win?.webContents.send('dbg:exit', code));
 }

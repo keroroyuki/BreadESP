@@ -81,6 +81,7 @@ export class Program {
     this.base = base;
     this.literals = new Map(); // name -> number | (addrOf) => number, pool order
     this.strings = new Map();  // name -> Buffer, placed after the word literals
+    this.dataBlobs = new Map(); // name -> Buffer, placed after the strings (writable)
     this.items = []; // { kind: 'insn' | 'label', ... }
   }
 
@@ -95,6 +96,17 @@ export class Program {
   string(name, bytes) {
     if (this.strings.has(name)) throw new Error(`[BB-002] duplicate string ${name}`);
     this.strings.set(name, bytes);
+    return name;
+  }
+
+  /**
+   * Add a writable data blob (e.g. a global variable's home) after the string
+   * blobs; its address is resolvable by name via literal callbacks and
+   * `addressOf` after assemble().
+   */
+  data(name, bytes) {
+    if (this.dataBlobs.has(name)) throw new Error(`[BB-002] duplicate data ${name}`);
+    this.dataBlobs.set(name, bytes);
     return name;
   }
 
@@ -122,11 +134,18 @@ export class Program {
       poolBytes.push(...bytes);
       off += bytes.length;
     }
-    if (this.strings.size > 0) {
+    if (this.strings.size > 0 || this.dataBlobs.size > 0) {
       while (off % 4 !== 0) {
         poolBytes.push(0);
         off += 1;
       }
+    }
+    for (const [name, bytes] of this.dataBlobs) {
+      if (off % 4 !== 0) throw new Error(`[BB-002] data blob ${name} not 4-byte aligned`);
+      if (bytes.length % 4 !== 0) throw new Error(`[BB-002] data blob ${name} must be padded to a word multiple`);
+      litAddr.set(name, this.base + off);
+      poolBytes.push(...bytes);
+      off += bytes.length;
     }
     const addrOf = (name) => {
       if (!litAddr.has(name)) throw new Error(`[BB-002] unresolved symbol ${name}`);
@@ -229,21 +248,44 @@ export class Program {
 
     this.image = Buffer.from([...poolBytes, ...codeBytes]);
     this.listing = listing;
+    this.labelAddr = labelAddr;
+    this.poolAddr = litAddr;
     this.symbols = [
       { name: '_start', value: labelAddr.get('_start'), size: labelAddr.get('app_main') - labelAddr.get('_start') },
       { name: 'app_main', value: labelAddr.get('app_main'), size: endAddr - labelAddr.get('app_main') },
     ];
     return this;
   }
+
+  /**
+   * Final address of a label, literal, string or data blob by name.
+   * Valid only after assemble().
+   */
+  addressOf(name) {
+    if (this.labelAddr === undefined || this.poolAddr === undefined) {
+      throw new Error('[BB-002] addressOf() requires assemble() first');
+    }
+    if (this.poolAddr.has(name)) return this.poolAddr.get(name);
+    if (this.labelAddr.has(name)) return this.labelAddr.get(name);
+    throw new Error(`[BB-002] unresolved symbol ${name}`);
+  }
 }
 
 /**
  * ELF32 (LSB, EM_XTENSA=94, ET_EXEC) writer.
- * Layout: ehdr | phdr | pad | PT_LOAD image | .strtab | .symtab | .shstrtab | section table.
+ * Layout: ehdr | phdr | pad | PT_LOAD image | .strtab | .symtab | .shstrtab |
+ * extra sections (e.g. .debug_*) | section table.
+ *
+ * Symbols may carry `type: 'object'` (STT_OBJECT, e.g. globals) instead of the
+ * default 'func'. `extraSections` is a list of `{ name, data, addr? }` non-alloc
+ * SHT_PROGBITS sections appended after .shstrtab.
  */
-export function buildElf(base, image, entry, symbols) {
+export function buildElf(base, image, entry, symbols, extraSections = []) {
   const align = (n, a) => (n + a - 1) & ~(a - 1);
-  const shstr = Buffer.from('\0.text\0.symtab\0.strtab\0.shstrtab\0', 'ascii');
+  const shstr = Buffer.from(
+    '\0.text\0.symtab\0.strtab\0.shstrtab\0' + extraSections.map((s) => `${s.name}\0`).join(''),
+    'ascii',
+  );
   const shstrOff = (name) => shstr.indexOf(`\0${name}\0`) + 1;
 
   let strTab = Buffer.from([0]);
@@ -261,8 +303,13 @@ export function buildElf(base, image, entry, symbols) {
   cursor = symTabOff + (symbols.length + 1) * 16;
   const shstrOff2 = align(cursor, 4);
   cursor = shstrOff2 + shstr.length;
+  const extraOffs = extraSections.map((s) => {
+    const o = align(cursor, 4);
+    cursor = o + s.data.length;
+    return o;
+  });
   const shOff = align(cursor, 4);
-  const total = shOff + 5 * 40;
+  const total = shOff + (5 + extraSections.length) * 40;
 
   const buf = Buffer.alloc(total);
   // ELF header.
@@ -281,7 +328,7 @@ export function buildElf(base, image, entry, symbols) {
   buf.writeUInt16LE(32, 0x2a); // e_phentsize
   buf.writeUInt16LE(1, 0x2c); // e_phnum
   buf.writeUInt16LE(40, 0x2e); // e_shentsize
-  buf.writeUInt16LE(5, 0x30); // e_shnum
+  buf.writeUInt16LE(5 + extraSections.length, 0x30); // e_shnum
   buf.writeUInt16LE(4, 0x32); // e_shstrndx
   // Program header: single RWX PT_LOAD covering the whole image at `base`.
   buf.writeUInt32LE(1, 0x34); // p_type = PT_LOAD
@@ -294,19 +341,20 @@ export function buildElf(base, image, entry, symbols) {
   buf.writeUInt32LE(0x1000, 0x50); // p_align
   // Image.
   image.copy(buf, IMG_OFF);
-  // .strtab, .symtab, .shstrtab.
+  // .strtab, .symtab, .shstrtab, extras.
   strTab.copy(buf, strTabOff);
   shstr.copy(buf, shstrOff2);
+  extraSections.forEach((s, i) => s.data.copy(buf, extraOffs[i]));
   const symBase = symTabOff;
   symbols.forEach((s, i) => {
     const o = symBase + (i + 1) * 16;
     buf.writeUInt32LE(strOff[i], o);
     buf.writeUInt32LE(s.value, o + 4);
     buf.writeUInt32LE(s.size, o + 8);
-    buf[o + 12] = 0x10 | 2; // GLOBAL | FUNC
+    buf[o + 12] = 0x10 | (s.type === 'object' ? 1 : 2); // GLOBAL | OBJECT/FUNC
     buf.writeUInt16LE(1, o + 14); // shndx = .text
   });
-  // Section headers: NULL, .text, .symtab, .strtab, .shstrtab.
+  // Section headers: NULL, .text, .symtab, .strtab, .shstrtab, extras...
   const SH_FIELD_OFF = { name: 0, type: 4, flags: 8, addr: 12, offset: 16, size: 20, link: 24, info: 28, align: 32, entsize: 36 };
   const sh = (idx, fields) => {
     const o = shOff + idx * 40;
@@ -316,6 +364,9 @@ export function buildElf(base, image, entry, symbols) {
   sh(2, { name: shstrOff('.symtab'), type: 2, offset: symTabOff, size: (symbols.length + 1) * 16, link: 3, info: 1, align: 4, entsize: 16 });
   sh(3, { name: shstrOff('.strtab'), type: 3, offset: strTabOff, size: strTab.length, align: 1 });
   sh(4, { name: shstrOff('.shstrtab'), type: 3, offset: shstrOff2, size: shstr.length, align: 1 });
+  extraSections.forEach((s, i) => {
+    sh(5 + i, { name: shstrOff(s.name), type: 1, addr: s.addr ?? 0, offset: extraOffs[i], size: s.data.length, align: 1 });
+  });
   return buf;
 }
 

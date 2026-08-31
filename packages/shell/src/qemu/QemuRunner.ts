@@ -38,6 +38,8 @@ export class QemuRunner extends EventEmitter {
   private readonly qmp = new QmpClient();
   private readonly uartLog: string[] = [];
   private qmpPort: number | null = null;
+  private gdbPort: number | null = null;
+  private firmwareElf: string | null = null;
   private stopping = false;
   private exitWaiter: Promise<number | null> = Promise.resolve(null);
 
@@ -45,6 +47,16 @@ export class QemuRunner extends EventEmitter {
 
   /** QMP control port of the current/last process, if any. */
   getQmpPort(): number | null { return this.qmpPort; }
+
+  /**
+   * GDB stub port of the current/last process (dev-plan task P1.9). Always
+   * allocated by load(): the debug panel attaches at any time via dbg:connect
+   * without the renderer having to reserve a port itself.
+   */
+  getGdbPort(): number | null { return this.gdbPort; }
+
+  /** Firmware ELF path of the current/last load (dbg:connect passes it to GDB). */
+  getFirmwareElf(): string | null { return this.firmwareElf; }
 
   /** UART0 output accumulated this session (oldest first, truncated to the tail). */
   getUartLog(): string { return this.uartLog.join(''); }
@@ -61,11 +73,13 @@ export class QemuRunner extends EventEmitter {
     }
 
     const qmpPort = input.qmpPort ?? await allocateEphemeralPort();
+    // GDB stub is always on (P1.9): the debug panel connects lazily via dbg:connect.
+    const gdbPort = input.gdbPort ?? await allocateEphemeralPort();
     const argsInput: QemuArgsInput = {
       qemuBin: input.qemuBin,
       firmwareElf: input.firmwareElf,
       chip: input.chip,
-      gdbPort: input.gdbPort,
+      gdbPort,
       dbus: input.dbus,
       qmpPort,
       noNetwork: true, // PRD §9 sandbox
@@ -76,6 +90,8 @@ export class QemuRunner extends EventEmitter {
     const child = spawn(bin, rest, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     this.proc = child;
     this.qmpPort = qmpPort;
+    this.gdbPort = gdbPort;
+    this.firmwareElf = input.firmwareElf;
     this.uartLog.length = 0;
 
     this.exitWaiter = new Promise<number | null>((resolve) => {
@@ -123,14 +139,6 @@ export class QemuRunner extends EventEmitter {
     if (!this.proc || this.status !== 'running') throw new Error('[BB-103] QEMU is not running');
     await this.qmp.stop();
     this.setStatus('paused');
-  }
-
-  /** Instruction-level single step needs the GDB bridge. */
-  async step(): Promise<void> {
-    // TODO(PRD §F-SIM-1): route through GdbBridge `-exec-step-instruction` when
-    // the debug panel wires the IPC layer (dev-plan task 1.9); GdbBridge.step()
-    // provides the MI command since P0.5.
-    throw new Error('[BB-105] single-step requires the GDB bridge (dev-plan task 1.9)');
   }
 
   /** Stop the VM (reset back to idle). */
