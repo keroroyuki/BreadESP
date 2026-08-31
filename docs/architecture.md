@@ -131,3 +131,31 @@ any --error--> error
 - **id 确定性**：实例与连线 id 用 `prefix-<最小可用序号>` 生成，加载已有工程后不冲突。
 - MCU 节点固定在画布左侧，暴露 ESP32 可用 GPIO（6-11/20/24/28-31 为 flash/不存在，不显示）；
   画布内 LED 由 `level` 快照实时点亮，按键按压经 `per:driveInput` 注入。
+
+## 9. 工程持久化（P1.8）
+
+一个工程是一个目录（PRD §F-PROJ-1），Bridge 侧 `ProjectManager` 是它唯一的磁盘读写者：
+
+```
+<dir>.breadesp/
+├── firmware.elf   # importFirmware 拷入（经 BB-101 架构闸门）；open 返回其路径或 null
+├── netlist.json   # 逻辑半区（实例 + 连线），save 前必过 validateNetlist
+├── layout.json    # 视觉半区 {version:1, items:[{instanceId,x,y,kind}]}，save 前必过 validateLayout
+└── meta.json      # {version:1, createdAt, updatedAt}，save 只递增 updatedAt
+```
+
+- **生命周期**：`newProject`（写骨架，拒绝覆盖已有工程）/ `openProject`（读 + 校验全部四件，
+  返回 `ProjectData`）/ `saveProject(netlist, layout)`（双半区校验后原子性落盘）/ `saveAs`
+  （新目录骨架 + 全量保存）/ `close`。`importFirmware(elf)` 按 netlist.chip 校验后拷贝固件进工程。
+- **layout 契约下沉**：`LayoutFile`/`LayoutItem` 类型与 `validateLayout` 定义在 `@breadesp/netlist`
+  （shell 写盘与 ui 序列化共享同一来源，类型不散落）；layout 校验为结构 + 坐标有限性 + instanceId 唯一。
+- **失败语义**：目录不存在/缺 `meta.json` → `[BB-120]`；meta 损坏 → `[BB-121]`；netlist 读/校验失败 →
+  `[BB-122]`；layout 读/校验失败 → `[BB-123]`；无工程打开/目录已存在工程 → `[BB-124]`。
+  打开失败不改变当前已打开的工程；保存校验失败时磁盘零写入。
+- **UI 侧**：`ProjectToolbar`（new/open/save/saveAs/close，目录为 MVP 文本输入，
+  原生目录选择器 TODO(PRD §F-PROJ-2)）→ `proj:*` IPC → store `loadProject`（水合两半区，netlist
+  对象标识变化自动触发 `bb:applyNetlist` 重建 Bridge 实例）/ `resetProject`。加载后 id 生成器从已占用
+  序号续排，不会与工程内 id 冲突。
+- **往返保证（验收）**：save → close → reopen 后 `ProjectData.netlist/layout` 与保存值结构相等；
+  已由 ProjectManager 单测、真实临时目录往返、preload→handlers→ProjectManager 的 IPC 集成测试
+  （含双向 JSON 序列化边界）覆盖。
