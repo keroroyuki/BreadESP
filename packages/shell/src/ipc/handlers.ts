@@ -66,4 +66,7 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   peripherals.on('snapshot', (s: unknown) => deps.win?.webContents.send('per:snapshot', s));
   qemu.on('status', (s: string) => deps.win?.webContents.send('sim:status', s));
   qemu.on('uart', (s: string) => deps.win?.webContents.send('sim:uart', s));
+  // QemuRunner only emits 'error' when listened for; subscribing here also
+  // keeps the message out of the 'log' fallback (dev-plan task P1.1).
+  qemu.on('error', (err: Error) => deps.win?.webContents.send('sim:error', err.message));
 }

@@ -2,10 +2,20 @@
 // All IPC parameters/returns are JSON-serializable (PRD §6.6).
 import { contextBridge, ipcRenderer } from 'electron';
 
+/** Payload of `sim:load` — mirrors the handler in ipc/handlers.ts (PRD §6.6). */
+export interface SimLoadInput {
+  elfPath: string;
+  chip: 'esp32' | 'esp32s3' | 'esp32c3';
+  qemuBin: string;
+  gdbPort?: number;
+  dbusSocket?: string;
+}
+
 const api = {
   // sim:*
   sim: {
-    start: (p: unknown) => ipcRenderer.invoke('sim:start', p),
+    load: (p: SimLoadInput) => ipcRenderer.invoke('sim:load', p),
+    start: () => ipcRenderer.invoke('sim:start'),
     pause: () => ipcRenderer.invoke('sim:pause'),
     step: () => ipcRenderer.invoke('sim:step'),
     reset: () => ipcRenderer.invoke('sim:reset'),
@@ -14,6 +24,16 @@ const api = {
       const h = (_e: unknown, s: unknown) => cb(s);
       ipcRenderer.on('sim:status', h);
       return () => ipcRenderer.removeListener('sim:status', h);
+    },
+    onUart: (cb: (s: string) => void) => {
+      const h = (_e: unknown, s: string) => cb(s);
+      ipcRenderer.on('sim:uart', h);
+      return () => ipcRenderer.removeListener('sim:uart', h);
+    },
+    onError: (cb: (msg: string) => void) => {
+      const h = (_e: unknown, msg: string) => cb(msg);
+      ipcRenderer.on('sim:error', h);
+      return () => ipcRenderer.removeListener('sim:error', h);
     },
   },
   // fw:*

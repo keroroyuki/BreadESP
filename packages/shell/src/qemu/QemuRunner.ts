@@ -87,8 +87,8 @@ export class QemuRunner extends EventEmitter {
       this.qmp.close();
       this.proc = null;
       this.setStatus('error');
-      // EventEmitter throws on unlistened 'error'; keep the process alive (PRD §4.7)
-      // TODO(PRD §6.6): forward on a dedicated IPC channel in P1.1.
+      // EventEmitter throws on unlistened 'error'; keep the process alive (PRD §4.7).
+      // ipc/handlers.ts subscribes and forwards to the 'sim:error' IPC channel (P1.1).
       if (this.listenerCount('error') > 0) this.emit('error', err);
       else this.emit('log', `[qemu] ${err.message}`);
     });
