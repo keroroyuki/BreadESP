@@ -2,9 +2,11 @@
 import { getFactory, type Peripheral, type PeripheralContext, type BusTransaction, type RenderSnapshot } from '@breadesp/peripherals';
 import type { Netlist, PeripheralInstance } from '@breadesp/netlist';
 import { EventEmitter } from 'node:events';
+import { NetlistResolver } from '../netlist/NetlistResolver.js';
 
 export class PeripheralManager extends EventEmitter {
   private instances = new Map<string, Peripheral>();
+  private resolver = new NetlistResolver();
 
   /** Build peripheral instances from a validated netlist. */
   applyNetlist(netlist: Netlist): void {
@@ -22,13 +24,15 @@ export class PeripheralManager extends EventEmitter {
       const p = factory.create(ctx, { instanceId: inst.instanceId, ...inst.props });
       this.instances.set(inst.instanceId, p);
     }
+
+    this.resolver.setNetlist(netlist);
   }
 
-  /** Route an inbound bus transaction to the peripheral(s) on that bus/target. */
+  /** Route an inbound bus transaction to the peripheral(s) wired to that bus/target. */
   route(tx: BusTransaction): void {
-    // TODO(PRD §4.2): use NetlistResolver to map bus+target -> instanceId.
-    // MVP: broadcast to all instances that match kind/target; peripherals ignore mismatches.
-    for (const p of this.instances.values()) p.onTransaction(tx);
+    for (const target of this.resolver.resolve(tx)) {
+      this.instances.get(target.instanceId)?.onTransaction(tx);
+    }
   }
 
   /** UI button -> drive MCU input. TODO: route to QEMU GPIO input device. */
