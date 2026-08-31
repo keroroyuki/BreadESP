@@ -1,14 +1,26 @@
 // PRD: §6.6 — Thin typed wrapper around window.breadesp (exposed by preload.ts).
 // Renderer never touches Node directly.
 
+/** Payload of `sim:load` — mirrors shell/src/preload.ts (PRD §6.6). */
+interface SimLoadInput {
+  elfPath: string;
+  chip: 'esp32' | 'esp32s3' | 'esp32c3';
+  qemuBin: string;
+  gdbPort?: number;
+  dbusSocket?: string;
+}
+
 interface BridgeApi {
   sim: {
-    start: (p: unknown) => Promise<void>;
+    load: (p: SimLoadInput) => Promise<void>;
+    start: () => Promise<void>;
     pause: () => Promise<void>;
     step: () => Promise<void>;
     reset: () => Promise<void>;
     status: () => Promise<unknown>;
     onStatus: (cb: (s: unknown) => void) => () => void;
+    onUart: (cb: (s: string) => void) => () => void;
+    onError: (cb: (msg: string) => void) => () => void;
   };
   fw: { load: (p: unknown) => Promise<void>; listSymbols: () => Promise<unknown[]>; };
   dbg: {
