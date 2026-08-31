@@ -13,6 +13,7 @@
 //   MOVI  op0=2, at=t, r=10, simm12b         -> imm[11:8] in s field, imm[7:0] in bits 23..16
 //   ADDI  op0=2, at=t, as=s, r=12, simm8[23:16]
 //   L8UI  op0=2, at=t, as=s, r=0,  uimm8[23:16]
+//   L32I  op0=2, at=t, as=s, r=2,  uimm8x4[23:16] (offset scaled by 4, uimm8x4 = imm8 << 2)
 //   S8I   op0=2, at=t, as=s, r=4,  uimm8[23:16]
 //   S32I  op0=2, at=t, as=s, r=6,  uimm8x4[23:16]
 //   BNEZ  op0=6, n=1, m=1, as=s, label12[23:12] -> target = pc + 4 + simm12
@@ -43,6 +44,12 @@ export function encAddi(at, as, imm8) {
 export function encL8ui(at, as, off8) {
   assertRange('l8ui offset', off8, 0, 255);
   return 0x2 | ((at & 0xf) << 4) | ((as & 0xf) << 8) | (0x0 << 12) | (off8 << 16);
+}
+
+export function encL32i(at, as, off8x4) {
+  assertRange('l32i offset', off8x4, 0, 1020);
+  if (off8x4 % 4 !== 0) throw new Error(`[BB-002] l32i offset must be word aligned: ${off8x4}`);
+  return 0x2 | ((at & 0xf) << 4) | ((as & 0xf) << 8) | (0x2 << 12) | ((off8x4 >> 2) << 16);
 }
 
 export function encS8i(at, as, off8) {
@@ -222,6 +229,9 @@ export class Program {
           break;
         case 'l8ui':
           w = encL8ui(p.at_, p.as_, p.off);
+          break;
+        case 'l32i':
+          w = encL32i(p.at_, p.as_, p.off);
           break;
         case 's8i':
           w = encS8i(p.at_, p.as_, p.off);

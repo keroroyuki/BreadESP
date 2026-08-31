@@ -29,6 +29,8 @@ const api = {
     step: () => ipcRenderer.invoke('sim:step'),
     reset: () => ipcRenderer.invoke('sim:reset'),
     status: () => ipcRenderer.invoke('sim:status'),
+    // UART0 input injection (PRD §F-SER-2, dev-plan task P1.10).
+    sendUart: (p: { data: string }) => ipcRenderer.invoke('sim:sendUart', p),
     onStatus: (cb: (s: unknown) => void) => {
       const h = (_e: unknown, s: unknown) => cb(s);
       ipcRenderer.on('sim:status', h);

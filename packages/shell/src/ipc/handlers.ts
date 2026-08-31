@@ -36,6 +36,10 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   });
   ipcMain.handle('sim:reset', async () => qemu.reset());
   ipcMain.handle('sim:status', async () => qemu.getStatus());
+  // UART0 input injection (PRD §F-SER-2, dev-plan task P1.10): bytes written to
+  // the QEMU stdin pipe land in the guest UART RX FIFO. Unloaded VMs reject
+  // with [BB-102] straight from QemuRunner.writeStdin.
+  ipcMain.handle('sim:sendUart', async (_e, p: { data: string }) => qemu.writeStdin(p.data));
 
   // fw:*
   ipcMain.handle('fw:load', async (_e, p: { elfPath: string; chip: 'esp32' | 'esp32s3' | 'esp32c3' }) => {
