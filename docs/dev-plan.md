@@ -74,7 +74,7 @@
 | 0.3 | 准备黄金固件 `blink.elf` + 测试用例 | `packages/sim-core/fixtures/blink.elf` | 文件存在且为 Xtensa ELF |
 | 0.4 | 实现 `QemuRunner.load/start` 真实启动 | stdout→uart 事件 | UART 收到 `Hello ESP32` |
 | 0.5 | 实现 `GdbBridge` 连接 + 断点 | `setBreakpoint('app_main')` | GDB 停在 app_main |
-| 0.6 | ELF 架构校验（e_machine==0x5a Xtensa） | `ProjectManager` 加载前校验 | 非目标 ELF 报错拒绝 |
+| 0.6 | ELF 架构校验（e_machine==0x5e Xtensa, EM_XTENSA=94） | `ProjectManager` 加载前校验 | 非目标 ELF 报错拒绝 |
 
 **禁止在 P0 做**：UI 美化、外设模型、网表校验扩展。
 
