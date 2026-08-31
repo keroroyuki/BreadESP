@@ -2,7 +2,7 @@
 // Pins and wire endpoints must resolve through this single module, so the
 // rendered dots and the bezier anchors can never disagree.
 import { describe, it, expect } from 'vitest';
-import { MCU_INSTANCE_ID, type Wire } from '@breadesp/netlist';
+import { MCU_INSTANCE_ID, type LayoutItem, type Wire } from '@breadesp/netlist';
 import {
   MCU_GPIO_PINS,
   MCU_NODE,
@@ -15,7 +15,6 @@ import {
   peripheralPins,
   wireAnchors,
 } from '../src/components/Breadboard/pinLayout';
-import type { LayoutItem } from '../src/store/projectStore';
 
 describe('pinLayout', () => {
   it('exposes the factory pins for the MVP peripheral set', () => {

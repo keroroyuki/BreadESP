@@ -74,7 +74,15 @@ function callEveryApiFunction(node: unknown): void {
 
 const qemu = { load: vi.fn(), start: vi.fn(), pause: vi.fn(), step: vi.fn(), reset: vi.fn(), getStatus: vi.fn(), on: vi.fn() };
 const gdb = { setBreakpoint: vi.fn(), removeBreakpoint: vi.fn(), continue: vi.fn(), step: vi.fn(), vars: vi.fn(), regs: vi.fn() };
-const project = { validateFirmware: vi.fn(), newProject: vi.fn(), openProject: vi.fn(), saveNetlist: vi.fn(), close: vi.fn(), loadNetlist: vi.fn() };
+const project = {
+  validateFirmware: vi.fn(),
+  newProject: vi.fn(),
+  openProject: vi.fn(),
+  saveProject: vi.fn(),
+  importFirmware: vi.fn(),
+  close: vi.fn(),
+  loadNetlist: vi.fn(),
+};
 const peripherals = { applyNetlist: vi.fn(), driveInput: vi.fn(), on: vi.fn() };
 const win = { webContents: { send: (channel: string, payload: unknown) => { state.sends.push({ channel, payload }); } } };
 
@@ -147,5 +155,33 @@ describe('preload ↔ handlers IPC contract (P1.1)', () => {
   it('forwards peripheral snapshots on per:snapshot', () => {
     listenerFor(peripherals, 'snapshot')({ instanceId: 'led-1' });
     expect(state.sends).toContainEqual({ channel: 'per:snapshot', payload: { instanceId: 'led-1' } });
+  });
+
+  it('routes proj:save through ProjectManager with both persistence halves', async () => {
+    const netlist = { version: 1, chip: 'esp32', peripherals: [], wires: [] };
+    const layout = { version: 1, items: [] };
+    const handler = state.handles.get('proj:save');
+    expect(handler).toBeDefined();
+    await handler!(undefined, { netlist, layout });
+    expect(project.saveProject).toHaveBeenCalledWith(netlist, layout);
+  });
+
+  it('routes proj:open to ProjectManager and returns its validated ProjectData', async () => {
+    const data = { dir: '/tmp/p', meta: { version: 1, createdAt: 1, updatedAt: 2 }, netlist: {}, layout: {}, firmwareElf: null };
+    project.openProject.mockReturnValueOnce(data);
+    const handler = state.handles.get('proj:open');
+    expect(handler).toBeDefined();
+    await expect(handler!(undefined, { dir: '/tmp/p' })).resolves.toBe(data);
+    expect(project.openProject).toHaveBeenCalledWith('/tmp/p');
+  });
+
+  it('routes proj:saveAs as fresh skeleton + full save', async () => {
+    const netlist = { version: 1, chip: 'esp32', peripherals: [], wires: [] };
+    const layout = { version: 1, items: [] };
+    const handler = state.handles.get('proj:saveAs');
+    expect(handler).toBeDefined();
+    await handler!(undefined, { dir: '/tmp/p2', netlist, layout });
+    expect(project.newProject).toHaveBeenCalledWith('/tmp/p2');
+    expect(project.saveProject).toHaveBeenCalledWith(netlist, layout);
   });
 });

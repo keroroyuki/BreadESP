@@ -1,7 +1,7 @@
-// PRD: §6.5 — Unit tests for netlist validation (structural + semantic).
+// PRD: §6.5, §F-BB-4 — Unit tests for netlist + layout validation.
 import { describe, expect, it } from 'vitest';
-import { validateNetlist } from '../src/validate';
-import type { Netlist } from '../src/types';
+import { validateLayout, validateNetlist } from '../src/validate';
+import type { LayoutFile, Netlist } from '../src/types';
 
 const validNetlist: Netlist = {
   version: 1,
@@ -44,5 +44,48 @@ describe('validateNetlist', () => {
     const res = validateNetlist({ ...validNetlist, chip: 'esp8266' });
     expect(res.ok).toBe(false);
     expect(res.issues.length).toBeGreaterThan(0);
+  });
+});
+
+const validLayout: LayoutFile = {
+  version: 1,
+  items: [{ instanceId: 'led1', x: 10, y: 20, kind: 'led' }],
+};
+
+describe('validateLayout', () => {
+  it('accepts a valid layout file', () => {
+    const res = validateLayout(validLayout);
+    expect(res.ok).toBe(true);
+    expect(res.issues).toEqual([]);
+  });
+
+  it('rejects an unknown version', () => {
+    const res = validateLayout({ ...validLayout, version: 2 as unknown as 1 });
+    expect(res.ok).toBe(false);
+    expect(res.issues.length).toBeGreaterThan(0);
+  });
+
+  it('rejects non-numeric / non-finite coordinates', () => {
+    const badX = validateLayout({ version: 1, items: [{ ...validLayout.items[0], x: '10' as unknown as number }] });
+    expect(badX.ok).toBe(false);
+    const nanY = validateLayout({ version: 1, items: [{ ...validLayout.items[0], y: Number.NaN }] });
+    expect(nanY.ok).toBe(false);
+  });
+
+  it('rejects a duplicate layout instanceId', () => {
+    const res = validateLayout({
+      version: 1,
+      items: [
+        { instanceId: 'led1', x: 0, y: 0, kind: 'led' },
+        { instanceId: 'led1', x: 5, y: 5, kind: 'led' },
+      ],
+    });
+    expect(res.ok).toBe(false);
+    expect(res.issues.some((i) => i.message.includes('Duplicate layout instanceId: led1'))).toBe(true);
+  });
+
+  it('rejects non-object input without throwing', () => {
+    expect(validateLayout(null).ok).toBe(false);
+    expect(validateLayout('nope').ok).toBe(false);
   });
 });

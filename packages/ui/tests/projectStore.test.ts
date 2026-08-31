@@ -2,7 +2,7 @@
 // Wiring edits must never touch the visual half; moves must never touch the
 // logic half; both serialize independently (netlist.json / layout.json).
 import { describe, it, expect, beforeEach } from 'vitest';
-import { MCU_INSTANCE_ID, validateNetlist, type Netlist } from '@breadesp/netlist';
+import { MCU_INSTANCE_ID, validateNetlist, type LayoutFile, type Netlist } from '@breadesp/netlist';
 import { toLayoutFile, toNetlistFile, useProjectStore } from '../src/store/projectStore';
 
 const emptyNetlist = (): Netlist => ({ version: 1, chip: 'esp32', peripherals: [], wires: [] });
@@ -125,5 +125,79 @@ describe('projectStore', () => {
     // Both halves round-trip through JSON (IPC / persistence boundary, PRD §6.6).
     expect(JSON.parse(JSON.stringify(net))).toEqual(useProjectStore.getState().netlist);
     expect(JSON.parse(JSON.stringify(lay))).toEqual(lay);
+  });
+});
+
+describe('project load/reset (P1.8)', () => {
+  beforeEach(reset);
+
+  const LOADED_NETLIST: Netlist = {
+    version: 1,
+    chip: 'esp32',
+    peripherals: [
+      { instanceId: 'led-1', kind: 'led' },
+      { instanceId: 'ssd1306-1', kind: 'ssd1306' },
+    ],
+    wires: [{ id: 'wire-1', from: { instanceId: 'mcu', pin: 'GPIO2' }, to: { instanceId: 'led-1', pin: 'A' } }],
+  };
+  const LOADED_LAYOUT: LayoutFile = {
+    version: 1,
+    items: [
+      { instanceId: 'led-1', x: 30, y: 40, kind: 'led' },
+      { instanceId: 'ssd1306-1', x: 210, y: 90, kind: 'ssd1306' },
+    ],
+  };
+
+  it('loadProject hydrates dir and both halves without cross-contamination', () => {
+    useProjectStore.getState().loadProject({ dir: '/tmp/demo', netlist: LOADED_NETLIST, layout: LOADED_LAYOUT });
+    const { dir, netlist, layout } = useProjectStore.getState();
+    expect(dir).toBe('/tmp/demo');
+    expect(netlist).toEqual(LOADED_NETLIST);
+    expect(layout).toEqual(LOADED_LAYOUT.items);
+    // The loaded layout file itself is left untouched (store holds items only).
+    expect(LOADED_LAYOUT.items).toHaveLength(2);
+    expect(validateNetlist(netlist).ok).toBe(true);
+  });
+
+  it('editing a loaded project continues from the loaded ids', () => {
+    useProjectStore.getState().loadProject({ dir: '/tmp/demo', netlist: LOADED_NETLIST, layout: LOADED_LAYOUT });
+    const st = useProjectStore.getState();
+    const id = st.addPeripheral('led', 5, 5);
+    const wireId = st.addWire({ instanceId: 'ssd1306-1', pin: 'SDA' }, { instanceId: MCU_INSTANCE_ID, pin: 'GPIO21' });
+    expect(id).toBe('led-2'); // loaded led-1 is taken
+    expect(wireId).toBe('wire-2'); // loaded wire-1 is taken
+    const { netlist, layout } = useProjectStore.getState();
+    expect(netlist.peripherals.map((p) => p.instanceId)).toEqual(['led-1', 'ssd1306-1', 'led-2']);
+    expect(layout.map((l) => l.instanceId)).toEqual(['led-1', 'ssd1306-1', 'led-2']);
+    expect(validateNetlist(netlist).ok).toBe(true);
+  });
+
+  it('loaded state serializes back to disk-shaped halves (save round-trip)', () => {
+    useProjectStore.getState().loadProject({ dir: '/tmp/demo', netlist: LOADED_NETLIST, layout: LOADED_LAYOUT });
+    const { netlist, layout } = useProjectStore.getState();
+    const net = toNetlistFile(netlist);
+    const lay = toLayoutFile(layout);
+    // The exact shapes persisted by ProjectManager.saveProject.
+    expect(JSON.parse(JSON.stringify(net))).toEqual(LOADED_NETLIST);
+    expect(JSON.parse(JSON.stringify(lay))).toEqual(LOADED_LAYOUT);
+    expect(JSON.stringify(net)).not.toContain('"x":');
+    expect(JSON.stringify(lay)).not.toContain('"wires"');
+  });
+
+  it('resetProject clears both halves and the dir', () => {
+    useProjectStore.getState().loadProject({ dir: '/tmp/demo', netlist: LOADED_NETLIST, layout: LOADED_LAYOUT });
+    useProjectStore.getState().resetProject(null);
+    expect(useProjectStore.getState().dir).toBeNull();
+    expect(useProjectStore.getState().netlist).toEqual(emptyNetlist());
+    expect(useProjectStore.getState().layout).toEqual([]);
+  });
+
+  it('resetProject(dir) points at a fresh skeleton without old state', () => {
+    useProjectStore.getState().loadProject({ dir: '/tmp/demo', netlist: LOADED_NETLIST, layout: LOADED_LAYOUT });
+    useProjectStore.getState().resetProject('/tmp/fresh');
+    expect(useProjectStore.getState().dir).toBe('/tmp/fresh');
+    expect(useProjectStore.getState().netlist.peripherals).toEqual([]);
+    expect(useProjectStore.getState().netlist.wires).toEqual([]);
+    expect(useProjectStore.getState().layout).toEqual([]);
   });
 });
