@@ -39,10 +39,19 @@ import { myLedFactory } from 'my-led';
 registerPeripheral(myLedFactory);
 ```
 
-## 3. 引脚角色（PRD §6.1）
+## 3. 引脚角色与事务路由（PRD §6.1、§4.2）
 
-外设通过 `pins[].role` 声明它需要的引脚类型。`NetlistResolver` 据此校验连线合法性
-（如 i2c-sda 不能接到 gpio-out 上）。
+外设通过 `pins[].role` 声明它需要的引脚类型。`NetlistResolver` 的 MVP 路由规则：
+
+- **I2C**：按 7 位地址路由——实例 `props.address`，缺省回退 `factory.defaults.address`
+  （如 ssd1306 默认 `0x3c`）。ESP32 GPIO 矩阵决定 MCU 引脚无法标识 I2C 控制器，故
+  `bus` 字段暂不参与匹配。
+- **GPIO**：按 MCU 引脚路由——网表中一端为 `{ instanceId: 'mcu', pin: 'GPIO<n>' }` 的
+  连线，把 `target = n` 的事务投递到另一端外设；同一引脚可挂多个外设（全部收到）。
+- **SPI/PWM/I2S/ADC**：暂不路由（待 P2/P3 对应外设模型落地）。
+
+> TODO(PRD §6.1): 基于 `pins[].role` 的连线合法性校验（如 i2c-sda 不能接到 gpio-out）在
+> 后续里程碑补齐。
 
 ## 4. 渲染快照（PRD §6.4）
 

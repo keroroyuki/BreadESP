@@ -31,7 +31,9 @@ QEMU-ESP32 默认外设模型不全。我们在 QEMU 源码中新增一个 devic
 1. 固件执行 `i2c_master_write_to_device(addr=0x3c, ...)`。
 2. QEMU I2C 控制器产生写事务 → DBus Forward Device 序列化 → Bridge socket。
 3. `DBusChannel` 解析为 `BusTransaction{kind:'i2c',bus:0,target:0x3c,dir:'write',...}`。
-4. `NetlistResolver` 根据网表确认 0x3c 总线上的外设实例 `oled1`。
+4. `NetlistResolver` 根据网表路由：I2C 按 7 位地址（`props.address`，缺省回退
+   `factory.defaults.address`）；GPIO 按 `mcu.GPIO<n>` 连线（同一引脚多外设全收）。
+   `PeripheralManager.route()` 只投递到解析出的实例，不再广播。
 5. `PeripheralManager` 调用 `oled1.onTransaction(tx)`。
 6. SSD1306 模型更新显存 → `ctx.emitSnapshot(pixels)` → 推送 UI Canvas 渲染。
 
