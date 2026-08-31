@@ -93,7 +93,7 @@
 | 1.7 | `BreadboardCanvas` 拖拽放置 + 连线编辑 | 可视化连线 | 网表与布局分离持久化 | 已完成 2026-08-31 |
 | 1.8 | 工程保存/加载（`.breadesp` 目录） | ProjectManager | 关闭重开恢复原样 | 已完成 2026-08-31 |
 | 1.9 | 调试面板：断点/单步/变量/寄存器 | Inspector | 可看 `app_main` 局部变量 | 已完成 2026-08-31 |
-| 1.10 | 串口控制台双向（输出+注入） | SerialConsole | 键入回车被固件读到 | 未开始 |
+| 1.10 | 串口控制台双向（输出+注入） | SerialConsole | 键入回车被固件读到 | 已完成 2026-08-31 |
 
 **M1 回归**：跑 §12 的 M1 清单全部通过。
 
@@ -388,7 +388,7 @@ Previously applyNetlist leaked old instances on re-apply.
 | `pnpm test` | 全仓测试 |
 | `pnpm fetch-qemu` | 下载 QEMU 二进制 |
 | `node scripts/build-qemu-device.mjs [--target linux-docker\|windows-msys2]` | 构建 breadesp-dbus 设备版 QEMU |
-| `node scripts/make-blink-elf.mjs` / `make-i2c-elf.mjs` | 重新生成测试固件 |
+| `node scripts/make-blink-elf.mjs` / `make-i2c-elf.mjs` / `make-uart-echo-elf.mjs` | 重新生成测试固件 |
 | `pnpm dev` | 启动 Electron + Vite dev |
 | `pnpm build` | 构建所有包 |
 
@@ -406,14 +406,14 @@ Previously applyNetlist leaked old instances on re-apply.
 
 > 验证记录（2026-08-31 复验）：`pnpm typecheck` 0 错误；全仓测试 73 通过 + 1 跳过，含真实 QEMU UART e2e（`qemu-uart.e2e.test.ts`）通过；GDB 断点 e2e 需设 `BREADESP_GDB_BIN`，已于 2026-08-29 对真实 QEMU + `xtensa-esp32-elf-gdb` 验证通过（见 CHANGELOG）；入库二进制仅 `fixtures/blink.elf`（§5.4 允许的 ELF fixture），无 `*.bin` 入库。
 
-### M1 清单（进行中，任务 1.1–1.9 已完成：IPC 对齐、breadesp-dbus 设备与独立 QEMU 构建、DBusChannel 帧协议、NetlistResolver I2C/GPIO 路由、PeripheralManager 路由健壮性 + 30fps 快照节流、SSD1306 命令集补全、面包板画布拖拽放置 + pin 连线编辑（网表/布局严格分离：移动节点只改 layout、连线只改 netlist，序列化各自独立且 netlist 始终过 validateNetlist）、工程保存/加载（`.breadesp` 目录四件套 firmware.elf/netlist.json/layout.json/meta.json，new/open/save/saveAs/close 全生命周期，关闭重开往返结构相等）、调试面板（断点增删清列 + 单步进入/跨过/继续 + 局部变量/寄存器/全局观察，dbg:connect 惰性附着 + dbg:stopped/running/exit 推送，blink.elf 携带 DWARF4）；dbus 与路由 e2e 已在真实 QEMU 上验证——OLED 事务落到 oled1，持续 1ms 事务流被压到 ≤30fps，Adafruit_GFX begin()+display() 帧路径显存更新正确）
+### M1 清单（进行中，任务 1.1–1.10 已完成：IPC 对齐、breadesp-dbus 设备与独立 QEMU 构建、DBusChannel 帧协议、NetlistResolver I2C/GPIO 路由、PeripheralManager 路由健壮性 + 30fps 快照节流、SSD1306 命令集补全、面包板画布拖拽放置 + pin 连线编辑（网表/布局严格分离：移动节点只改 layout、连线只改 netlist，序列化各自独立且 netlist 始终过 validateNetlist）、工程保存/加载（`.breadesp` 目录四件套 firmware.elf/netlist.json/layout.json/meta.json，new/open/save/saveAs/close 全生命周期，关闭重开往返结构相等）、调试面板（断点增删清列 + 单步进入/跨过/继续 + 局部变量/寄存器/全局观察，dbg:connect 惰性附着 + dbg:stopped/running/exit 推送，blink.elf 携带 DWARF4）、串口控制台双向（sim:sendUart 注入链路 + uart-echo.elf 金标固件，UART0 RX/TX 端到端回显）；dbus 与路由 e2e 已在真实 QEMU 上验证——OLED 事务落到 oled1，持续 1ms 事务流被压到 ≤30fps，Adafruit_GFX begin()+display() 帧路径显存更新正确）
 - [ ] UI 可拖拽 LED/按键/OLED 到画布
 - [x] 可连线到 GPIO 并保存工程
 - [ ] LED 随 GPIO2 电平亮灭（blink）
 - [ ] OLED 渲染固件绘制文字
 - [ ] 按键点击注入 GPIO 输入被固件读取
 - [x] 可设断点、单步、看全局变量
-- [ ] 串口可输出可注入
+- [x] 串口可输出可注入
 - [x] 关闭重开工程恢复原样
 - [ ] peripherals 单元测试通过
 
@@ -434,6 +434,16 @@ Previously applyNetlist leaked old instances on re-apply.
 > delay_ticks（remaining==0）→ regs().pc 命中断点地址 → 单步 → 断点清列。e2e 另暴露一处真实协议
 > 形状偏差——`-break-list` 的 `body` 嵌套于 `BreakpointTable` 内部（此前 mock 驱动的解析误置为顶层
 > 字段），已按 wire 形状修正解析并对齐 mock；P0.5 的 gdb-breakpoint e2e 亦于同环境回归通过。
+
+> P1.10 验证记录（2026-08-31）：`pnpm typecheck` 0 错误；全仓测试 199 通过 + 4 跳过（Windows 门控）。
+> 双向链路分三层验证——QemuRunner 对 mock QEMU 的 9 项单测（新增 writeStdin stdin 转发回显、
+> 未 load 时 BB-102 拒绝）；IPC 契约 15 项（新增 sim:sendUart 通道与 preload 暴露对齐）；真实
+> QEMU e2e（qemu-uart.e2e.test.ts 第 2 例）于 WSL 验证通过（Linux breadesp QEMU 构建）：注入
+> `Hello BreadESP\n` → 固件轮询 UART_STATUS.RXFIFO_CNT 出队组行 → 回显 `ECHO: Hello BreadESP\r\n`
+> → 第二行 `line two` 证明行缓冲正确复位。金标固件 `uart-echo.elf` 由
+> `scripts/make-uart-echo-elf.mjs` 确定性生成（xtensa-elf.mjs 新增 l32i 编码），`--check` 模式
+> 可校验入库 fixture 无漂移。已知平台差异：Windows stdio 后端（char-win-stdio.c）丢弃 `\r` 字节，故 UI 与
+> 测试统一以 `\n` 结尾注入行。
 
 ### M2 清单
 - [ ] TFT 渲染 rgb565 彩图

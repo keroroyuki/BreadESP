@@ -168,3 +168,26 @@ any --error--> error
 - **往返保证（验收）**：save → close → reopen 后 `ProjectData.netlist/layout` 与保存值结构相等；
   已由 ProjectManager 单测、真实临时目录往返、preload→handlers→ProjectManager 的 IPC 集成测试
   （含双向 JSON 序列化边界）覆盖。
+
+## 10. 串口控制台（P1.10）
+
+UART0 是固件的标准控制台（PRD §F-SER-1/§F-SER-2），双向链路如下：
+
+```
+输出  QEMU UART0 TX → stdout 管道 → QemuRunner 'uart' 事件 → sim:uart 推送 → SerialConsole 滚动区
+输入  SerialConsole 输入框 → sim:sendUart IPC → QemuRunner.writeStdin → stdin 管道 → QEMU UART0 RX FIFO
+```
+
+- **输出侧**：`QemuRunner` 聚合 stdout chunk 为 uart 日志（`getUartLog()`），经 preload 的
+  `sim:uart` 推送渲染进程，`SerialConsole` 追加进 store 的 `uart` 缓冲。
+- **输入侧**：`writeStdin(data)` 把字节写进 QEMU 子进程 stdin；未 load 时抛 `[BB-102]`。
+  UI 仅在 `loaded/running/paused` 状态放行输入框（此时子进程存在）。
+- **行终结符约定**：注入统一以 `\n` 结尾、不带 `\r`——QEMU 的 Windows stdio 后端
+  （`char-win-stdio.c` 的 `win_stdio_thread`）逐字节转发但**丢弃 `\r`**，CRLF 会让按 `\r` 判行的
+  固件饿死。Linux 无此问题，但统一 LF 保持两侧行为一致。
+- **金标固件**：`packages/sim-core/fixtures/uart-echo.elf` 由 `scripts/make-uart-echo-elf.mjs`
+  确定性汇编生成（`xtensa-elf.mjs` 的 l32r/movi/l8ui/s8i/addi/bnez/j + 新增 l32i 编码）：打印
+  banner 后轮询 `UART_STATUS.RXFIFO_CNT`（0x3ff4001c 低 8 位）出队组行，遇 `\n` 回显
+  `ECHO: <line>\r\n` 并复位 127 字节行缓冲。`--check` 模式校验入库 fixture 无漂移。
+- **验收**（键入回车被固件读到）：真实 QEMU e2e 注入两行，均在 UART 输出中回显——证明
+  stdin → RX FIFO → 固件读取 → TX 的完整闭环；第二行回显同时证明行缓冲复位。
