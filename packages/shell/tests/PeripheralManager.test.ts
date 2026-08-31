@@ -1,11 +1,13 @@
 // PRD: §4.2 — PeripheralManager routing integration (dev-plan §7.2): applyNetlist
 // builds instances, route() delivers transactions through NetlistResolver only to
 // the wired/matching peripheral. Uses the real builtin factories; routing outcome
-// is observed via the 'snapshot' events each model emits.
-import { describe, expect, it } from 'vitest';
+// is observed via the 'snapshot' events each model emits. Also covers the P1.5
+// snapshot throttle (30fps cap per instanceId+type, PRD §9) and routing
+// robustness (error isolation, atomic netlist apply, teardown).
+import { describe, expect, it, vi } from 'vitest';
 import type { Netlist } from '@breadesp/netlist';
 import type { BusTransaction, RenderSnapshot } from '@breadesp/peripherals';
-import { registerBuiltins } from '@breadesp/peripherals';
+import { registerBuiltins, registerPeripheral } from '@breadesp/peripherals';
 import { PeripheralManager } from '../src/peripherals/PeripheralManager.js';
 
 registerBuiltins();
@@ -23,6 +25,44 @@ const LED_ON_GPIO2: Netlist = {
   ],
 };
 
+const LED_ON_GPIO2_AND_GPIO3: Netlist = {
+  version: 1,
+  chip: 'esp32',
+  peripherals: [
+    { instanceId: 'led1', kind: 'led' },
+    { instanceId: 'led2', kind: 'led' },
+  ],
+  wires: [
+    { id: 'w-led1', from: { instanceId: 'led1', pin: 'A' }, to: { instanceId: 'mcu', pin: 'GPIO2' } },
+    { id: 'w-led2', from: { instanceId: 'led2', pin: 'A' }, to: { instanceId: 'mcu', pin: 'GPIO3' } },
+  ],
+};
+
+// Test probe peripheral: optionally throws on every transaction; records disposals.
+const probeDisposals: string[] = [];
+const PROBE_NETLIST: Netlist = {
+  version: 1,
+  chip: 'esp32',
+  peripherals: [
+    { instanceId: 'probe1', kind: 'probe', props: { throwOnTx: true } },
+    { instanceId: 'led1', kind: 'led' },
+  ],
+  wires: [
+    { id: 'w-probe', from: { instanceId: 'probe1', pin: 'A' }, to: { instanceId: 'mcu', pin: 'GPIO2' } },
+    { id: 'w-led', from: { instanceId: 'led1', pin: 'A' }, to: { instanceId: 'mcu', pin: 'GPIO2' } },
+  ],
+};
+
+const TWO_PROBES: Netlist = {
+  version: 1,
+  chip: 'esp32',
+  peripherals: [
+    { instanceId: 'probe1', kind: 'probe' },
+    { instanceId: 'probe2', kind: 'probe' },
+  ],
+  wires: [],
+};
+
 function i2cWrite(): BusTransaction {
   // SSD1306-style frame: control byte 0x00 (command stream) + display-off 0xAE.
   return { kind: 'i2c', bus: 0, target: 0x3c, dir: 'write', data: Uint8Array.from([0x00, 0xae]), ts: 5 };
@@ -32,12 +72,39 @@ function gpioWrite(pin: number, level: 0 | 1): BusTransaction {
   return { kind: 'gpio', bus: 0, target: pin, dir: 'write', data: Uint8Array.from([level]), ts: 6 };
 }
 
-function managerWith(netlist: Netlist): { manager: PeripheralManager; snapshots: RenderSnapshot[] } {
-  const manager = new PeripheralManager();
+function managerWith(netlist: Netlist, now: () => number = Date.now): { manager: PeripheralManager; snapshots: RenderSnapshot[] } {
+  const manager = new PeripheralManager(now);
   const snapshots: RenderSnapshot[] = [];
   manager.on('snapshot', (s: RenderSnapshot) => snapshots.push(s));
   manager.applyNetlist(netlist);
   return { manager, snapshots };
+}
+
+/**
+ * Manager driven by an injected synthetic clock, paired with faked timers so
+ * the trailing flushes fire deterministically (vi.useFakeTimers() required).
+ * `emissionTimes[i]` is the synthetic-clock time at which snapshots[i] fired.
+ */
+function clockedManager(netlist: Netlist): {
+  manager: PeripheralManager;
+  snapshots: RenderSnapshot[];
+  emissionTimes: number[];
+  advance: (ms: number) => Promise<void>;
+} {
+  let t = 0;
+  const manager = new PeripheralManager(() => t);
+  const snapshots: RenderSnapshot[] = [];
+  const emissionTimes: number[] = [];
+  manager.on('snapshot', (s: RenderSnapshot) => {
+    snapshots.push(s);
+    emissionTimes.push(t);
+  });
+  manager.applyNetlist(netlist);
+  const advance = async (ms: number): Promise<void> => {
+    t += ms;
+    await vi.advanceTimersByTimeAsync(ms);
+  };
+  return { manager, snapshots, emissionTimes, advance };
 }
 
 function isLevel(s: RenderSnapshot, level: number): boolean {
@@ -64,18 +131,27 @@ describe('PeripheralManager routing (PRD §4.2, dev-plan P1.4)', () => {
     expect(isLevel(snapshots[0], 1)).toBe(true);
   });
 
-  it('keeps I2C traffic away from the LED and GPIO traffic away from the OLED', () => {
-    const { manager, snapshots } = managerWith(LED_ON_GPIO2);
-    manager.route(i2cWrite());
-    manager.route(gpioWrite(2, 1));
-    manager.route(gpioWrite(2, 0));
+  it('keeps I2C traffic away from the LED and GPIO traffic away from the OLED', async () => {
+    // The LED's second level snapshot is coalesced by the 30fps window and
+    // arrives via the trailing flush (dev-plan task P1.5).
+    vi.useFakeTimers();
+    try {
+      const { manager, snapshots, advance } = clockedManager(LED_ON_GPIO2);
+      manager.route(i2cWrite());
+      manager.route(gpioWrite(2, 1));
+      manager.route(gpioWrite(2, 0)); // within the window: deferred, not dropped
 
-    const byInstance = snapshots.reduce<Record<string, string[]>>((acc, s) => {
-      (acc[s.instanceId] ??= []).push(s.type);
-      return acc;
-    }, {});
-    expect(byInstance['oled1']).toEqual(['pixels']);
-    expect(byInstance['led1']).toEqual(['level', 'level']);
+      expect(snapshots.filter((s) => s.instanceId === 'led1')).toHaveLength(1);
+
+      await advance(50);
+      const led = snapshots.filter((s) => s.instanceId === 'led1');
+      const oled = snapshots.filter((s) => s.instanceId === 'oled1');
+      expect(led.map((s) => s.type)).toEqual(['level', 'level']);
+      expect(isLevel(led[1], 0)).toBe(true); // the newest level survives coalescing
+      expect(oled.map((s) => s.type)).toEqual(['pixels']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('drops all routing when the netlist is re-applied without wires', () => {
@@ -103,4 +179,166 @@ describe('PeripheralManager routing (PRD §4.2, dev-plan P1.4)', () => {
     const manager = new PeripheralManager();
     expect(() => manager.route(i2cWrite())).not.toThrow();
   });
+});
+
+describe('snapshot throttling (dev-plan task P1.5: 30fps cap, PRD §9)', () => {
+  it('passes the first snapshot through immediately (leading edge, no timer)', () => {
+    const { manager, snapshots } = managerWith(LED_ON_GPIO2);
+    manager.route(gpioWrite(2, 1));
+    expect(snapshots).toHaveLength(1);
+    expect(isLevel(snapshots[0], 1)).toBe(true);
+  });
+
+  it('coalesces a same-tick burst into one immediate + one trailing snapshot', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, snapshots, advance } = clockedManager(LED_ON_GPIO2);
+      for (let i = 0; i < 50; i++) manager.route(i2cWrite()); // 50 OLED flushes in one burst
+
+      expect(snapshots).toHaveLength(1); // the whole burst collapsed into the leading frame
+      await advance(50);
+      expect(snapshots).toHaveLength(2); // exactly one trailing flush carrying the newest state
+      await advance(100);
+      expect(snapshots).toHaveLength(2); // burst ended: nothing further is emitted
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('caps a sustained 1ms stream at <=30fps and always delivers the latest state', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, snapshots, emissionTimes, advance } = clockedManager(LED_ON_GPIO2);
+      for (let i = 1; i <= 100; i++) {
+        manager.route(gpioWrite(2, i % 2 === 1 ? 1 : 0)); // toggle every virtual ms
+        await advance(1);
+      }
+      await advance(50); // let the final trailing flush land
+      const ledIdx = snapshots.map((s, i) => (s.instanceId === 'led1' ? i : -1)).filter((i) => i >= 0);
+      const led = ledIdx.map((i) => snapshots[i]);
+
+      // 100 fed snapshots: only a handful surface (30fps), never the raw 100.
+      expect(led.length).toBeGreaterThanOrEqual(3);
+      expect(led.length).toBeLessThanOrEqual(5); // ~150ms of synthetic time at 30fps
+      // Rate cap: consecutive emissions stay one window apart (fake timers round
+      // fractional delays, hence the 1ms slack).
+      const ledTimes = ledIdx.map((i) => emissionTimes[i]);
+      for (let i = 1; i < ledTimes.length; i++) {
+        expect(ledTimes[i] - ledTimes[i - 1]).toBeGreaterThanOrEqual(1000 / 30 - 1);
+      }
+      expect(isLevel(led[led.length - 1], 0)).toBe(true); // feed #100 ended on level 0
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps an independent budget per instanceId', () => {
+    const { manager, snapshots } = managerWith(LED_ON_GPIO2_AND_GPIO3);
+    manager.route(gpioWrite(2, 1));
+    manager.route(gpioWrite(3, 1)); // another instance: another leading edge
+    expect(snapshots).toHaveLength(2);
+    expect(new Set(snapshots.map((s) => s.instanceId))).toEqual(new Set(['led1', 'led2']));
+  });
+
+  it('re-applying the netlist cancels pending trailing snapshots', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, snapshots, advance } = clockedManager(LED_ON_GPIO2);
+      manager.route(gpioWrite(2, 1)); // leading
+      manager.route(gpioWrite(2, 0)); // pending, timer armed
+      manager.applyNetlist({ version: 1, chip: 'esp32', peripherals: LED_ON_GPIO2.peripherals, wires: [] });
+
+      await advance(100);
+      expect(snapshots).toHaveLength(1); // no trailing flush for the disposed instance
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('routing robustness (dev-plan task P1.5)', () => {
+  it('isolates a throwing peripheral: other targets still receive the transaction, error is logged with context', () => {
+    const { manager, snapshots } = managerWith(PROBE_NETLIST);
+    const logs: Array<{ level: string; msg: string }> = [];
+    manager.on('log', (l: { level: string; msg: string }) => logs.push(l));
+
+    manager.route(gpioWrite(2, 1));
+
+    expect(snapshots).toHaveLength(1); // led1 (wired to the same pin) still got it
+    expect(isLevel(snapshots[0], 1)).toBe(true);
+    expect(logs).toHaveLength(1);
+    expect(logs[0].level).toBe('error');
+    expect(logs[0].msg).toContain('probe1');
+    expect(logs[0].msg).toContain('gpio');
+  });
+
+  it('rejects a netlist with duplicate instanceIds and keeps the previous routing', () => {
+    const { manager, snapshots } = managerWith(LED_ON_GPIO2);
+    expect(() =>
+      manager.applyNetlist({
+        version: 1,
+        chip: 'esp32',
+        peripherals: [
+          { instanceId: 'led1', kind: 'led' },
+          { instanceId: 'led1', kind: 'led' },
+        ],
+        wires: LED_ON_GPIO2.wires,
+      }),
+    ).toThrow(/\[BB-200\].*'led1'/);
+
+    manager.route(gpioWrite(2, 1)); // old instances and routing are intact
+    expect(snapshots).toHaveLength(1);
+    expect(isLevel(snapshots[0], 1)).toBe(true);
+  });
+
+  it('dispose() disposes every instance, cancels pending flushes and stops routing', async () => {
+    vi.useFakeTimers();
+    try {
+      const { manager, snapshots, advance } = clockedManager(LED_ON_GPIO2);
+      manager.route(gpioWrite(2, 1)); // leading
+      manager.route(gpioWrite(2, 0)); // pending, timer armed
+
+      manager.dispose();
+      await advance(100);
+      expect(snapshots).toHaveLength(1); // the armed trailing flush was cancelled
+
+      manager.route(gpioWrite(2, 1)); // routing is gone
+      expect(snapshots).toHaveLength(1);
+      expect(manager.list()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('applyNetlist disposes replaced instances exactly once', () => {
+    probeDisposals.length = 0;
+    const manager = new PeripheralManager();
+    manager.applyNetlist(TWO_PROBES);
+    manager.applyNetlist(TWO_PROBES); // re-apply replaces all instances
+    expect(probeDisposals).toEqual(['probe1', 'probe2']);
+    manager.dispose();
+    expect(probeDisposals).toEqual(['probe1', 'probe2', 'probe1', 'probe2']);
+  });
+});
+
+// Registered once for this file (vitest isolates module state per test file).
+registerPeripheral({
+  kind: 'probe',
+  version: '0.0.0-test',
+  displayName: 'Test probe',
+  pins: [{ id: 'A', role: 'gpio-out' }],
+  create(_ctx, props) {
+    const instanceId = String(props?.instanceId);
+    const throwOnTx = props?.throwOnTx === true;
+    return {
+      kind: 'probe',
+      instanceId,
+      onTransaction(): void {
+        if (throwOnTx) throw new Error('probe exploded');
+      },
+      dispose(): void {
+        probeDisposals.push(instanceId);
+      },
+    };
+  },
 });
