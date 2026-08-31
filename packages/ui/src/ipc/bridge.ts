@@ -1,13 +1,20 @@
 // PRD: §6.6 — Thin typed wrapper around window.breadesp (exposed by preload.ts).
 // Renderer never touches Node directly.
 
+/** DBus forward channel — mirrors SimDbusChannel in shell/src/preload.ts (PRD §6.7). */
+interface SimDbusChannel {
+  socket?: string;
+  host?: string;
+  port?: number;
+}
+
 /** Payload of `sim:load` — mirrors shell/src/preload.ts (PRD §6.6). */
 interface SimLoadInput {
   elfPath: string;
   chip: 'esp32' | 'esp32s3' | 'esp32c3';
   qemuBin: string;
   gdbPort?: number;
-  dbusSocket?: string;
+  dbus?: SimDbusChannel;
 }
 
 interface BridgeApi {

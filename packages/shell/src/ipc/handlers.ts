@@ -17,10 +17,10 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   const { project, qemu, gdb, peripherals } = deps;
 
   // sim:*
-  ipcMain.handle('sim:load', async (_e, p: { elfPath: string; chip: 'esp32' | 'esp32s3' | 'esp32c3'; qemuBin: string; gdbPort?: number; dbusSocket?: string }) => {
+  ipcMain.handle('sim:load', async (_e, p: { elfPath: string; chip: 'esp32' | 'esp32s3' | 'esp32c3'; qemuBin: string; gdbPort?: number; dbus?: { socket?: string; host?: string; port?: number } }) => {
     // Architecture gate before spawn (dev-plan task P0.6, PRD §9).
     await project.validateFirmware(p.elfPath, p.chip);
-    return qemu.load({ firmwareElf: p.elfPath, chip: p.chip, qemuBin: p.qemuBin, gdbPort: p.gdbPort, dbusSocket: p.dbusSocket });
+    return qemu.load({ firmwareElf: p.elfPath, chip: p.chip, qemuBin: p.qemuBin, gdbPort: p.gdbPort, dbus: p.dbus });
   });
   ipcMain.handle('sim:start', async () => qemu.start());
   ipcMain.handle('sim:pause', async () => qemu.pause());

@@ -3,6 +3,16 @@
 // never checked into the repo (PRD §10.6).
 import type { ChipKind } from '@breadesp/netlist';
 
+/** DBus forward channel (PRD §4.2): the custom device connects out to the Bridge. */
+export interface QemuDbusChannel {
+  /** TCP loopback host (device property `host`, default 127.0.0.1 in the device). */
+  host?: string;
+  /** TCP port (device property `port`). */
+  port?: number;
+  /** Unix domain socket path (device property `socket`) — POSIX hosts only. */
+  socket?: string;
+}
+
 export interface QemuArgsInput {
   qemuBin: string;          // absolute path to qemu-system-xtensa
   firmwareElf: string;      // .elf path (symbol-bearing, required for debug)
@@ -11,8 +21,12 @@ export interface QemuArgsInput {
   gdbPort?: number;
   /** QMP control channel (TCP on loopback) so the Bridge can start/pause the VM. */
   qmpPort?: number;
-  /** DBus forward socket path (custom device -> Bridge). */
-  dbusSocket?: string;
+  /**
+   * DBus forward channel (custom device -> Bridge, PRD §6.7). Either a TCP
+   * host/port pair (works on Windows where AF_UNIX is unavailable to Node) or
+   * a unix socket path. Exactly one form.
+   */
+  dbus?: QemuDbusChannel;
   /** Disable all networking (PRD §9 sandbox). */
   noNetwork?: boolean;
 }
@@ -40,9 +54,22 @@ export function buildQemuArgs(input: QemuArgsInput): string[] {
   // QMP listens on TCP loopback (Node cannot reach AF_UNIX sockets on Windows).
   if (input.qmpPort) argv.push('-qmp', `tcp:127.0.0.1:${input.qmpPort},server=on,wait=off`);
   if (input.noNetwork !== false) argv.push('-nic', 'none');   // PRD §9
-  // DBus forward device: custom QEMU device that pipes bus traffic to a unix socket.
-  // TODO(PRD §4.2): implement the device in packages/sim-core device source (C).
-  if (input.dbusSocket) argv.push('-device', `breadesp-dbus,socket=${input.dbusSocket}`);
+  // DBus forward device (PRD §4.2, dev-plan task P1.2): the breadesp-dbus QEMU
+  // device serializes bus transactions (PRD §6.7) to this channel. TCP for
+  // Windows hosts, unix socket on POSIX.
+  if (input.dbus) {
+    const { host, port, socket } = input.dbus;
+    if (socket !== undefined && port !== undefined) {
+      throw new Error('dbus channel: pass either socket (unix) or host+port (TCP), not both');
+    }
+    if (socket !== undefined) {
+      argv.push('-device', `breadesp-dbus,socket=${socket}`);
+    } else if (port !== undefined) {
+      argv.push('-device', `breadesp-dbus,host=${host ?? '127.0.0.1'},port=${port}`);
+    } else {
+      throw new Error('dbus channel requires either socket or port');
+    }
+  }
 
   return argv;
 }

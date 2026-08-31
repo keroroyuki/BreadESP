@@ -54,4 +54,25 @@ describe('buildQemuArgs', () => {
     expect(argv).not.toContain('-qmp');
     expect(argv).not.toContain('-device');
   });
+
+  it('adds the breadesp-dbus device on a unix socket (POSIX hosts)', () => {
+    const argv = buildQemuArgs({ ...BASE, dbus: { socket: '/tmp/breadesp-dbus.sock' } });
+    expect(argv).toEqual(expect.arrayContaining(['-device', 'breadesp-dbus,socket=/tmp/breadesp-dbus.sock']));
+  });
+
+  it('adds the breadesp-dbus device on TCP loopback (Windows hosts)', () => {
+    const argv = buildQemuArgs({ ...BASE, dbus: { port: 5555 } });
+    expect(argv).toEqual(
+      expect.arrayContaining(['-device', 'breadesp-dbus,host=127.0.0.1,port=5555']),
+    );
+    const explicit = buildQemuArgs({ ...BASE, dbus: { host: '127.0.0.1', port: 5556 } });
+    expect(explicit).toEqual(
+      expect.arrayContaining(['-device', 'breadesp-dbus,host=127.0.0.1,port=5556']),
+    );
+  });
+
+  it('rejects dbus channels that are neither socket nor port, or both', () => {
+    expect(() => buildQemuArgs({ ...BASE, dbus: {} })).toThrow(/either socket or port/);
+    expect(() => buildQemuArgs({ ...BASE, dbus: { socket: '/tmp/x.sock', port: 1 } })).toThrow(/not both/);
+  });
 });

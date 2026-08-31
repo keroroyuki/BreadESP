@@ -7,7 +7,7 @@ import { accessSync, constants } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { createServer } from 'node:net';
 import { StringDecoder } from 'node:string_decoder';
-import { buildQemuArgs, type QemuArgsInput } from '@breadesp/sim-core';
+import { buildQemuArgs, type QemuArgsInput, type QemuDbusChannel } from '@breadesp/sim-core';
 import type { ChipKind } from '@breadesp/netlist';
 import { QmpClient } from './QmpClient.js';
 
@@ -18,7 +18,11 @@ export interface QemuLoadInput {
   chip: ChipKind;
   qemuBin: string;
   gdbPort?: number;
-  dbusSocket?: string;
+  /**
+   * DBus forward channel (PRD §6.7): unix socket path or TCP host/port. TCP is
+   * the portable choice — Node cannot serve AF_UNIX on Windows hosts.
+   */
+  dbus?: QemuDbusChannel;
   /** Fixed QMP port; an ephemeral loopback port is allocated when omitted. */
   qmpPort?: number;
   /** Test seam: full argv override for mock-subprocess integration tests (dev-plan §7.2). */
@@ -62,7 +66,7 @@ export class QemuRunner extends EventEmitter {
       firmwareElf: input.firmwareElf,
       chip: input.chip,
       gdbPort: input.gdbPort,
-      dbusSocket: input.dbusSocket,
+      dbus: input.dbus,
       qmpPort,
       noNetwork: true, // PRD §9 sandbox
     };

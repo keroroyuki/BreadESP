@@ -130,7 +130,7 @@ describe('preload ↔ handlers IPC contract (P1.1)', () => {
       chip: 'esp32',
       qemuBin: '/opt/qemu/bin/qemu-system-xtensa',
       gdbPort: 1234,
-      dbusSocket: undefined,
+      dbus: undefined,
     });
   });
 

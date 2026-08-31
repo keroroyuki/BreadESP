@@ -2,13 +2,20 @@
 // All IPC parameters/returns are JSON-serializable (PRD §6.6).
 import { contextBridge, ipcRenderer } from 'electron';
 
+/** DBus forward channel — mirrors QemuDbusChannel in sim-core (PRD §6.7). */
+export interface SimDbusChannel {
+  socket?: string;
+  host?: string;
+  port?: number;
+}
+
 /** Payload of `sim:load` — mirrors the handler in ipc/handlers.ts (PRD §6.6). */
 export interface SimLoadInput {
   elfPath: string;
   chip: 'esp32' | 'esp32s3' | 'esp32c3';
   qemuBin: string;
   gdbPort?: number;
-  dbusSocket?: string;
+  dbus?: SimDbusChannel;
 }
 
 const api = {
