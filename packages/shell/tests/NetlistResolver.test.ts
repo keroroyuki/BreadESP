@@ -1,5 +1,7 @@
 // PRD: §4.2, §6.5 — NetlistResolver routing rules: I2C by 7-bit address
-// (props.address with factory-default fallback), GPIO by MCU pin via wires.
+// (props.address with factory-default fallback), SPI by CS line index
+// (props.cs with factory-default fallback, dev-plan P2.1), GPIO by MCU pin
+// via wires.
 import { describe, expect, it } from 'vitest';
 import type { Netlist, Wire } from '@breadesp/netlist';
 import type { BusTransaction } from '@breadesp/peripherals';
@@ -22,6 +24,10 @@ function i2cWrite(target: number, bus = 0): BusTransaction {
 
 function gpioWrite(pin: number): BusTransaction {
   return { kind: 'gpio', bus: 0, target: pin, dir: 'write', data: Uint8Array.from([1]), ts: 1 };
+}
+
+function spiWrite(cs: number, bus = 0): BusTransaction {
+  return { kind: 'spi', bus, target: cs, dir: 'write', data: Uint8Array.from([0x2a]), ts: 1 };
 }
 
 describe('NetlistResolver (PRD §4.2/§6.5 routing)', () => {
@@ -104,12 +110,46 @@ describe('NetlistResolver (PRD §4.2/§6.5 routing)', () => {
     expect(r.resolve(gpioWrite(2))).toEqual([]);
   });
 
-  it('does not route spi/pwm/i2s/adc transactions yet', () => {
+  it('routes an SPI transaction to the instance claiming that CS line', () => {
+    const r = new NetlistResolver(netlist([
+      { instanceId: 'tft1', kind: 'st7789', props: { cs: 1 } },
+      { instanceId: 'tft2', kind: 'st7789', props: { cs: 2 } },
+    ]));
+    expect(r.resolve(spiWrite(1))).toEqual([{ instanceId: 'tft1', pin: 'CS' }]);
+  });
+
+  it('routes SPI regardless of the controller number (bus not in the netlist)', () => {
+    const r = new NetlistResolver(netlist([{ instanceId: 'tft1', kind: 'st7789', props: { cs: 1 } }]));
+    expect(r.resolve(spiWrite(1, 1))).toEqual([{ instanceId: 'tft1', pin: 'CS' }]);
+  });
+
+  it('falls back to the factory default CS when props.cs is omitted', () => {
+    const r = new NetlistResolver(netlist([{ instanceId: 'tft1', kind: 'st7789' }]));
+    expect(r.resolve(spiWrite(0))).toEqual([{ instanceId: 'tft1', pin: 'CS' }]);
+  });
+
+  it('returns [] for a CS line no instance claims', () => {
+    const r = new NetlistResolver(netlist([{ instanceId: 'tft1', kind: 'st7789', props: { cs: 1 } }]));
+    expect(r.resolve(spiWrite(2))).toEqual([]);
+  });
+
+  it('rejects an out-of-range SPI CS claim (0-2 only)', () => {
+    const r = new NetlistResolver(netlist([{ instanceId: 'tft1', kind: 'st7789', props: { cs: 3 } }]));
+    expect(r.resolve(spiWrite(3))).toEqual([]);
+  });
+
+  it('does not route SPI to a kind without an spi-cs pin role', () => {
+    // e.g. an LED with a stray numeric 'cs' prop must not claim SPI traffic.
+    const r = new NetlistResolver(netlist([{ instanceId: 'led1', kind: 'led', props: { cs: 1 } }]));
+    expect(r.resolve(spiWrite(1))).toEqual([]);
+  });
+
+  it('does not route pwm/i2s/adc transactions yet', () => {
     const r = new NetlistResolver(netlist(
       [{ instanceId: 'oled1', kind: 'ssd1306', props: { address: 0x3c } }],
       [wire('w1', { instanceId: 'oled1', pin: 'SDA' }, { instanceId: 'mcu', pin: 'GPIO21' })],
     ));
-    for (const kind of ['spi', 'pwm', 'i2s', 'adc'] as const) {
+    for (const kind of ['pwm', 'i2s', 'adc'] as const) {
       const tx: BusTransaction = { kind, bus: 0, target: 1, dir: 'write', data: new Uint8Array(1), ts: 1 };
       expect(r.resolve(tx)).toEqual([]);
     }
