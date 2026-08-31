@@ -1,0 +1,129 @@
+// PRD: §F-BB-4, §F-PROJ-1 — netlist/layout separation invariants of the UI store.
+// Wiring edits must never touch the visual half; moves must never touch the
+// logic half; both serialize independently (netlist.json / layout.json).
+import { describe, it, expect, beforeEach } from 'vitest';
+import { MCU_INSTANCE_ID, validateNetlist, type Netlist } from '@breadesp/netlist';
+import { toLayoutFile, toNetlistFile, useProjectStore } from '../src/store/projectStore';
+
+const emptyNetlist = (): Netlist => ({ version: 1, chip: 'esp32', peripherals: [], wires: [] });
+
+const reset = (): void => {
+  useProjectStore.getState().setNetlist(emptyNetlist());
+  useProjectStore.getState().setLayout([]);
+};
+
+describe('projectStore', () => {
+  beforeEach(reset);
+
+  it('places a dropped peripheral in both netlist and layout with a deterministic id', () => {
+    const id = useProjectStore.getState().addPeripheral('led', 10, 20);
+    const { netlist, layout } = useProjectStore.getState();
+    expect(id).toBe('led-1');
+    expect(netlist.peripherals).toEqual([{ instanceId: 'led-1', kind: 'led' }]);
+    expect(layout).toEqual([{ instanceId: 'led-1', x: 10, y: 20, kind: 'led' }]);
+  });
+
+  it('skips ids already used by a loaded project', () => {
+    useProjectStore.getState().setNetlist({
+      version: 1,
+      chip: 'esp32',
+      peripherals: [{ instanceId: 'led-1', kind: 'led' }],
+      wires: [],
+    });
+    const id = useProjectStore.getState().addPeripheral('led', 0, 0);
+    expect(id).toBe('led-2');
+  });
+
+  it('moving an instance changes only the layout (netlist object untouched)', () => {
+    useProjectStore.getState().addPeripheral('led', 10, 20);
+    const netlistBefore = useProjectStore.getState().netlist;
+    useProjectStore.getState().movePeripheral('led-1', 300, 200);
+    const { netlist, layout } = useProjectStore.getState();
+    expect(netlist).toBe(netlistBefore); // identity preserved: no logic edit happened
+    expect(layout[0]).toEqual({ instanceId: 'led-1', x: 300, y: 200, kind: 'led' });
+  });
+
+  it('wiring changes only the netlist (layout array untouched)', () => {
+    useProjectStore.getState().addPeripheral('led', 10, 20);
+    const layoutBefore = useProjectStore.getState().layout;
+    const id = useProjectStore.getState().addWire(
+      { instanceId: 'led-1', pin: 'A' },
+      { instanceId: MCU_INSTANCE_ID, pin: 'GPIO2' },
+    );
+    const { netlist, layout } = useProjectStore.getState();
+    expect(id).toBe('wire-1');
+    expect(layout).toBe(layoutBefore); // identity preserved: no visual edit happened
+    expect(netlist.wires).toEqual([
+      {
+        id: 'wire-1',
+        from: { instanceId: 'led-1', pin: 'A' },
+        to: { instanceId: 'mcu', pin: 'GPIO2' },
+      },
+    ]);
+  });
+
+  it('rejects self-loop and duplicate wires (in both endpoint orders)', () => {
+    const st = useProjectStore.getState();
+    st.addWire({ instanceId: 'led-1', pin: 'A' }, { instanceId: MCU_INSTANCE_ID, pin: 'GPIO2' });
+    expect(st.addWire({ instanceId: 'led-1', pin: 'A' }, { instanceId: MCU_INSTANCE_ID, pin: 'GPIO2' })).toBeNull();
+    expect(st.addWire({ instanceId: MCU_INSTANCE_ID, pin: 'GPIO2' }, { instanceId: 'led-1', pin: 'A' })).toBeNull();
+    expect(st.addWire({ instanceId: MCU_INSTANCE_ID, pin: 'GPIO2' }, { instanceId: MCU_INSTANCE_ID, pin: 'GPIO2' })).toBeNull();
+    expect(useProjectStore.getState().netlist.wires).toHaveLength(1);
+  });
+
+  it('removing a wire touches only the netlist', () => {
+    const st = useProjectStore.getState();
+    st.addWire({ instanceId: 'led-1', pin: 'A' }, { instanceId: MCU_INSTANCE_ID, pin: 'GPIO2' });
+    st.addWire({ instanceId: 'led-1', pin: 'K' }, { instanceId: MCU_INSTANCE_ID, pin: 'GPIO4' });
+    useProjectStore.getState().removeWire('wire-1');
+    const { netlist } = useProjectStore.getState();
+    expect(netlist.wires.map((w) => w.id)).toEqual(['wire-2']);
+  });
+
+  it('removing an instance also removes its wires so the netlist stays valid', () => {
+    const st = useProjectStore.getState();
+    st.addPeripheral('led', 0, 0);
+    st.addPeripheral('button', 100, 0);
+    st.addWire({ instanceId: 'led-1', pin: 'A' }, { instanceId: MCU_INSTANCE_ID, pin: 'GPIO2' });
+    st.addWire({ instanceId: 'button-1', pin: '1' }, { instanceId: MCU_INSTANCE_ID, pin: 'GPIO4' });
+    useProjectStore.getState().removePeripheral('led-1');
+    const { netlist, layout } = useProjectStore.getState();
+    expect(netlist.peripherals.map((p) => p.instanceId)).toEqual(['button-1']);
+    expect(netlist.wires.map((w) => w.id)).toEqual(['wire-2']);
+    expect(layout.map((l) => l.instanceId)).toEqual(['button-1']);
+    expect(validateNetlist(netlist).ok).toBe(true);
+  });
+
+  it('keeps the netlist valid through a full edit sequence', () => {
+    const st = useProjectStore.getState();
+    st.addPeripheral('led', 0, 0);
+    st.addPeripheral('button', 100, 0);
+    st.addPeripheral('ssd1306', 200, 0);
+    st.addWire({ instanceId: 'led-1', pin: 'A' }, { instanceId: MCU_INSTANCE_ID, pin: 'GPIO2' });
+    st.addWire({ instanceId: 'button-1', pin: '1' }, { instanceId: MCU_INSTANCE_ID, pin: 'GPIO4' });
+    st.addWire({ instanceId: 'ssd1306-1', pin: 'SDA' }, { instanceId: MCU_INSTANCE_ID, pin: 'GPIO21' });
+    st.movePeripheral('led-1', 55, 66);
+    st.removePeripheral('button-1');
+    const { ok, issues } = validateNetlist(useProjectStore.getState().netlist);
+    expect(ok).toBe(true);
+    expect(issues).toEqual([]);
+  });
+
+  it('serializes the netlist and layout as disjoint halves', () => {
+    const st = useProjectStore.getState();
+    st.addPeripheral('led', 10, 20);
+    st.addWire({ instanceId: 'led-1', pin: 'A' }, { instanceId: MCU_INSTANCE_ID, pin: 'GPIO2' });
+    const net = toNetlistFile(useProjectStore.getState().netlist);
+    const lay = toLayoutFile(useProjectStore.getState().layout);
+    // Logic half carries wiring only — never coordinates.
+    expect(JSON.stringify(net)).not.toContain('"x":');
+    expect(JSON.stringify(net)).not.toContain('"y":');
+    // Visual half carries positions only — never wires or peripheral logic.
+    expect(JSON.stringify(lay)).not.toContain('"wires"');
+    expect(JSON.stringify(lay)).not.toContain('"peripherals"');
+    expect(lay.items).toEqual([{ instanceId: 'led-1', x: 10, y: 20, kind: 'led' }]);
+    // Both halves round-trip through JSON (IPC / persistence boundary, PRD §6.6).
+    expect(JSON.parse(JSON.stringify(net))).toEqual(useProjectStore.getState().netlist);
+    expect(JSON.parse(JSON.stringify(lay))).toEqual(lay);
+  });
+});

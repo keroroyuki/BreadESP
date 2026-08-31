@@ -2,6 +2,7 @@ node_modules/
 .pnpm-store/
 dist/
 *.log
+*.tsbuildinfo
 .DS_Store
 
 # QEMU binaries fetched on demand (PRD §5, §10.6)
