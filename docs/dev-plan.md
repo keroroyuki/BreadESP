@@ -53,8 +53,8 @@
 
 ### 2.1 里程碑验收标志
 - **M0**（已达成 2026-08-31）：`blink.elf` 启动，UART 打印 `Hello`，GDB 断在 `app_main`。
-- **M1**（进行中，任务 1.1–1.9 已完成）：UI 拖拽 LED 连 GPIO2，OLED 显示固件绘制的文字，可断点单步。
-- **M2**（未开始）：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
+- **M1**（任务 1.1–1.10 已完成，Electron 应用级手动回归随收尾统一进行）：UI 拖拽 LED 连 GPIO2，OLED 显示固件绘制的文字，可断点单步。
+- **M2**（进行中，任务 2.1 已完成）：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
 - **M3**（未开始）：麦克风波形注入后固件能读到采样值。
 - **M4**（未开始）：切换芯片型号后同一工程可在 ESP32/S3 跑通。
 - **M5**（未开始）：第三方包 `registerPeripheral()` 后 UI 自动出现新器件。
@@ -99,14 +99,14 @@
 
 ### Phase 2 — 显示与音频（M2）
 
-| # | 任务 | 产物 |
-|---|---|---|
-| 2.1 | `st7789` SPI 命令解释 + rgb565 帧缓冲 | TFT 彩屏渲染 |
-| 2.2 | `TftRenderer`（rgb565→ImageData） | UI Canvas |
-| 2.3 | `buzzer` PWM 频率→WebAudio 方波 | 发声 |
-| 2.4 | `speaker` I2S PCM→WebAudio 播放 | 音频流 |
-| 2.5 | `Oscilloscope` 抓 GPIO/PWM/I2S 时序 | 波形面板 |
-| 2.6 | 仿真速度倍率 + 暂停/继续（QMP） | sim 控制 |
+| # | 任务 | 产物 | 验收 | 状态 |
+|---|---|---|---|---|
+| 2.1 | `st7789` SPI 命令解释 + rgb565 帧缓冲 | TFT 彩屏渲染 | SPI 事务落到 tft1 且像素入帧缓冲 | 已完成 2026-08-31 |
+| 2.2 | `TftRenderer`（rgb565→ImageData） | UI Canvas | 画布显示 TFT 内容 | 未开始 |
+| 2.3 | `buzzer` PWM 频率→WebAudio 方波 | 发声 | 蜂鸣器按频率发声 | 未开始 |
+| 2.4 | `speaker` I2S PCM→WebAudio 播放 | 音频流 | 喇叭播放正弦波 | 未开始 |
+| 2.5 | `Oscilloscope` 抓 GPIO/PWM/I2S 时序 | 波形面板 | 波形面板显示 GPIO 波形 | 未开始 |
+| 2.6 | 仿真速度倍率 + 暂停/继续（QMP） | sim 控制 | sim 可暂停/继续/调速 | 未开始 |
 
 ### Phase 3 — 输入类外设（M3）
 
@@ -444,6 +444,19 @@ Previously applyNetlist leaked old instances on re-apply.
 > `scripts/make-uart-echo-elf.mjs` 确定性生成（xtensa-elf.mjs 新增 l32i 编码），`--check` 模式
 > 可校验入库 fixture 无漂移。已知平台差异：Windows stdio 后端（char-win-stdio.c）丢弃 `\r` 字节，故 UI 与
 > 测试统一以 `\n` 结尾注入行。
+
+> P2.1 验证记录（2026-08-31）：`pnpm typecheck` 0 错误；全仓测试 218 通过 + 5 跳过（Windows 门控，
+> 新增 spi e2e 跳过项）。分三层验证——st7789 模型 13 项单测（init→全帧渲染、DC 电平整帧适用、半像素跨帧、
+> CASET/RASET 窗口写入与回绕、MADCTL 旋转（含 TFT_eSPI drawPixel 局部窗口期望）、BGR 通道交换、
+> 熄屏/休眠空白、INVON/INVOFF 反色、任意命令终止 RAMWR 流、SWRESET 上电态、CS 过滤与读事务忽略、
+> 缺 dc 告警一次），单测暴露并修复两个真实模型 bug（MADCTL 变换顺序、RAMWR 终止语义）；NetlistResolver
+> 扩至 20 项（CS 认领、控制器号无关、factory 缺省回退、未认领 CS、越界 CS 拒绝、spi-cs 角色过滤）；
+> 真实 QEMU e2e（spi-st7789.e2e.test.ts）于 WSL 验证通过（Docker 重建的 Linux breadesp QEMU，
+> 含 SPI sniffer）：spi.elf 的 CS0 事务流把 4 个 RGB565 像素按扫描序渲染进 240x240 帧缓冲（其余为黑）、
+> 无广播泄漏（仅 tft1 产生快照）、UART 出现 `SPI OK` 完成标记。金标固件 `spi.elf` 由
+> `scripts/make-spi-elf.mjs` 确定性生成，`--check` 模式可校验入库 fixture 无漂移。
+> QEMU 设备构建两条教训：`SSI_BUS` 宏未导出（用 `qdev_get_child_bus(...,"spi")` 强转 `SSIBus*`）；
+> SSI 外设类不实现 `realize` 回调会在 realize 阶段 SIGSEGV（sniffer 实现了空回调）。
 
 ### M2 清单
 - [ ] TFT 渲染 rgb565 彩图

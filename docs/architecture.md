@@ -20,6 +20,7 @@
 
 QEMU-ESP32 默认外设模型不全。我们在 QEMU 源码中新增一个 device `breadesp-dbus`（P1.2 已落地）：
 - **I2C**：动态给每个 `esp32-i2c` 控制器挂一个通配从机（`breadesp-dbus.i2c-sniffer`），只 ACK 未被 QEMU 内建外设占用的地址，完整捕获 START/数据/STOP。
+- **SPI**（P2.1）：给每个通用 `esp32.spi` 控制器总线挂一个 SSI 嗅探从机（`breadesp-dbus.spi-sniffer`，`SSI_CS_NONE` 极性故能看见每个字节），控制器硬件 CS 输出线接到嗅探器的 GPIO 输入：CS 拉低开帧（线号成为 `tx.target`，即 CS 索引 0–2），CS 释放时整帧字节作为一条 `spi` 写事务发出。flash/PSRAM 所在的总线不挂嗅探器。SSI 从机类必须实现 `realize` 回调，否则 QEMU 在 realize 阶段解引用空指针直接 SIGSEGV。
 - **GPIO**：对 DPORT(0x3ff44000) 与 APB(0x60004000) 双基地址的 GPIO 寄存器组做高优先级影子 MMIO，解码 OUT_W1TS/W1TC 写为引脚级事务并透传原始访问。
 - 事务以 bottom-half 批量冲刷成长度前缀 JSON 帧（PRD §6.7），通过 TCP/unix socket 发往 Bridge。
 - Bridge 的 `DBusChannel` 反序列化（虚拟 ns → 逻辑 ms）后交给 `PeripheralManager` 路由到对应外设实例。
@@ -32,7 +33,9 @@ QEMU-ESP32 默认外设模型不全。我们在 QEMU 源码中新增一个 devic
 2. QEMU I2C 控制器产生写事务 → DBus Forward Device 序列化 → Bridge socket。
 3. `DBusChannel` 解析为 `BusTransaction{kind:'i2c',bus:0,target:0x3c,dir:'write',...}`。
 4. `NetlistResolver` 根据网表路由：I2C 按 7 位地址（`props.address`，缺省回退
-   `factory.defaults.address`）；GPIO 按 `mcu.GPIO<n>` 连线（同一引脚多外设全收）。
+   `factory.defaults.address`）；SPI 按 CS 线（`tx.target` 是 CS 索引 0–2，实例经
+   `props.cs` 认领，且 factory 引脚表须含 `spi-cs` 角色才参与匹配）；GPIO 按
+   `mcu.GPIO<n>` 连线（同一引脚多外设全收）。
    `PeripheralManager.route()` 只投递到解析出的实例，不再广播。
 5. `PeripheralManager` 调用 `oled1.onTransaction(tx)`。单个外设模型抛错只记录
    `[BB-201]` 日志（含 instanceId/事务上下文），不阻断同事务投递给其他实例。
@@ -78,6 +81,27 @@ Adafruit_GFX 常用绘制路径（begin() 初始化 + display() 全帧推送）�
   COM 扫描方向（0xC0/0xC8）、起始行（0x40-0x7F）、反色（0xA7）、全亮（0xA5）与
   上电态（显示关 = 熄灭）。模块走线约定 (0xA1+0xC8)（Adafruit 默认）为恒等变换，
   GFX 坐标直落玻璃坐标。未建模项：硬件自动滚动（0x26-0x2F）、亮度渐变（0xA2/0xA3）。
+
+### 3.4 ST7789 命令解释器（P2.1）
+
+`packages/peripherals/src/st7789.ts` 按 datasheet 语义解释 SPI 事务流，覆盖
+TFT_eSPI / Adafruit_ST7789 常用绘制路径（init 序列 + 窗口推送 RGB565 像素）：
+
+- **命令/数据分流**：DC 线是普通 GPIO，经网表连线（`props.dc`）路由到实例；
+  QEMU 的 SPI 控制器把整个 CS 帧原子时钟输出，故帧时刻采样的 DC 电平适用于整帧——
+  DC=0 全帧是命令操作码，DC=1 全帧是数据（命令参数或 RAMWR 像素流）。DC 未连线时
+  告警一次并丢弃 SPI 帧（无法分流）。
+- **多字节命令**：CASET/RASET/MADCTL/COLMOD 及 gamma/电源块用参数计数表原子消费，
+  参数可跨事务；任何 DC=0 字节重置解析器，参数缺口由下一条命令清掉，流不会失步。
+- **GRAM 寻址**：CASET/RASET 窗口与地址计数器持久；计数器从窗口起点出发 X 优先推进、
+  窗口内回绕。MADCTL 是地址→玻璃坐标的逐像素变换：MV 先换轴，MX/MY 再镜像列/行
+  （与 datasheet 存储器写扫描图及 setRotation 的旋转局部窗口一致）。
+- **RAMWR 语义**：0x2C 重置地址计数器到窗口起点并接受后续 DC=1 字节为像素流；
+  任何其它命令终止流（datasheet 原文语义）；像素高字节先发，半像素可跨事务。
+- **渲染态**：DISPON/DISPOFF、SLPIN/SLPOUT（二者熄屏）、INVON/INVOFF（RGB565 按位取反）、
+  MADCTL 的 RGB/BGR 序（快照期做通道交换）。快照为 240x240 RGB565 数组。
+- **未建模项**（文档化缺口）：gamma 曲线、局部/滚动区域、idle 模式、RST 硬线
+  （SWRESET 0x01 已覆盖软复位）、MISO 读通道（与 I2C 共享的 PRD §6.3 TODO）。
 
 ## 4. 调试链路
 

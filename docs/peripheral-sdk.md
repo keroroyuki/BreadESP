@@ -46,9 +46,15 @@ registerPeripheral(myLedFactory);
 - **I2C**：按 7 位地址路由——实例 `props.address`，缺省回退 `factory.defaults.address`
   （如 ssd1306 默认 `0x3c`）。ESP32 GPIO 矩阵决定 MCU 引脚无法标识 I2C 控制器，故
   `bus` 字段暂不参与匹配。
+- **SPI**：按 CS 线路由（P2.1 起）——QEMU 设备把 `tx.target` 帧化为控制器硬件 CS
+  线索引（0–2），实例用 `props.cs` 认领（缺省回退 `factory.defaults.cs`，如 st7789
+  默认 `0`）。只有 factory 引脚表声明了 `spi-cs` 角色的实例才参与 SPI 匹配（防止
+  带 numeric prop 的非 SPI 外设误匹配）。同 I2C，`bus` 字段不参与匹配。
 - **GPIO**：按 MCU 引脚路由——网表中一端为 `{ instanceId: 'mcu', pin: 'GPIO<n>' }` 的
   连线，把 `target = n` 的事务投递到另一端外设；同一引脚可挂多个外设（全部收到）。
-- **SPI/PWM/I2S/ADC**：暂不路由（待 P2/P3 对应外设模型落地）。
+  SPI 外设的控制线（DC/RST/BL）也走这里：把实例的 `DC` 引脚连到 `mcu.GPIO<n>` 并在
+  `props.dc` 声明同一编号，模型据此把 GPIO 电平采样为命令/数据选择。
+- **PWM/I2S/ADC**：暂不路由（待 P2/P3 对应外设模型落地）。
 
 > TODO(PRD §6.1): 基于 `pins[].role` 的连线合法性校验（如 i2c-sda 不能接到 gpio-out）在
 > 后续里程碑补齐。
