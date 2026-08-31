@@ -17,8 +17,11 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   const { project, qemu, gdb, peripherals } = deps;
 
   // sim:*
-  ipcMain.handle('sim:load', async (_e, p: { elfPath: string; chip: 'esp32' | 'esp32s3' | 'esp32c3'; qemuBin: string; gdbPort?: number; dbusSocket?: string }) =>
-    qemu.load({ firmwareElf: p.elfPath, chip: p.chip, qemuBin: p.qemuBin, gdbPort: p.gdbPort, dbusSocket: p.dbusSocket }));
+  ipcMain.handle('sim:load', async (_e, p: { elfPath: string; chip: 'esp32' | 'esp32s3' | 'esp32c3'; qemuBin: string; gdbPort?: number; dbusSocket?: string }) => {
+    // Architecture gate before spawn (dev-plan task P0.6, PRD §9).
+    await project.validateFirmware(p.elfPath, p.chip);
+    return qemu.load({ firmwareElf: p.elfPath, chip: p.chip, qemuBin: p.qemuBin, gdbPort: p.gdbPort, dbusSocket: p.dbusSocket });
+  });
   ipcMain.handle('sim:start', async () => qemu.start());
   ipcMain.handle('sim:pause', async () => qemu.pause());
   ipcMain.handle('sim:step', async () => qemu.step());
@@ -26,8 +29,11 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   ipcMain.handle('sim:status', async () => qemu.getStatus());
 
   // fw:*
-  ipcMain.handle('fw:load', async (_e, p: { elfPath: string; chip: 'esp32' | 'esp32s3' | 'esp32c3' }) =>
-    qemu.load({ firmwareElf: p.elfPath, chip: p.chip, qemuBin: process.env.BREADESP_QEMU_BIN! }));
+  ipcMain.handle('fw:load', async (_e, p: { elfPath: string; chip: 'esp32' | 'esp32s3' | 'esp32c3' }) => {
+    // Architecture gate before spawn (dev-plan task P0.6, PRD §9).
+    await project.validateFirmware(p.elfPath, p.chip);
+    return qemu.load({ firmwareElf: p.elfPath, chip: p.chip, qemuBin: process.env.BREADESP_QEMU_BIN! });
+  });
   ipcMain.handle('fw:listSymbols', async () => { /* TODO(PRD §F-FW-4): via gdb info functions */ return []; });
 
   // dbg:*

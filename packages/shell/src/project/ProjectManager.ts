@@ -3,7 +3,8 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { validateNetlist } from '@breadesp/netlist';
-import type { Netlist } from '@breadesp/netlist';
+import type { ChipKind, Netlist } from '@breadesp/netlist';
+import { validateElf } from '@breadesp/sim-core';
 
 export interface ProjectPaths {
   firmwareElf: string;
@@ -31,6 +32,24 @@ export class ProjectManager {
       layout: join(dir, 'layout.json'),
       meta: join(dir, 'meta.json'),
     };
+  }
+
+  /**
+   * Pre-load firmware gate (dev-plan task P0.6): the ELF header must match the
+   * target chip's architecture, otherwise loading is refused (PRD §9, F-FW-5).
+   */
+  async validateFirmware(elfPath: string, chip: ChipKind): Promise<void> {
+    let buf: Buffer;
+    try {
+      buf = await readFile(elfPath);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`[BB-101] cannot read firmware ELF ${elfPath}: ${reason}`);
+    }
+    const { ok, issues } = validateElf(buf, chip);
+    if (!ok) {
+      throw new Error(`[BB-101] firmware ELF ${elfPath} rejected: ${issues.map((i) => i.message).join('; ')}`);
+    }
   }
 
   async saveNetlist(netlist: Netlist): Promise<void> {
