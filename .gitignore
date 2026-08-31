@@ -7,5 +7,8 @@ dist/
 # QEMU binaries fetched on demand (PRD §5, §10.6)
 packages/sim-core/bin/
 
+# QEMU device-build workspace: source checkout, vendored subprojects, tars (§10.6)
+packages/sim-core/build/
+
 # Logs (PRD §9)
 *.breadesp/logs/
