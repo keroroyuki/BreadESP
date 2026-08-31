@@ -52,12 +52,12 @@
 > 预估基于"AI 生成 + 人工审查"节奏；纯人工需 ×2–3。
 
 ### 2.1 里程碑验收标志
-- **M0**：`blink.elf` 启动，UART 打印 `Hello`，GDB 断在 `app_main`。
-- **M1**：UI 拖拽 LED 连 GPIO2，OLED 显示固件绘制的文字，可断点单步。
-- **M2**：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
-- **M3**：麦克风波形注入后固件能读到采样值。
-- **M4**：切换芯片型号后同一工程可在 ESP32/S3 跑通。
-- **M5**：第三方包 `registerPeripheral()` 后 UI 自动出现新器件。
+- **M0**（已达成 2026-08-31）：`blink.elf` 启动，UART 打印 `Hello`，GDB 断在 `app_main`。
+- **M1**（进行中，任务 1.1 已完成）：UI 拖拽 LED 连 GPIO2，OLED 显示固件绘制的文字，可断点单步。
+- **M2**（未开始）：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
+- **M3**（未开始）：麦克风波形注入后固件能读到采样值。
+- **M4**（未开始）：切换芯片型号后同一工程可在 ESP32/S3 跑通。
+- **M5**（未开始）：第三方包 `registerPeripheral()` 后 UI 自动出现新器件。
 
 ---
 
@@ -67,14 +67,14 @@
 
 **目标**：打通"固件 → QEMU → 串口 + GDB"最关键链路，验证可行性。
 
-| # | 任务 | 产物 | 验收 |
-|---|---|---|---|
-| 0.1 | 搭建 monorepo 与工具链 | 已有骨架，`pnpm install` 通过 | `pnpm typecheck` 0 错误 |
-| 0.2 | 实现 `scripts/fetch-qemu.mjs` 真实下载 | 按 host 解析 release 资产、校验 checksum | `qemu-system-xtensa --version` 可执行 |
-| 0.3 | 准备黄金固件 `blink.elf` + 测试用例 | `packages/sim-core/fixtures/blink.elf` | 文件存在且为 Xtensa ELF |
-| 0.4 | 实现 `QemuRunner.load/start` 真实启动 | stdout→uart 事件 | UART 收到 `Hello ESP32` |
-| 0.5 | 实现 `GdbBridge` 连接 + 断点 | `setBreakpoint('app_main')` | GDB 停在 app_main |
-| 0.6 | ELF 架构校验（e_machine==0x5e Xtensa, EM_XTENSA=94） | `ProjectManager` 加载前校验 | 非目标 ELF 报错拒绝 |
+| # | 任务 | 产物 | 验收 | 状态 |
+|---|---|---|---|---|
+| 0.1 | 搭建 monorepo 与工具链 | 已有骨架，`pnpm install` 通过 | `pnpm typecheck` 0 错误 | 已完成 2026-08-28 |
+| 0.2 | 实现 `scripts/fetch-qemu.mjs` 真实下载 | 按 host 解析 release 资产、校验 checksum | `qemu-system-xtensa --version` 可执行 | 已完成 2026-08-28 |
+| 0.3 | 准备黄金固件 `blink.elf` + 测试用例 | `packages/sim-core/fixtures/blink.elf` | 文件存在且为 Xtensa ELF | 已完成 2026-08-29 |
+| 0.4 | 实现 `QemuRunner.load/start` 真实启动 | stdout→uart 事件 | UART 收到 `Hello ESP32` | 已完成 2026-08-29 |
+| 0.5 | 实现 `GdbBridge` 连接 + 断点 | `setBreakpoint('app_main')` | GDB 停在 app_main | 已完成 2026-08-29 |
+| 0.6 | ELF 架构校验（e_machine==0x5e Xtensa, EM_XTENSA=94） | `ProjectManager` 加载前校验 | 非目标 ELF 报错拒绝 | 已完成 2026-08-31 |
 
 **禁止在 P0 做**：UI 美化、外设模型、网表校验扩展。
 
@@ -82,18 +82,18 @@
 
 **目标**：端到端可演示的虚拟面包板最小可用版。
 
-| # | 任务 | 产物 | 验收 |
-|---|---|---|---|
-| 1.1 | 补齐 preload↔handlers IPC 通道对齐 | `sim:load/onUart` 等 | 无"未注册通道"错误 |
-| 1.2 | 实现 QEMU 自定义设备 `breadesp-dbus`（C） | 独立 QEMU 构建产物 | 总线事务能序列化到 socket |
-| 1.3 | 实现 `DBusChannel` 帧协议（长度前缀 JSON） | Node 侧解析器 | 收到一条 I2C 事务 |
-| 1.4 | 实现 `NetlistResolver` I2C/GPIO 解析 | 按 address/pin 路由 | OLED 事务落到 oled1 |
-| 1.5 | 完善 `PeripheralManager` 路由 + 快照节流 | 30fps 上限 | UI 不卡顿 |
-| 1.6 | `ssd1306` 命令集补全（gfx 库常用路径） | 显存更新正确 | Adafruit_GFX demo 正常 |
-| 1.7 | `BreadboardCanvas` 拖拽放置 + 连线编辑 | 可视化连线 | 网表与布局分离持久化 |
-| 1.8 | 工程保存/加载（`.breadesp` 目录） | ProjectManager | 关闭重开恢复原样 |
-| 1.9 | 调试面板：断点/单步/变量/寄存器 | Inspector | 可看 `app_main` 局部变量 |
-| 1.10 | 串口控制台双向（输出+注入） | SerialConsole | 键入回车被固件读到 |
+| # | 任务 | 产物 | 验收 | 状态 |
+|---|---|---|---|---|
+| 1.1 | 补齐 preload↔handlers IPC 通道对齐 | `sim:load/onUart` 等 | 无"未注册通道"错误 | 已完成 2026-08-31 |
+| 1.2 | 实现 QEMU 自定义设备 `breadesp-dbus`（C） | 独立 QEMU 构建产物 | 总线事务能序列化到 socket | 未开始 |
+| 1.3 | 实现 `DBusChannel` 帧协议（长度前缀 JSON） | Node 侧解析器 | 收到一条 I2C 事务 | 未开始 |
+| 1.4 | 实现 `NetlistResolver` I2C/GPIO 解析 | 按 address/pin 路由 | OLED 事务落到 oled1 | 未开始 |
+| 1.5 | 完善 `PeripheralManager` 路由 + 快照节流 | 30fps 上限 | UI 不卡顿 | 未开始 |
+| 1.6 | `ssd1306` 命令集补全（gfx 库常用路径） | 显存更新正确 | Adafruit_GFX demo 正常 | 未开始 |
+| 1.7 | `BreadboardCanvas` 拖拽放置 + 连线编辑 | 可视化连线 | 网表与布局分离持久化 | 未开始 |
+| 1.8 | 工程保存/加载（`.breadesp` 目录） | ProjectManager | 关闭重开恢复原样 | 未开始 |
+| 1.9 | 调试面板：断点/单步/变量/寄存器 | Inspector | 可看 `app_main` 局部变量 | 未开始 |
+| 1.10 | 串口控制台双向（输出+注入） | SerialConsole | 键入回车被固件读到 | 未开始 |
 
 **M1 回归**：跑 §12 的 M1 清单全部通过。
 
@@ -390,15 +390,17 @@ Previously applyNetlist leaked old instances on re-apply.
 
 ## 12. 验收检查清单
 
-### M0 清单
-- [ ] `pnpm install && pnpm typecheck` 通过
-- [ ] `pnpm fetch-qemu` 下载成功且可执行
-- [ ] `blink.elf` 启动后 UART 输出可见
-- [ ] GDB 断点命中 `app_main`
-- [ ] 非 Xtensa ELF 被拒绝加载
-- [ ] 无二进制入库（`git log --diff-filter=A -- '*.bin'` 为空）
+### M0 清单（已通过 2026-08-31）
+- [x] `pnpm install && pnpm typecheck` 通过
+- [x] `pnpm fetch-qemu` 下载成功且可执行
+- [x] `blink.elf` 启动后 UART 输出可见
+- [x] GDB 断点命中 `app_main`
+- [x] 非 Xtensa ELF 被拒绝加载
+- [x] 无二进制入库（`git log --diff-filter=A -- '*.bin'` 为空）
 
-### M1 清单
+> 验证记录（2026-08-31 复验）：`pnpm typecheck` 0 错误；全仓测试 73 通过 + 1 跳过，含真实 QEMU UART e2e（`qemu-uart.e2e.test.ts`）通过；GDB 断点 e2e 需设 `BREADESP_GDB_BIN`，已于 2026-08-29 对真实 QEMU + `xtensa-esp32-elf-gdb` 验证通过（见 CHANGELOG）；入库二进制仅 `fixtures/blink.elf`（§5.4 允许的 ELF fixture），无 `*.bin` 入库。
+
+### M1 清单（进行中，任务 1.1 已完成）
 - [ ] UI 可拖拽 LED/按键/OLED 到画布
 - [ ] 可连线到 GPIO 并保存工程
 - [ ] LED 随 GPIO2 电平亮灭（blink）
