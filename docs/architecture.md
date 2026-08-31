@@ -86,14 +86,23 @@ Adafruit_GFX 常用绘制路径（begin() 初始化 + display() 全帧推送）�
 - UI 通过 `dbg:*` IPC 调用 GdbBridge，GdbBridge 翻译为 GDB/MI 命令。
 - `MiParser` 解析 MI 输出为结构化结果（断点列表、变量、寄存器）。
 
+### 4.1 调试面板（P1.9）
+
+- **连接模型**：`QemuRunner.load()` 总是分配 GDB stub 端口（`-S` 冻结启动），调试面板通过 `dbg:connect` 惰性附着——端口与固件路径由 main 进程记忆（`getGdbPort`/`getFirmwareElf`），渲染进程无需自行预留端口。`sim:step` 在 GDB 附着后路由到 `-exec-step-instruction`（PRD §F-SIM-1 指令级单步本就是 stub 能力）。
+- **IPC 面**：`dbg:connect/disconnect/status` 管理连接；`dbg:setBreakpoint/removeBreakpoint/clearBreakpoints/listBreakpoints` 维护断点（`-break-insert/-break-delete/-break-list`，注意 `-break-list` 的 `body` 嵌套在 `BreakpointTable` 内部——曾因 mock 与真实 GDB 形状不一致而误解析，e2e 抓出后已对齐 wire 格式）；`dbg:continue/step/stepOver` 控制执行；`dbg:vars/regs/evaluate` 读取被检视状态（`-stack-list-variables --simple-values`、`-data-list-register-names` + `-data-list-register-values x` 按索引配对、`-data-evaluate-expression`）。异步停止通过 `dbg:stopped/running/exit` 推送，UI 无需轮询。
+- **UI 状态机**（`debuggerStore`）：`detached → attached ⇄ running`。`onStop` 记录停止帧并自动刷新变量/寄存器/观察值；detach 后迟到的 in-flight 回复被丢弃（避免脏写回）。
+- **测试固件**：`blink.elf` 自带手工构建的 DWARF4（`.debug_info`/`.debug_abbrev`）——`app_main` 的局部变量位于寄存器（DW_OP_regx），全局 `led_state` 位于 PT_LOAD 内存（DW_OP_addr），使 vars/regs/evaluate 在 e2e 中有真实数据。
+
 ## 5. 仿真状态机
 
 ```
 idle --load(fw)--> loaded --start--> running --pause--> paused --start--> running
-                                            \--- step --> paused
+                                            \--- step (GDB attached) --> paused
 running/loaded/paused --reset--> loaded
 any --error--> error
 ```
+
+`step` 自 P1.9 起经 GDB stub（`sim:step` 在 `dbg:connect` 附着后路由到 `-exec-step-instruction`，未附着时报 `[BB-105]` 引导先连接调试器）。
 
 ## 6. 时序与音频
 
