@@ -2,7 +2,8 @@
 // packages/sim-core/fixtures/blink.elf is generated deterministically by
 // scripts/make-blink-elf.mjs and executed by QEMU integration tests. These tests pin the
 // contract downstream milestones rely on: a valid ELF32 LSB Xtensa executable, loadable at
-// IRAM with symbols `_start`/`app_main` for GDB (M0), and the UART hello payload (task 0.4).
+// IRAM with symbols `_start`/`app_main` for GDB (M0), the UART hello payload (task 0.4),
+// and the P1.9 debug surface (DWARF4 sections + the `led_state` global).
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,13 +12,17 @@ import { describe, expect, it } from 'vitest';
 const FIXTURE_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'blink.elf');
 const EM_XTENSA = 94; // dev-plan task 0.6: e_machine == 0x5a
 const IRAM_BASE = 0x40080000;
-const ENTRY = 0x40080028; // _start
-const IMAGE_SIZE = 136; // literal pool (24) + "Hello ESP32\r\n" (13) + pad (3) + code (96)
+const ENTRY = 0x40080030; // _start
+const APP_MAIN = 0x40080048;
+const LED_STATE_ADDR = 0x4008002c; // global `led_state` home (P1.9)
+const LED_STATE_INIT = 0xa5;
+const IMAGE_SIZE = 168; // literal pool (28) + msg (13) + pad (3) + led_state (4) + code (120)
 const IMAGE_FILE_OFFSET = 0x100;
 
 const buf = readFileSync(FIXTURE_PATH);
 
 interface SectionHeader {
+  name: number;
   type: number;
   offset: number;
   size: number;
@@ -41,6 +46,7 @@ function readSectionHeaders(buffer: Buffer): SectionHeader[] {
   for (let i = 0; i < shnum; i++) {
     const o = shoff + i * shentsize;
     sections.push({
+      name: buffer.readUInt32LE(o),
       type: buffer.readUInt32LE(o + 4),
       offset: buffer.readUInt32LE(o + 16),
       size: buffer.readUInt32LE(o + 20),
@@ -110,12 +116,52 @@ describe('golden firmware blink.elf', () => {
     expect(appMain).toBeDefined();
     // info 0x12 = GLOBAL | FUNC; shndx 1 = .text
     expect(start).toMatchObject({ value: ENTRY, info: 0x12, shndx: 1 });
-    expect(appMain).toMatchObject({ value: 0x40080040, info: 0x12, shndx: 1 });
+    expect(appMain).toMatchObject({ value: APP_MAIN, info: 0x12, shndx: 1 });
     expect(start!.size).toBe(appMain!.value - start!.value);
   });
 
+  it('exposes the P1.9 debug surface: led_state global and e2e breakpoint label', () => {
+    const symbols = readSymbols(buf);
+    // info 0x11 = GLOBAL | OBJECT; the debug panel reads/writes this via GDB.
+    expect(symbols.get('led_state')).toMatchObject({
+      value: LED_STATE_ADDR, size: 4, info: 0x11, shndx: 1,
+    });
+    // Label right after `led_state = 1` — the e2e stops here and asserts the write.
+    expect(symbols.get('led_state_written')).toMatchObject({
+      value: 0x40080078, info: 0x12, shndx: 1,
+    });
+    // The global's recognizable initial value rides in the RWX PT_LOAD image.
+    expect(buf.readUInt32LE(IMAGE_FILE_OFFSET + (LED_STATE_ADDR - IRAM_BASE))).toBe(LED_STATE_INIT);
+  });
+
   it('embeds the UART hello payload at the message literal', () => {
-    const msg = buf.subarray(IMAGE_FILE_OFFSET + 0x18, IMAGE_FILE_OFFSET + 0x18 + 13);
+    const msg = buf.subarray(IMAGE_FILE_OFFSET + 0x1c, IMAGE_FILE_OFFSET + 0x1c + 13);
     expect(msg.toString('ascii')).toBe('Hello ESP32\r\n');
+  });
+
+  it('carries DWARF4 debug info naming the app_main locals (P1.9)', () => {
+    const sections = readSectionHeaders(buf);
+    // Section names come from .shstrtab (index e_shstrndx = 4).
+    const shstrtab = sections[buf.readUInt16LE(0x32)];
+    const names = sections.map((s) => readCString(buf, shstrtab.offset + s.name));
+    expect(names).toContain('.debug_info');
+    expect(names).toContain('.debug_abbrev');
+    const debugInfo = sections[names.indexOf('.debug_info')];
+    const info = buf.subarray(debugInfo.offset, debugInfo.offset + debugInfo.size);
+    // CU header: DWARF version 4, 32-bit addresses; then the DIE tree.
+    expect(info.readUInt16LE(4)).toBe(4);
+    expect(info[10]).toBe(4);
+    // The locals the debug panel shows for app_main, plus the global.
+    for (const name of ['app_main', 'msg_cursor', 'remaining', 'delay_ticks', 'led_state']) {
+      expect(info.includes(Buffer.from(`${name}\0`, 'ascii'))).toBe(true);
+    }
+    // DW_OP_regx (0x90) locations: a10, a11, a15 register numbers follow it.
+    expect(info.includes(Buffer.from([0x90, 10], 'binary'))).toBe(true);
+    expect(info.includes(Buffer.from([0x90, 11], 'binary'))).toBe(true);
+    expect(info.includes(Buffer.from([0x90, 15], 'binary'))).toBe(true);
+    // DW_OP_addr (0x03) location of the led_state global.
+    const addrLe = Buffer.alloc(4);
+    addrLe.writeUInt32LE(LED_STATE_ADDR, 0);
+    expect(info.includes(Buffer.concat([Buffer.from([0x03]), addrLe]))).toBe(true);
   });
 });

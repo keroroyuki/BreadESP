@@ -128,4 +128,64 @@ describe('GdbBridge (mock GDB/MI subprocess)', () => {
       port: 1234,
     })).rejects.toThrow(/\[BB-110\] GDB binary not found/);
   });
+
+  // --- P1.9 surface: vars / regs / evaluate / breakpoint listing ---
+
+  it('stepOver() emits an end-stepping-range stop at the next instruction', async () => {
+    const bridge = await startBridge('ok');
+    const stopped = onceStopped(bridge, 'step-over stop');
+    await bridge.stepOver();
+    const info = await stopped;
+    expect(info.reason).toBe('end-stepping-range');
+    expect(info.frame?.addr).toBe('0x40080029');
+  }, 10000);
+
+  it('vars() parses -stack-list-variables rows (P1.9)', async () => {
+    const bridge = await startBridge('ok');
+    expect(await bridge.vars()).toEqual([
+      { name: 'msg_cursor', scope: 'local', value: '165' },
+      { name: 'remaining', scope: 'local', value: '13' },
+      { name: 'led_state', scope: 'local', value: null }, // complex type: name-only row
+    ]);
+  }, 10000);
+
+  it('regs() zips register names with values by index and skips empty slots (P1.9)', async () => {
+    const bridge = await startBridge('ok');
+    expect(await bridge.regs()).toEqual({
+      a0: '0x00000000',
+      a1: '0x00000001',
+      a3: '0x40080000', // index 2 has an empty name: skipped
+      pc: '0x40080024',
+    });
+  }, 10000);
+
+  it('evaluate() returns the value string of -data-evaluate-expression (P1.9)', async () => {
+    const bridge = await startBridge('ok');
+    expect(await bridge.evaluate('led_state')).toBe('165');
+    await expect(bridge.evaluate('nope')).rejects.toThrow(/\[BB-113\].*No symbol/);
+  }, 10000);
+
+  it('listBreakpoints/clearBreakpoints round-trip through -break-list (P1.9)', async () => {
+    const bridge = await startBridge('ok');
+    await bridge.setBreakpoint('app_main');
+    await bridge.setBreakpoint('*0x40080078');
+    let rows = await bridge.listBreakpoints();
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ id: 1, location: 'app_main', address: '0x40080024', enabled: true });
+    expect(rows[1]).toMatchObject({ id: 2, location: '*0x40080078' });
+
+    await bridge.removeBreakpoint(1);
+    rows = await bridge.listBreakpoints();
+    expect(rows.map((r) => r.id)).toEqual([2]);
+
+    await bridge.clearBreakpoints(); // enumerates ids, then one -break-delete
+    expect(await bridge.listBreakpoints()).toEqual([]);
+  }, 10000);
+
+  it('isConnected() tracks the process lifetime (P1.9)', async () => {
+    const bridge = await startBridge('ok');
+    expect(bridge.isConnected()).toBe(true);
+    await bridge.stop();
+    expect(bridge.isConnected()).toBe(false);
+  }, 10000);
 });

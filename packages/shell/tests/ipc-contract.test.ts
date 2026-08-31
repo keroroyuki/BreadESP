@@ -47,18 +47,23 @@ vi.mock('electron', () => ({
 import '../src/preload.js';
 import { registerIpcHandlers, type HandlerDeps } from '../src/ipc/handlers.js';
 
-/** PRD §6.6 contract — renderer -> main invoke channels (dev-plan task P1.1 scope). */
+/** PRD §6.6 contract — renderer -> main invoke channels (P1.1 + P1.9 dbg surface). */
 const EXPECTED_INVOKE_CHANNELS = [
   'sim:load', 'sim:start', 'sim:pause', 'sim:step', 'sim:reset', 'sim:status',
   'fw:load', 'fw:listSymbols',
-  'dbg:setBreakpoint', 'dbg:removeBreakpoint', 'dbg:continue', 'dbg:step', 'dbg:vars', 'dbg:regs',
+  'dbg:connect', 'dbg:disconnect', 'dbg:status',
+  'dbg:setBreakpoint', 'dbg:removeBreakpoint', 'dbg:clearBreakpoints', 'dbg:listBreakpoints',
+  'dbg:continue', 'dbg:step', 'dbg:stepOver', 'dbg:vars', 'dbg:regs', 'dbg:evaluate',
   'proj:new', 'proj:open', 'proj:save', 'proj:saveAs', 'proj:close',
   'bb:applyNetlist', 'bb:getNetlist',
   'per:driveInput',
 ] as const;
 
 /** PRD §6.6 contract — main -> renderer one-way push channels. */
-const EXPECTED_PUSH_CHANNELS = ['per:snapshot', 'sim:status', 'sim:uart', 'sim:error'] as const;
+const EXPECTED_PUSH_CHANNELS = [
+  'per:snapshot', 'sim:status', 'sim:uart', 'sim:error',
+  'dbg:stopped', 'dbg:running', 'dbg:exit',
+] as const;
 
 /** Recursively call every function leaf of the exposed preload API. */
 function callEveryApiFunction(node: unknown): void {
@@ -72,8 +77,32 @@ function callEveryApiFunction(node: unknown): void {
   }
 }
 
-const qemu = { load: vi.fn(), start: vi.fn(), pause: vi.fn(), step: vi.fn(), reset: vi.fn(), getStatus: vi.fn(), on: vi.fn() };
-const gdb = { setBreakpoint: vi.fn(), removeBreakpoint: vi.fn(), continue: vi.fn(), step: vi.fn(), vars: vi.fn(), regs: vi.fn() };
+const qemu = {
+  load: vi.fn(),
+  start: vi.fn(),
+  pause: vi.fn(),
+  reset: vi.fn(),
+  getStatus: vi.fn(),
+  getGdbPort: vi.fn().mockReturnValue(null),
+  getFirmwareElf: vi.fn().mockReturnValue(null),
+  on: vi.fn(),
+};
+const gdb = {
+  start: vi.fn(),
+  stop: vi.fn().mockResolvedValue(undefined),
+  isConnected: vi.fn().mockReturnValue(false),
+  setBreakpoint: vi.fn(),
+  removeBreakpoint: vi.fn(),
+  clearBreakpoints: vi.fn(),
+  listBreakpoints: vi.fn().mockResolvedValue([]),
+  continue: vi.fn(),
+  step: vi.fn(),
+  stepOver: vi.fn(),
+  vars: vi.fn(),
+  regs: vi.fn(),
+  evaluate: vi.fn(),
+  on: vi.fn(),
+};
 const project = {
   validateFirmware: vi.fn(),
   newProject: vi.fn(),
@@ -103,6 +132,9 @@ beforeAll(async () => {
   listenerFor(qemu, 'uart')('');
   listenerFor(qemu, 'error')(new Error('probe'));
   listenerFor(peripherals, 'snapshot')({ instanceId: 'probe' });
+  listenerFor(gdb, 'stopped')({ reason: 'breakpoint-hit' });
+  listenerFor(gdb, 'running')(undefined);
+  listenerFor(gdb, 'exit')(0);
 });
 
 describe('preload ↔ handlers IPC contract (P1.1)', () => {
@@ -183,5 +215,47 @@ describe('preload ↔ handlers IPC contract (P1.1)', () => {
     await handler!(undefined, { dir: '/tmp/p2', netlist, layout });
     expect(project.newProject).toHaveBeenCalledWith('/tmp/p2');
     expect(project.saveProject).toHaveBeenCalledWith(netlist, layout);
+  });
+
+  it('forwards GDB stops on dbg:stopped with the payload intact', () => {
+    const info = { reason: 'breakpoint-hit', frame: { addr: '0x40080024', func: 'app_main' } };
+    listenerFor(gdb, 'stopped')(info);
+    expect(state.sends).toContainEqual({ channel: 'dbg:stopped', payload: info });
+  });
+
+  it('rejects dbg:connect with no firmware loaded (P1.9)', async () => {
+    const handler = state.handles.get('dbg:connect');
+    await expect(handler!(undefined)).rejects.toThrow(/\[BB-115\] no firmware loaded/);
+    expect(gdb.start).not.toHaveBeenCalled();
+  });
+
+  it('routes dbg:connect through QemuRunner stub port + firmware ELF (P1.9)', async () => {
+    const prevBin = process.env.BREADESP_GDB_BIN;
+    process.env.BREADESP_GDB_BIN = '/opt/xtensa/bin/xtensa-esp32-elf-gdb';
+    qemu.getGdbPort.mockReturnValueOnce(3333);
+    qemu.getFirmwareElf.mockReturnValueOnce('/tmp/blink.elf');
+    try {
+      const handler = state.handles.get('dbg:connect');
+      expect(handler).toBeDefined();
+      await expect(handler!(undefined)).resolves.toEqual({ connected: true });
+      expect(gdb.start).toHaveBeenCalledWith({
+        gdbBin: '/opt/xtensa/bin/xtensa-esp32-elf-gdb',
+        elfPath: '/tmp/blink.elf',
+        targetHost: '127.0.0.1',
+        port: 3333,
+      });
+    } finally {
+      if (prevBin === undefined) delete process.env.BREADESP_GDB_BIN;
+      else process.env.BREADESP_GDB_BIN = prevBin;
+    }
+  });
+
+  it('routes sim:step through GDB only when attached (P1.9)', async () => {
+    const handler = state.handles.get('sim:step');
+    gdb.isConnected.mockReturnValueOnce(false);
+    await expect(handler!(undefined)).rejects.toThrow(/\[BB-105\].*dbg:connect/);
+    gdb.isConnected.mockReturnValueOnce(true);
+    await expect(handler!(undefined)).resolves.toBeUndefined();
+    expect(gdb.step).toHaveBeenCalledTimes(1);
   });
 });
