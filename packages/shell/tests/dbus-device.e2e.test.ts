@@ -4,53 +4,18 @@
 // serialized transactions. Skips when the device-enabled QEMU binary is absent:
 // set BREADESP_QEMU_DBUS_BIN or build it with `node scripts/build-qemu-device.mjs`.
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { BusTransaction } from '@breadesp/peripherals';
 import { DBusChannel } from '../src/qemu/DBusChannel.js';
 import { QemuRunner } from '../src/qemu/QemuRunner.js';
+import { needDbusQemuBin, resolveDbusQemuBin } from './helpers/dbus-qemu.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..', '..', '..');
 const FIXTURE_ELF = join(REPO_ROOT, 'packages', 'sim-core', 'fixtures', 'i2c.elf');
-const DBUS_META = join(REPO_ROOT, 'packages', 'sim-core', 'bin', 'qemu-breadesp.json');
-
-interface DbusMeta {
-  target?: string;
-  binaryPath?: string;
-  repoRelativePath?: string;
-}
-
-/** Manifest written by scripts/build-qemu-device.mjs — trusted repo artifact. */
-function resolveDbusQemuBin(): string | null {
-  const fromEnv = process.env.BREADESP_QEMU_DBUS_BIN;
-  if (fromEnv !== undefined && existsSync(fromEnv)) return fromEnv;
-  if (!existsSync(DBUS_META)) return null;
-  let meta: DbusMeta;
-  try {
-    meta = JSON.parse(readFileSync(DBUS_META, 'utf8')) as DbusMeta;
-  } catch {
-    return null;
-  }
-  // A linux-docker build produces a Linux ELF; it cannot run on other hosts.
-  if (meta.target === 'linux-docker' && process.platform !== 'linux') return null;
-  for (const p of [meta.binaryPath, meta.repoRelativePath]) {
-    if (typeof p === 'string' && p.length > 0 && existsSync(p)) return p;
-  }
-  if (typeof meta.repoRelativePath === 'string') {
-    const rel = join(REPO_ROOT, meta.repoRelativePath);
-    if (existsSync(rel)) return rel;
-  }
-  return null;
-}
 
 const QEMU_DBUS_BIN = resolveDbusQemuBin();
-
-function needBin(): string {
-  if (QEMU_DBUS_BIN === null) throw new Error('device-enabled QEMU missing; run node scripts/build-qemu-device.mjs');
-  return QEMU_DBUS_BIN;
-}
 
 describe.skipIf(QEMU_DBUS_BIN === null)('DBusChannel e2e (breadesp-dbus device, real QEMU-ESP32)', () => {
   it('receives GPIO and I2C transactions serialized to length-prefixed frames', async () => {
@@ -68,7 +33,7 @@ describe.skipIf(QEMU_DBUS_BIN === null)('DBusChannel e2e (breadesp-dbus device, 
       await runner.load({
         firmwareElf: FIXTURE_ELF,
         chip: 'esp32',
-        qemuBin: needBin(),
+        qemuBin: needDbusQemuBin(),
         dbus: { port: dbus.port },
       });
       expect(runner.getStatus()).toBe('loaded');
