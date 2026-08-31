@@ -1,7 +1,7 @@
 /*
- * BreadESP DBus Forward Device — PRD: §4.2, §6.7 (dev-plan task 1.2)
+ * BreadESP DBus Forward Device — PRD: §4.2, §6.7 (dev-plan tasks 1.2, 2.1)
  *
- * Serializes ESP32 bus transactions (I2C, GPIO) into length-prefixed JSON
+ * Serializes ESP32 bus transactions (I2C, SPI, GPIO) into length-prefixed JSON
  * frames (PRD §6.7) and pushes them to the Bridge over a unix or TCP socket.
  *
  * Integration with the stock espressif/qemu tree is patch-free:
@@ -11,6 +11,14 @@
  *    an address only when no other QEMU slave answers it, so firmware gets a
  *    real ACK for Bridge-modeled peripherals (e.g. SSD1306 @0x3C) while
  *    in-QEMU devices (e.g. tmp105 @0x48) keep their traffic unmirrored.
+ *
+ *  - SPI: for the general-purpose controllers (SPI2/HSPI and SPI3/VSPI; SPI0/1
+ *    host the flash/PSRAM and are left alone) an internal "sniffer" SSI
+ *    peripheral is attached to the bus with SSI_CS_NONE polarity, so it clocks
+ *    every byte a firmware transaction shifts out. Transaction framing comes
+ *    from the controller's hardware CS output lines, which are wired into the
+ *    sniffer's own GPIO inputs: CS assert starts a frame (the asserted line's
+ *    index becomes tx.target), CS release emits one spi write transaction.
  *
  *  - GPIO: higher-priority MMIO shadow regions are overlaid on the esp32.gpio
  *    register bank at both of its mappings (DPORT 0x3ff44000 and the APB alias
@@ -30,11 +38,13 @@
  *                 "data":[..],"ts":<virtual ns>}
  *   i2c read  := {"kind":"i2c","bus":0,"target":60,"dir":"read",
  *                 "length":N,"ts":<virtual ns>}
+ *   spi write := {"kind":"spi","bus":2,"target":0,"dir":"write",
+ *                 "data":[..],"ts":<virtual ns>}   (target = CS line index)
  *   gpio      := {"kind":"gpio","bus":0,"target":2,"dir":"write",
  *                 "data":[level],"ts":<virtual ns>}
  *
- * TODO(PRD §4.2): SPI/I2S/ADC forwarding (M2/M3, dev-plan tasks 2.x/3.x).
- * TODO(PRD §6.3): bridge-supplied I2C read data (reverse channel, P1.3+).
+ * TODO(PRD §4.2): I2S/ADC forwarding (M3, dev-plan tasks 3.x).
+ * TODO(PRD §6.3): bridge-supplied I2C/SPI read data (reverse channel).
  * TODO(PRD §1.3): esp32s3/c3 GPIO banks use a different device (M4, task 4.1).
  *
  * Copyright (c) 2026 BreadESP contributors
@@ -57,6 +67,8 @@
 #include "hw/sysbus.h"
 #include "hw/i2c/i2c.h"
 #include "hw/i2c/esp32_i2c.h"
+#include "hw/ssi/ssi.h"
+#include "hw/ssi/esp32_spi.h"
 #include "hw/gpio/esp32_gpio.h"
 #include "io/channel.h"
 #include "io/channel-socket.h"
@@ -70,6 +82,12 @@ OBJECT_DECLARE_SIMPLE_TYPE(BreadespDbusState, BREADESP_DBUS)
 typedef struct BreadespI2cSniffer BreadespI2cSniffer;
 DECLARE_INSTANCE_CHECKER(BreadespI2cSniffer, BREADESP_I2C_SNIFFER,
                          TYPE_BREADESP_I2C_SNIFFER)
+
+/* SSI sniffer created per general-purpose esp32.spi controller bus. */
+#define TYPE_BREADESP_SPI_SNIFFER "breadesp-dbus.spi-sniffer"
+typedef struct BreadespSpiSniffer BreadespSpiSniffer;
+DECLARE_INSTANCE_CHECKER(BreadespSpiSniffer, BREADESP_SPI_SNIFFER,
+                         TYPE_BREADESP_SPI_SNIFFER)
 
 /* GPIO register offsets within the DR_REG_GPIO_BASE bank (ESP32 TRM). */
 #define ESP32_GPIO_OUT_REG       0x04
@@ -89,6 +107,8 @@ static const hwaddr breadesp_gpio_bases[] = { 0x3ff44000, 0x60004000 };
 #define BREADESP_DBUS_PROTO_VERSION 1
 /* Cap for a single I2C write payload mirrored to the bridge, in bytes. */
 #define BREADESP_I2C_MAX_PAYLOAD 4096
+/* Cap for a single SPI frame payload (one CS assertion), in bytes. */
+#define BREADESP_SPI_MAX_PAYLOAD 4096
 
 struct BreadespDbusState {
     DeviceState parent_obj;
@@ -117,6 +137,9 @@ struct BreadespDbusState {
 
     /* Sniffer devices living on the esp32.i2c buses (bus-owned). */
     GPtrArray *sniffers;
+    /* Sniffer devices living on the general-purpose esp32.spi buses
+     * (bus-owned). */
+    GPtrArray *spi_sniffers;
 };
 
 struct BreadespI2cSniffer {
@@ -128,6 +151,16 @@ struct BreadespI2cSniffer {
     bool reading;
     GByteArray *wr;           /* bytes collected for the current write */
     unsigned read_cnt;        /* bytes requested by the current read */
+};
+
+struct BreadespSpiSniffer {
+    SSIPeripheral parent_obj;
+
+    BreadespDbusState *owner; /* NULL after the dbus device is unrealized */
+    uint8_t bus_num;          /* SPI controller instance (2 = HSPI, 3 = VSPI) */
+    int active_cs;            /* CS line index framing the current bytes,
+                                  -1 = no CS asserted */
+    GByteArray *wr;           /* bytes collected for the current CS frame */
 };
 
 /* ------------------------------------------------------------------ */
@@ -217,6 +250,23 @@ static void dbus_emit_gpio(BreadespDbusState *s, uint8_t pin, uint8_t level)
                      "\"dir\":\"write\",\"ts\":%lld,\"data\":[%u]}",
                      pin, (long long)qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),
                      level);
+    dbus_queue(s, j);
+}
+
+static void dbus_emit_spi_write(BreadespDbusState *s, uint8_t bus,
+                                uint8_t cs, const uint8_t *data,
+                                size_t len)
+{
+    GString *j = g_string_sized_new(64 + len * 4);
+    size_t i;
+
+    g_string_printf(j, "{\"kind\":\"spi\",\"bus\":%u,\"target\":%u,"
+                     "\"dir\":\"write\",\"ts\":%lld,\"data\":[",
+                     bus, cs, (long long)qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
+    for (i = 0; i < len; i++) {
+        g_string_append_printf(j, i ? ",%u" : "%u", data[i]);
+    }
+    g_string_append(j, "]}");
     dbus_queue(s, j);
 }
 
@@ -401,6 +451,138 @@ static void dbus_attach_i2c_sniffer(Object *obj, BreadespDbusState *s,
 }
 
 /* ------------------------------------------------------------------ */
+/* SPI sniffer peripheral                                              */
+
+/*
+ * CS release closes the frame: the bytes clocked since assertion become one
+ * spi write transaction, attributed to the CS line that framed them.
+ */
+static void spi_sniffer_flush(BreadespSpiSniffer *s)
+{
+    if (s->wr->len > 0) {
+        if (s->owner) {
+            dbus_emit_spi_write(s->owner, s->bus_num, (uint8_t)s->active_cs,
+                                s->wr->data, s->wr->len);
+        }
+        g_byte_array_set_size(s->wr, 0);
+    }
+    s->active_cs = -1;
+}
+
+/* SSI_CS_NONE polarity: called for every byte the controller shifts out. */
+static uint32_t spi_sniffer_transfer(SSIPeripheral *dev, uint32_t val)
+{
+    BreadespSpiSniffer *s = BREADESP_SPI_SNIFFER(dev);
+
+    if (s->active_cs >= 0) {
+        if (s->wr->len < BREADESP_SPI_MAX_PAYLOAD) {
+            g_byte_array_append(s->wr, (const guint8 *)&val, 1);
+        } else if (s->owner && !s->owner->overflowed) {
+            s->owner->overflowed = true;
+            warn_report("breadesp-dbus: spi payload exceeds %d bytes, "
+                        "extra bytes dropped", BREADESP_SPI_MAX_PAYLOAD);
+        }
+    }
+    /* MISO stays undriven: no reverse channel yet (PRD §6.3 TODO). */
+    return 0;
+}
+
+/* The controller's hardware CS output lines, wired as GPIO inputs. */
+static void spi_sniffer_cs(void *opaque, int n, int level)
+{
+    BreadespSpiSniffer *s = opaque;
+
+    if (level == 0) {
+        /* Assertion opens a frame. All unmasked lines assert together, so the
+         * first one seen claims the transaction (SPI_PIN masks the rest). */
+        if (s->active_cs < 0) {
+            s->active_cs = n;
+            g_byte_array_set_size(s->wr, 0);
+        }
+    } else if (s->active_cs == n) {
+        spi_sniffer_flush(s);
+    }
+}
+
+static void spi_sniffer_reset_hold(Object *obj, ResetType type)
+{
+    BreadespSpiSniffer *s = BREADESP_SPI_SNIFFER(obj);
+
+    g_byte_array_set_size(s->wr, 0);
+    s->active_cs = -1;
+}
+
+/* ssi_peripheral_realize() calls this unconditionally: no backing hardware. */
+static void spi_sniffer_realize(SSIPeripheral *dev, Error **errp)
+{
+}
+
+static void spi_sniffer_init(Object *obj)
+{
+    BreadespSpiSniffer *s = BREADESP_SPI_SNIFFER(obj);
+
+    s->active_cs = -1;
+    s->wr = g_byte_array_new();
+}
+
+static void spi_sniffer_finalize(Object *obj)
+{
+    BreadespSpiSniffer *s = BREADESP_SPI_SNIFFER(obj);
+
+    g_byte_array_free(s->wr, TRUE);
+}
+
+static void spi_sniffer_class_init(ObjectClass *klass, void *data)
+{
+    SSIPeripheralClass *ssc = SSI_PERIPHERAL_CLASS(klass);
+    ResettableClass *rc = RESETTABLE_CLASS(klass);
+
+    ssc->transfer = spi_sniffer_transfer;
+    ssc->realize = spi_sniffer_realize;
+    /* See every byte regardless of the SSI cs flag: framing is done by the
+     * GPIO-wired CS lines, not by the bus's own CS mechanism. */
+    ssc->cs_polarity = SSI_CS_NONE;
+    rc->phases.hold = spi_sniffer_reset_hold;
+}
+
+static const TypeInfo spi_sniffer_type_info = {
+    .name = TYPE_BREADESP_SPI_SNIFFER,
+    .parent = TYPE_SSI_PERIPHERAL,
+    .instance_size = sizeof(BreadespSpiSniffer),
+    .instance_init = spi_sniffer_init,
+    .instance_finalize = spi_sniffer_finalize,
+    .class_init = spi_sniffer_class_init,
+};
+
+static void dbus_attach_spi_sniffer(Object *obj, BreadespDbusState *s,
+                                    int bus_num)
+{
+    DeviceState *spi_dev = DEVICE(obj);
+    SSIBus *bus = (SSIBus *)qdev_get_child_bus(spi_dev, "spi");
+    DeviceState *sniff_dev;
+    BreadespSpiSniffer *sniff;
+    int i;
+
+    if (!bus) {
+        return;
+    }
+
+    sniff_dev = qdev_new(TYPE_BREADESP_SPI_SNIFFER);
+    sniff = BREADESP_SPI_SNIFFER(sniff_dev);
+    sniff->owner = s;
+    sniff->bus_num = (uint8_t)bus_num;
+    /* One input per hardware CS line of this controller (esp32_spi drives
+     * all unmasked lines around each transaction, SPI_PIN masks the rest). */
+    qdev_init_gpio_in(sniff_dev, spi_sniffer_cs, ESP32_SPI_CS_COUNT);
+    ssi_realize_and_unref(sniff_dev, bus, &error_fatal);
+    for (i = 0; i < ESP32_SPI_CS_COUNT; i++) {
+        qdev_connect_gpio_out_named(spi_dev, SSI_GPIO_CS, i,
+                                    qdev_get_gpio_in(sniff_dev, i));
+    }
+    g_ptr_array_add(s->spi_sniffers, sniff_dev);
+}
+
+/* ------------------------------------------------------------------ */
 /* GPIO MMIO shadow                                                    */
 
 static uint64_t dbus_gpio_read(void *opaque, hwaddr addr, unsigned size)
@@ -534,6 +716,13 @@ static int dbus_scan_visit(Object *obj, void *opaque)
 
     if (object_dynamic_cast(obj, TYPE_ESP32_I2C)) {
         dbus_attach_i2c_sniffer(obj, s, s->sniffers->len);
+    } else if (object_dynamic_cast(obj, TYPE_ESP32_SPI)) {
+        int bus_num = bus_num_from_path(obj);
+        /* SPI0/1 host the flash/PSRAM: their cache traffic is not peripheral
+         * business. SPI2 (HSPI) and SPI3 (VSPI) are the user buses. */
+        if (bus_num >= 2) {
+            dbus_attach_spi_sniffer(obj, s, bus_num);
+        }
     } else if (object_dynamic_cast(obj, TYPE_ESP32_GPIO)) {
         dbus_setup_gpio_shadow(s, obj);
     }
@@ -558,6 +747,7 @@ static void breadesp_dbus_realize(DeviceState *dev, Error **errp)
 
     s->pending = g_string_new(NULL);
     s->sniffers = g_ptr_array_new();
+    s->spi_sniffers = g_ptr_array_new();
     s->flush_bh = qemu_bh_new(dbus_flush_bh, s);
 
     if (s->socket_path) {
@@ -586,6 +776,10 @@ static void breadesp_dbus_realize(DeviceState *dev, Error **errp)
         warn_report("breadesp-dbus: no esp32.i2c controllers found; "
                     "I2C forwarding disabled");
     }
+    if (s->spi_sniffers->len == 0) {
+        warn_report("breadesp-dbus: no esp32.hspi/vspi controllers found; "
+                    "SPI forwarding disabled");
+    }
 }
 
 static void breadesp_dbus_unrealize(DeviceState *dev)
@@ -604,6 +798,13 @@ static void breadesp_dbus_unrealize(DeviceState *dev)
         }
         g_ptr_array_free(s->sniffers, TRUE);
         s->sniffers = NULL;
+    }
+    if (s->spi_sniffers) {
+        for (guint i = 0; i < s->spi_sniffers->len; i++) {
+            BREADESP_SPI_SNIFFER(g_ptr_array_index(s->spi_sniffers, i))->owner = NULL;
+        }
+        g_ptr_array_free(s->spi_sniffers, TRUE);
+        s->spi_sniffers = NULL;
     }
     if (s->flush_bh) {
         qemu_bh_delete(s->flush_bh);
@@ -659,6 +860,7 @@ static void breadesp_dbus_register_types(void)
 {
     type_register_static(&breadesp_dbus_type_info);
     type_register_static(&sniffer_type_info);
+    type_register_static(&spi_sniffer_type_info);
 }
 
 type_init(breadesp_dbus_register_types)
