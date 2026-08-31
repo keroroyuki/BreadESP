@@ -3,6 +3,8 @@
 //   - `-qmp tcp:127.0.0.1:<port>,server=on,wait=off` control channel
 //   - UART0 bytes on stdout after `cont`
 //   - `--exit-error` simulates a crash (exit code 1)
+// P1.10: stdin bytes are echoed back on stdout, standing in for firmware that
+// reads UART0 RX and echoes it (like fixtures/uart-echo.elf under real QEMU).
 // Usage: node mock-qemu.mjs [-kernel <elf>] [-qmp tcp:127.0.0.1:PORT,server=on,wait=off] [--exit-error]
 import net from 'node:net';
 
@@ -57,4 +59,6 @@ const server = qmpPort === null ? null : net.createServer((socket) => {
 });
 
 if (server !== null) server.listen(qmpPort, '127.0.0.1');
+// P1.10: stdin -> stdout echo (mock of the UART0 RX -> firmware -> TX path).
+process.stdin.on('data', (d) => process.stdout.write(d));
 setInterval(() => {}, 1 << 30); // keep the process alive until killed/quit

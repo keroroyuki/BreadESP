@@ -115,6 +115,29 @@ describe('QemuRunner (mock subprocess)', () => {
     await expect(runner.start()).rejects.toThrow(/\[BB-102\]/);
   });
 
+  it('forwards writeStdin bytes to the subprocess stdin (P1.10)', async () => {
+    const runner = new QemuRunner();
+    const chunks: string[] = [];
+    runner.on('uart', (s: string) => chunks.push(s));
+    await runner.load({
+      firmwareElf: 'mock://uart-echo.elf',
+      chip: 'esp32',
+      qemuBin: NODE,
+      argsBuilder: mockArgsBuilder(),
+    });
+    await runner.start();
+    // The mock echoes stdin back on stdout (UART0 RX -> firmware -> TX).
+    runner.writeStdin('Hello BreadESP\n');
+    await until(() => chunks.join('').includes('Hello BreadESP\n'), 5000, 'stdin echo on uart');
+    await runner.stop();
+    expect(runner.getStatus()).toBe('stopped');
+  }, 15000);
+
+  it('rejects writeStdin before load() with a readable error (P1.10)', () => {
+    const runner = new QemuRunner();
+    expect(() => runner.writeStdin('x')).toThrow(/\[BB-102\] QEMU is not loaded/);
+  });
+
   it('validates the firmware ELF path up front (default builder)', async () => {
     const runner = new QemuRunner();
     await expect(runner.load({

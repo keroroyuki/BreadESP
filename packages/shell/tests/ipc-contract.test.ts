@@ -49,7 +49,7 @@ import { registerIpcHandlers, type HandlerDeps } from '../src/ipc/handlers.js';
 
 /** PRD §6.6 contract — renderer -> main invoke channels (P1.1 + P1.9 dbg surface). */
 const EXPECTED_INVOKE_CHANNELS = [
-  'sim:load', 'sim:start', 'sim:pause', 'sim:step', 'sim:reset', 'sim:status',
+  'sim:load', 'sim:start', 'sim:pause', 'sim:step', 'sim:reset', 'sim:status', 'sim:sendUart',
   'fw:load', 'fw:listSymbols',
   'dbg:connect', 'dbg:disconnect', 'dbg:status',
   'dbg:setBreakpoint', 'dbg:removeBreakpoint', 'dbg:clearBreakpoints', 'dbg:listBreakpoints',
