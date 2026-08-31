@@ -67,5 +67,11 @@ export interface PeripheralFactory {
   version: string;
   displayName: string;
   pins: PinDescriptor[];
+  /**
+   * Props applied when a netlist instance omits them (e.g. the default I2C
+   * address). NetlistResolver reads these so routing and the model itself
+   * agree on defaults.
+   */
+  defaults?: Record<string, unknown>;
   create(ctx: PeripheralContext, props?: Record<string, unknown>): Peripheral;
 }

@@ -212,6 +212,8 @@ export interface PeripheralFactory {
   version: string;              // 语义化版本
   displayName: string;
   pins: PinDescriptor[];
+  /** 实例省略 props 时的默认参数（如默认 I2C 地址）；NetlistResolver 路由时同以此回退 */
+  defaults?: Record<string, unknown>;
   create(ctx: PeripheralContext): Peripheral;
 }
 

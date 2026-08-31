@@ -105,6 +105,7 @@ export const ssd1306Factory: PeripheralFactory = {
     { id: 'VCC', role: 'power', optional: true },
     { id: 'GND', role: 'gnd', optional: true },
   ],
+  defaults: { address: DEFAULT_ADDR },
   create(ctx, props): Peripheral {
     const instanceId = String(props?.instanceId ?? crypto.randomUUID());
     const addr = Number(props?.address ?? DEFAULT_ADDR);
