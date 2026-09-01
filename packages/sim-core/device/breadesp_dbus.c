@@ -42,6 +42,22 @@
  *                 "data":[..],"ts":<virtual ns>}   (target = CS line index)
  *   gpio      := {"kind":"gpio","bus":0,"target":2,"dir":"write",
  *                 "data":[level],"ts":<virtual ns>}
+ *   pwm       := {"kind":"pwm","bus":0,"target":4,"dir":"write",
+ *                 "data":[f0,f1,f2,f3,d0,d1],"ts":<virtual ns>}
+ *                 (target = GPIO number; f = freq centihertz u32 LE,
+ *                  d = duty permille u16 LE; 0Hz/0% = silent)
+ *
+ * PWM forwarding (dev-plan task P2.3): QEMU's esp32.ledc model stores the
+ * LEDC registers but never drives pins (its "led" widgets are graphical
+ * only), and the GPIO matrix is unmodeled, so a firmware buzzer tone never
+ * reaches the GPIO shadow. Instead an MMIO shadow is overlaid on the
+ * esp32.ledc bank (both mappings) and the GPIO shadow also observes the
+ * FUNCn_OUT_SEL matrix config: timer conf + channel conf0/duty are decoded
+ * into (frequency, duty) per channel, the matrix maps LEDC output signals
+ * (LEDC_HS_SIG_OUT0..7 = 71..78, LEDC_LS_SIG_OUT0..7 = 79..86, ESP32 TRM
+ * "Peripheral Output Signals") onto pins, and every change of a pin's
+ * effective tone emits one pwm transaction. HS timers are assumed to run on
+ * APB_CLK 80MHz (TICK_SEL=1; the Arduino/ESP-IDF default for ledc).
  *
  * TODO(PRD §4.2): I2S/ADC forwarding (M3, dev-plan tasks 3.x).
  * TODO(PRD §6.3): bridge-supplied I2C/SPI read data (reverse channel).
@@ -70,6 +86,7 @@
 #include "hw/ssi/ssi.h"
 #include "hw/ssi/esp32_spi.h"
 #include "hw/gpio/esp32_gpio.h"
+#include "hw/misc/esp32_ledc.h"
 #include "io/channel.h"
 #include "io/channel-socket.h"
 #include "qom/object.h"
@@ -98,11 +115,45 @@ DECLARE_INSTANCE_CHECKER(BreadespSpiSniffer, BREADESP_SPI_SNIFFER,
 #define ESP32_GPIO_OUT1_W1TC_REG 0x18
 
 /*
+ * GPIO matrix output-signal select: FUNCn_OUT_SEL_CFG_REG = 0x530 + 4*n
+ * (n = GPIO 0..39). The low 9 bits select the peripheral output signal
+ * driving the pin (0x100 = plain GPIO_OUT).
+ */
+#define ESP32_GPIO_FUNC0_OUT_SEL_REG 0x530
+#define ESP32_GPIO_PIN_COUNT 40
+#define ESP32_GPIO_OUT_SEL_MASK 0x1ff
+
+/* LEDC peripheral output signal indices (ESP32 TRM, output signal table). */
+#define LEDC_HS_SIG_OUT0_IDX 71
+#define LEDC_LS_SIG_OUT0_IDX 79
+
+/* LEDC register offsets within DR_REG_LEDC_BASE (hw/misc/esp32_ledc.h). */
+#define LEDC_CH_CONF0_REG(i)  (0x000 + 0x14 * (i))
+#define LEDC_CH_DUTY_REG(i)   (0x008 + 0x14 * (i))
+#define LEDC_TIMER_CONF_REG(i) (0x140 + 0x08 * (i))
+#define LEDC_TIMER_COUNT 8
+#define LEDC_CHANNEL_COUNT 16
+
+/* Timer conf bit fields (ESP32 TRM, LEDC_HSTIMERx_CONF_REG). */
+#define LEDC_CONF_DUTY_RES_MASK 0xf
+#define LEDC_CONF_CLK_DIV_SHIFT 5
+#define LEDC_CONF_CLK_DIV_MASK 0x3ffff
+/* Channel conf0 bit fields (LEDC_HSCHx_CONF0_REG). */
+#define LEDC_CH_CONF0_TIMER_SEL_MASK 0x3
+#define LEDC_CH_CONF0_SIG_OUT_EN (1u << 2)
+
+/* HS/LS timers source APB_CLK 80MHz in the Arduino/ESP-IDF ledc path. */
+#define LEDC_APB_CLK_HZ 80000000.0
+
+/*
  * esp32.gpio iomem mappings (esp32_soc_add_periph_device): the DPORT
  * register bank and its APB alias. Both are shadowed so firmware using
  * either address window is observed.
  */
 static const hwaddr breadesp_gpio_bases[] = { 0x3ff44000, 0x60004000 };
+
+/* esp32.ledc iomem mappings (same dual-mapping scheme as esp32.gpio). */
+static const hwaddr breadesp_ledc_bases[] = { 0x3ff59000, 0x60019000 };
 
 #define BREADESP_DBUS_PROTO_VERSION 1
 /* Cap for a single I2C write payload mirrored to the bridge, in bytes. */
@@ -134,6 +185,21 @@ struct BreadespDbusState {
     MemoryRegion *gpio_orig;
     unsigned gpio_nmr;
     uint32_t gpio_out[2]; /* output level banks (pins 0-31, 32-39) */
+
+    /* GPIO matrix: peripheral output signal selected per pin (0 = unset). */
+    uint16_t gpio_out_sel[ESP32_GPIO_PIN_COUNT];
+
+    /* LEDC shadow state (one overlay per mapping in breadesp_ledc_bases). */
+    MemoryRegion ledc_mr[ARRAY_SIZE(breadesp_ledc_bases)];
+    MemoryRegion *ledc_orig;
+    unsigned ledc_nmr;
+    uint32_t ledc_timer_conf[LEDC_TIMER_COUNT];
+    uint32_t ledc_ch_conf0[LEDC_CHANNEL_COUNT];
+    uint32_t ledc_ch_duty[LEDC_CHANNEL_COUNT];
+
+    /* Last tone emitted per pin (dedupe): 0 centihertz/0 permille = silent. */
+    uint32_t pwm_last_centi[ESP32_GPIO_PIN_COUNT];
+    uint16_t pwm_last_duty[ESP32_GPIO_PIN_COUNT];
 
     /* Sniffer devices living on the esp32.i2c buses (bus-owned). */
     GPtrArray *sniffers;
@@ -268,6 +334,83 @@ static void dbus_emit_spi_write(BreadespDbusState *s, uint8_t bus,
     }
     g_string_append(j, "]}");
     dbus_queue(s, j);
+}
+
+static void dbus_emit_pwm(BreadespDbusState *s, uint8_t pin,
+                          uint32_t centi_hz, uint16_t duty_permille)
+{
+    GString *j = g_string_sized_new(112);
+
+    g_string_printf(j, "{\"kind\":\"pwm\",\"bus\":0,\"target\":%u,"
+                     "\"dir\":\"write\",\"ts\":%lld,"
+                     "\"data\":[%u,%u,%u,%u,%u,%u]}",
+                     pin, (long long)qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),
+                     centi_hz & 0xff, (centi_hz >> 8) & 0xff,
+                     (centi_hz >> 16) & 0xff, (centi_hz >> 24) & 0xff,
+                     duty_permille & 0xff, (duty_permille >> 8) & 0xff);
+    dbus_queue(s, j);
+}
+
+/* ------------------------------------------------------------------ */
+/* LEDC -> GPIO-matrix tone decode                                     */
+
+/*
+ * Effective (freq, duty) of one LEDC channel. Mirrors the esp32.ledc
+ * model's register layout; the frequency formula is the ESP32 TRM's
+ * f = APB_CLK / (clk_div/256) / 2^duty_res. Returns false when the channel
+ * produces no square wave (disabled, zero divisor/resolution, zero duty).
+ */
+static bool ledc_channel_tone(BreadespDbusState *s, int ch,
+                              uint32_t *centi_hz, uint16_t *duty_permille)
+{
+    uint32_t conf0 = s->ledc_ch_conf0[ch];
+    int timer_idx = (conf0 & LEDC_CH_CONF0_TIMER_SEL_MASK) + (ch < 8 ? 0 : 4);
+    uint32_t tconf = s->ledc_timer_conf[timer_idx];
+    uint32_t duty_res = tconf & LEDC_CONF_DUTY_RES_MASK;
+    uint32_t clk_div = (tconf >> LEDC_CONF_CLK_DIV_SHIFT) & LEDC_CONF_CLK_DIV_MASK;
+    uint32_t duty_raw = (s->ledc_ch_duty[ch] >> 4) & 0xfffff;
+
+    if (!(conf0 & LEDC_CH_CONF0_SIG_OUT_EN) || duty_res == 0 || clk_div == 0
+        || duty_raw == 0) {
+        return false;
+    }
+
+    double freq = LEDC_APB_CLK_HZ * 256.0
+                  / ((double)clk_div * (double)(1u << duty_res));
+    uint32_t full_scale = (1u << duty_res) - 1;
+    uint32_t permille = (uint32_t)(1000.0 * duty_raw / full_scale + 0.5);
+
+    *centi_hz = (uint32_t)(freq * 100.0 + 0.5);
+    *duty_permille = permille > 1000 ? 1000 : (uint16_t)permille;
+    return *centi_hz > 0;
+}
+
+/*
+ * Recompute every pin's tone and emit a pwm transaction per changed pin.
+ * Cheap enough to run on any LEDC/matrix write (16 channels x 40 pins of
+ * register reads, and the emit dedupe keeps quiet configurations silent).
+ */
+static void ledc_pwm_update(BreadespDbusState *s)
+{
+    unsigned pin;
+
+    for (pin = 0; pin < ESP32_GPIO_PIN_COUNT; pin++) {
+        uint16_t sig = s->gpio_out_sel[pin];
+        uint32_t centi = 0;
+        uint16_t duty = 0;
+
+        if (sig >= LEDC_HS_SIG_OUT0_IDX && sig < LEDC_HS_SIG_OUT0_IDX + 8) {
+            ledc_channel_tone(s, sig - LEDC_HS_SIG_OUT0_IDX, &centi, &duty);
+        } else if (sig >= LEDC_LS_SIG_OUT0_IDX && sig < LEDC_LS_SIG_OUT0_IDX + 8) {
+            ledc_channel_tone(s, 8 + sig - LEDC_LS_SIG_OUT0_IDX, &centi, &duty);
+        }
+
+        if (centi != s->pwm_last_centi[pin] || duty != s->pwm_last_duty[pin]) {
+            s->pwm_last_centi[pin] = centi;
+            s->pwm_last_duty[pin] = duty;
+            dbus_emit_pwm(s, (uint8_t)pin, centi, duty);
+        }
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -636,6 +779,14 @@ static void dbus_gpio_forward_write(void *opaque, hwaddr addr,
         nw = old & ~(uint32_t)value;
         bank = 1;
         break;
+    case ESP32_GPIO_FUNC0_OUT_SEL_REG ... ESP32_GPIO_FUNC0_OUT_SEL_REG + 4 * (ESP32_GPIO_PIN_COUNT - 1):
+        /* GPIO matrix output-signal select: feeds the LEDC tone decode. */
+        if (((addr - ESP32_GPIO_FUNC0_OUT_SEL_REG) & 3) == 0) {
+            unsigned n = (addr - ESP32_GPIO_FUNC0_OUT_SEL_REG) / 4;
+            s->gpio_out_sel[n] = (uint16_t)(value & ESP32_GPIO_OUT_SEL_MASK);
+            ledc_pwm_update(s);
+        }
+        return;
     default:
         return; /* not an output register: observe only */
     }
@@ -708,6 +859,94 @@ static void dbus_setup_gpio_shadow(BreadespDbusState *s, Object *gpio)
 }
 
 /* ------------------------------------------------------------------ */
+/* LEDC MMIO shadow                                                    */
+
+static uint64_t dbus_ledc_read(void *opaque, hwaddr addr, unsigned size)
+{
+    BreadespDbusState *s = opaque;
+    uint64_t val = 0;
+
+    if (s->ledc_orig) {
+        memory_region_dispatch_read(s->ledc_orig, addr, &val,
+                                    size_memop(size) | MO_LE,
+                                    MEMTXATTRS_UNSPECIFIED);
+    }
+    return val;
+}
+
+static void dbus_ledc_write(void *opaque, hwaddr addr, uint64_t value,
+                            unsigned size)
+{
+    BreadespDbusState *s = opaque;
+    uint32_t v = (uint32_t)value;
+    unsigned i;
+
+    /* Record the tone-relevant registers, then re-evaluate all pins. */
+    for (i = 0; i < LEDC_TIMER_COUNT; i++) {
+        if (addr == LEDC_TIMER_CONF_REG(i)) {
+            s->ledc_timer_conf[i] = v;
+            ledc_pwm_update(s);
+            goto forward;
+        }
+    }
+    for (i = 0; i < LEDC_CHANNEL_COUNT; i++) {
+        if (addr == LEDC_CH_CONF0_REG(i)) {
+            s->ledc_ch_conf0[i] = v;
+            ledc_pwm_update(s);
+            goto forward;
+        }
+        if (addr == LEDC_CH_DUTY_REG(i)) {
+            s->ledc_ch_duty[i] = v;
+            ledc_pwm_update(s);
+            goto forward;
+        }
+    }
+
+forward:
+    if (s->ledc_orig) {
+        /* Observe-only shadow: keep the model's own register view in sync. */
+        memory_region_dispatch_write(s->ledc_orig, addr, value,
+                                     size_memop(size) | MO_LE,
+                                     MEMTXATTRS_UNSPECIFIED);
+    }
+}
+
+static const MemoryRegionOps dbus_ledc_ops = {
+    .read = dbus_ledc_read,
+    .write = dbus_ledc_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 4,
+    },
+};
+
+static void dbus_setup_ledc_shadow(BreadespDbusState *s, Object *ledc)
+{
+    MemoryRegion *orig = sysbus_mmio_get_region(SYS_BUS_DEVICE(ledc), 0);
+    MemoryRegionSection sec;
+    size_t i;
+
+    /* Same esp32-only guard as the GPIO shadow: the DPORT window must host
+     * this very region (esp32s3/c3 map LEDC elsewhere). */
+    sec = memory_region_find(get_system_memory(), breadesp_ledc_bases[0], 4);
+    if (sec.mr != orig) {
+        return;
+    }
+
+    s->ledc_orig = orig;
+    for (i = 0; i < ARRAY_SIZE(breadesp_ledc_bases); i++) {
+        memory_region_init_io(&s->ledc_mr[i], OBJECT(s), &dbus_ledc_ops,
+                              s, "breadesp.ledc-shadow",
+                              memory_region_size(orig));
+        memory_region_add_subregion_overlap(get_system_memory(),
+                                            breadesp_ledc_bases[i],
+                                            &s->ledc_mr[i], 1);
+        s->ledc_nmr++;
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* QOM tree scan                                                       */
 
 static int dbus_scan_visit(Object *obj, void *opaque)
@@ -725,6 +964,8 @@ static int dbus_scan_visit(Object *obj, void *opaque)
         }
     } else if (object_dynamic_cast(obj, TYPE_ESP32_GPIO)) {
         dbus_setup_gpio_shadow(s, obj);
+    } else if (object_dynamic_cast(obj, TYPE_ESP32_LEDC)) {
+        dbus_setup_ledc_shadow(s, obj);
     }
     object_child_foreach(obj, dbus_scan_visit, opaque);
     return 0;
@@ -792,6 +1033,12 @@ static void breadesp_dbus_unrealize(DeviceState *dev)
                                     &s->gpio_mr[s->gpio_nmr]);
     }
     s->gpio_orig = NULL;
+    while (s->ledc_nmr > 0) {
+        s->ledc_nmr--;
+        memory_region_del_subregion(get_system_memory(),
+                                    &s->ledc_mr[s->ledc_nmr]);
+    }
+    s->ledc_orig = NULL;
     if (s->sniffers) {
         for (guint i = 0; i < s->sniffers->len; i++) {
             BREADESP_I2C_SNIFFER(g_ptr_array_index(s->sniffers, i))->owner = NULL;
@@ -826,6 +1073,12 @@ static void breadesp_dbus_reset_hold(Object *obj, ResetType type)
     BreadespDbusState *s = BREADESP_DBUS(obj);
 
     memset(s->gpio_out, 0, sizeof(s->gpio_out));
+    memset(s->gpio_out_sel, 0, sizeof(s->gpio_out_sel));
+    memset(s->ledc_timer_conf, 0, sizeof(s->ledc_timer_conf));
+    memset(s->ledc_ch_conf0, 0, sizeof(s->ledc_ch_conf0));
+    memset(s->ledc_ch_duty, 0, sizeof(s->ledc_ch_duty));
+    memset(s->pwm_last_centi, 0, sizeof(s->pwm_last_centi));
+    memset(s->pwm_last_duty, 0, sizeof(s->pwm_last_duty));
     g_string_truncate(s->pending, 0);
     s->pending_count = 0;
 }

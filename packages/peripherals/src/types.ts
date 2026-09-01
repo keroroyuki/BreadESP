@@ -32,13 +32,16 @@ export interface BusTransaction {
 // §6.4 RenderSnapshot (peripheral model -> UI)
 export interface RenderSnapshot {
   instanceId: string;
-  type: 'pixels' | 'level' | 'audio' | 'waveform' | 'text';
+  // 'tone' added by P2.3 (PRD §F-PER-5): additive union member, backward
+  // compatible for producers and consumers that ignore unknown types.
+  type: 'pixels' | 'level' | 'audio' | 'waveform' | 'text' | 'tone';
   payload:
     | { width: number; height: number; format: 'mono' | 'rgb565' | 'argb8888'; buffer: number[] | string }
     | { level: number }                                   // 0..1 brightness
     | { samples: number[]; sampleRate: number }            // audio (JSON-safe Float32 as number[])
     | { samples: number[] }                               // waveform
-    | { text: string };
+    | { text: string }
+    | { freqHz: number; duty: number };                    // tone: freqHz>0 & duty>0 = sounding
 }
 
 // §6.2 Context given to a peripheral at creation time.

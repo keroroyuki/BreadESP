@@ -13,7 +13,9 @@
 //   - gpio: pin-level match via wires. tx.target is the GPIO number; a wire with
 //           one endpoint on { instanceId: 'mcu', pin: 'GPIO<n>' } routes the
 //           transaction to the peripheral at the other endpoint.
-//   - pwm/i2s/adc: not routable yet (no consumers; TODO with their phases).
+//   - pwm:  same pin-level wire routing as gpio (dev-plan task P2.3: the
+//           device's LEDC shadow decodes freq/duty per output pin).
+//   - i2s/adc: not routable yet (no consumers; TODO with their phases).
 import type { Netlist, PeripheralInstance } from '@breadesp/netlist';
 import { MCU_INSTANCE_ID } from '@breadesp/netlist';
 import { getFactory } from '@breadesp/peripherals';
@@ -66,11 +68,14 @@ export class NetlistResolver {
         // transaction on; routing follows the claimed CS, not the wires.
         return tx.target === undefined ? [] : [...(this.spiByCs.get(tx.target) ?? [])];
       case 'gpio':
-        // tx.target is the GPIO number; wires name MCU pins 'GPIO<n>'.
+      case 'pwm':
+        // tx.target is the GPIO number; wires name MCU pins 'GPIO<n>'. PWM
+        // (LEDC decoded by the device shadow, P2.3) is a per-pin output like
+        // gpio level writes, so it follows the same wire routing.
         return tx.target === undefined ? [] : [...(this.gpioByPin.get(`GPIO${tx.target}`) ?? [])];
       default:
-        // TODO(PRD §4.2): pwm/i2s/adc pin-level routing lands with the
-        // corresponding peripheral models (P3); nothing consumes them today.
+        // TODO(PRD §4.2): i2s/adc pin-level routing lands with the
+        // corresponding peripheral models (P2.4/P3); nothing consumes them today.
         return [];
     }
   }

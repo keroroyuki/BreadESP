@@ -1,6 +1,8 @@
 // PRD: §4, §F-BB — Top-level layout. Three columns: palette | breadboard | inspector.
 import { useEffect } from 'react';
+import type { RenderSnapshot } from '@breadesp/peripherals';
 import { useSimulationStore } from './store/simulationStore';
+import { sharedBuzzerEngine, toneFromSnapshot } from './audio/BuzzerAudio';
 import { useProjectStore } from './store/projectStore';
 import { useDebuggerStore } from './store/debuggerStore';
 import { bridge } from './ipc/bridge';
@@ -34,6 +36,30 @@ export function App() {
       console.error('[BB-UI] applyNetlist failed:', err);
     });
   }, [netlist]);
+
+  // Buzzer audio (dev-plan task P2.3): every 'tone' snapshot addressed at a
+  // buzzer instance drives its WebAudio square-wave voice. Subscribing to the
+  // raw store (not React state) keeps audio latency off the render path.
+  useEffect(() => {
+    const engine = sharedBuzzerEngine();
+    const isBuzzer = (instanceId: string): boolean =>
+      useProjectStore.getState().netlist.peripherals.some(
+        (p) => p.instanceId === instanceId && p.kind === 'buzzer',
+      );
+    const apply = (snap: RenderSnapshot): void => {
+      if (isBuzzer(snap.instanceId)) engine.update(snap.instanceId, toneFromSnapshot(snap));
+    };
+    const unsub = useSimulationStore.subscribe((state, prev) => {
+      if (state.snapshots === prev.snapshots) return;
+      for (const [id, snap] of Object.entries(state.snapshots)) {
+        if (prev.snapshots[id] !== snap) apply(snap);
+      }
+    });
+    return () => {
+      unsub();
+      engine.dispose();
+    };
+  }, []);
 
   return (
     <div style={layout}>

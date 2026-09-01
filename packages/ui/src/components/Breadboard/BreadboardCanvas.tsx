@@ -336,6 +336,35 @@ export function BreadboardCanvas() {
                     />
                   </Group>
                 )}
+                {item.kind === 'buzzer' && (() => {
+                  // 'tone' snapshot (P2.3): duty doubles as the glow level.
+                  const tone = snap?.type === 'tone'
+                    ? (snap.payload as { freqHz: number; duty: number })
+                    : null;
+                  const on = tone !== null && tone.freqHz > 0 && tone.duty > 0;
+                  const glow = on ? tone.duty : 0;
+                  return (
+                    <Group listening={false}>
+                      <Circle
+                        x={NODE_W / 2}
+                        y={34}
+                        radius={12}
+                        fill={on ? '#fbbf24' : '#e2e8f0'}
+                        opacity={on ? 0.4 + 0.6 * glow : 1}
+                        stroke="#92400e"
+                      />
+                      <Text
+                        x={14}
+                        y={48}
+                        width={NODE_W - 28}
+                        align="center"
+                        text={on ? `${Math.round(tone.freqHz)} Hz` : 'silent'}
+                        fontSize={9}
+                        fill="#64748b"
+                      />
+                    </Group>
+                  );
+                })()}
                 {item.kind === 'ssd1306' && (
                   // Live pixels render in ScreenView; canvas preview is a TODO(PRD §F-PER-3).
                   <Group listening={false}>
