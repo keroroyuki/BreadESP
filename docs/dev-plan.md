@@ -54,7 +54,7 @@
 ### 2.1 里程碑验收标志
 - **M0**（已达成 2026-08-31）：`blink.elf` 启动，UART 打印 `Hello`，GDB 断在 `app_main`。
 - **M1**（任务 1.1–1.10 已完成，Electron 应用级手动回归随收尾统一进行）：UI 拖拽 LED 连 GPIO2，OLED 显示固件绘制的文字，可断点单步。
-- **M2**（进行中，任务 2.1 已完成）：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
+- **M2**（进行中，任务 2.1–2.2 已完成）：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
 - **M3**（未开始）：麦克风波形注入后固件能读到采样值。
 - **M4**（未开始）：切换芯片型号后同一工程可在 ESP32/S3 跑通。
 - **M5**（未开始）：第三方包 `registerPeripheral()` 后 UI 自动出现新器件。
@@ -102,7 +102,7 @@
 | # | 任务 | 产物 | 验收 | 状态 |
 |---|---|---|---|---|
 | 2.1 | `st7789` SPI 命令解释 + rgb565 帧缓冲 | TFT 彩屏渲染 | SPI 事务落到 tft1 且像素入帧缓冲 | 已完成 2026-08-31 |
-| 2.2 | `TftRenderer`（rgb565→ImageData） | UI Canvas | 画布显示 TFT 内容 | 未开始 |
+| 2.2 | `TftRenderer`（rgb565→ImageData） | UI Canvas | 画布显示 TFT 内容 | 已完成 2026-09-01 |
 | 2.3 | `buzzer` PWM 频率→WebAudio 方波 | 发声 | 蜂鸣器按频率发声 | 未开始 |
 | 2.4 | `speaker` I2S PCM→WebAudio 播放 | 音频流 | 喇叭播放正弦波 | 未开始 |
 | 2.5 | `Oscilloscope` 抓 GPIO/PWM/I2S 时序 | 波形面板 | 波形面板显示 GPIO 波形 | 未开始 |
@@ -458,8 +458,18 @@ Previously applyNetlist leaked old instances on re-apply.
 > QEMU 设备构建两条教训：`SSI_BUS` 宏未导出（用 `qdev_get_child_bus(...,"spi")` 强转 `SSIBus*`）；
 > SSI 外设类不实现 `realize` 回调会在 realize 阶段 SIGSEGV（sniffer 实现了空回调）。
 
+> P2.2 验证记录（2026-09-01）：`pnpm typecheck` 0 错误；全仓测试 231 通过 + 5 跳过（Windows 门控，
+> 与 P2.1 同基线，新增 13 项 TftRenderer 单测）。分两层验证——`TftRenderer.rgb565ToRgba`
+> 纯解码（5/6/5→8 位位复制扩展：纯红 0xF800→255 而非 248，对应真实 ST7789 满量程显色；行序
+> row-major、16 位掩码、超长截断、缺省补黑、缓冲过小抛错、全黑帧）、`TftRenderer.renderRgb565`
+> 画布绑定（createImageData→putImageData@0,0、按快照尺寸调整 canvas backing store、
+> 2d context 缺失静默返回）；以及 ST7789 快照形状集成缝（`pixels` payload `{width,height,
+> format:'rgb565',buffer:number[]}` 原样可解码）。`ScreenView` 由"单一 OLED mono 画布"
+> 重构为"按 instanceId 排序的多屏瓦片"，每屏各自持 canvas、按 format 分派 mono/rgb565 渲染器，
+> 240×240 TFT 在 280px 侧栏内等比缩放且 `imageRendering:pixelated` 保持像素清晰。
+
 ### M2 清单
-- [ ] TFT 渲染 rgb565 彩图
+- [x] TFT 渲染 rgb565 彩图
 - [ ] 蜂鸣器按 PWM 频率发声
 - [ ] 喇叭播放 I2S 正弦波
 - [ ] 示波器显示 GPIO 波形
