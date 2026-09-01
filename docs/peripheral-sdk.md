@@ -54,7 +54,11 @@ registerPeripheral(myLedFactory);
   连线，把 `target = n` 的事务投递到另一端外设；同一引脚可挂多个外设（全部收到）。
   SPI 外设的控制线（DC/RST/BL）也走这里：把实例的 `DC` 引脚连到 `mcu.GPIO<n>` 并在
   `props.dc` 声明同一编号，模型据此把 GPIO 电平采样为命令/数据选择。
-- **PWM/I2S/ADC**：暂不路由（待 P2/P3 对应外设模型落地）。
+- **PWM**：与 GPIO 相同的按引脚路由（P2.3 起）。QEMU 设备的 LEDC/GPIO 矩阵
+  影子寄存器把定时器/通道配置解码为每引脚的 `pwm` 事务——`target` 为 GPIO 编号，
+  `data` 为 6 字节：`[频率 0.01Hz u32 LE][占空比 ‰ u16 LE]`（0Hz/0‰ = 静默），
+  由蜂鸣器等模型消费；手工翻转 GPIO 的 bit-bang 固件则由模型侧沿测量兜底。
+- **I2S/ADC**：暂不路由（待 P2.4/P3 对应外设模型落地）。
 
 > TODO(PRD §6.1): 基于 `pins[].role` 的连线合法性校验（如 i2c-sda 不能接到 gpio-out）在
 > 后续里程碑补齐。
@@ -66,7 +70,9 @@ registerPeripheral(myLedFactory);
 ## 4. 渲染快照（PRD §6.4）
 
 - `pixels`：帧缓冲（mono/rgb565/argb8888），UI 端按 format 解码到 Canvas。
-- `level`：0..1 亮度，用于 LED/蜂鸣器视觉。
+- `level`：0..1 亮度，用于 LED 视觉。
+- `tone`： `{freqHz, duty}` 音调描述（P2.3 新增，蜂鸣器），UI 用 WebAudio 合成方波，
+  duty 兼作视觉亮度；`freqHz>0 且 duty>0` 表示发声。
 - `audio`：PCM 采样 + 采样率，UI 用 WebAudio 播放。
 - `waveform`：示波器用。
 - `text`：文本面板。

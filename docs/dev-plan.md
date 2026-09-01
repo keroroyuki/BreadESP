@@ -54,7 +54,7 @@
 ### 2.1 里程碑验收标志
 - **M0**（已达成 2026-08-31）：`blink.elf` 启动，UART 打印 `Hello`，GDB 断在 `app_main`。
 - **M1**（任务 1.1–1.10 已完成，Electron 应用级手动回归随收尾统一进行）：UI 拖拽 LED 连 GPIO2，OLED 显示固件绘制的文字，可断点单步。
-- **M2**（进行中，任务 2.1–2.2 已完成）：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
+- **M2**（进行中，任务 2.1–2.3 已完成）：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
 - **M3**（未开始）：麦克风波形注入后固件能读到采样值。
 - **M4**（未开始）：切换芯片型号后同一工程可在 ESP32/S3 跑通。
 - **M5**（未开始）：第三方包 `registerPeripheral()` 后 UI 自动出现新器件。
@@ -103,7 +103,7 @@
 |---|---|---|---|---|
 | 2.1 | `st7789` SPI 命令解释 + rgb565 帧缓冲 | TFT 彩屏渲染 | SPI 事务落到 tft1 且像素入帧缓冲 | 已完成 2026-08-31 |
 | 2.2 | `TftRenderer`（rgb565→ImageData） | UI Canvas | 画布显示 TFT 内容 | 已完成 2026-09-01 |
-| 2.3 | `buzzer` PWM 频率→WebAudio 方波 | 发声 | 蜂鸣器按频率发声 | 未开始 |
+| 2.3 | `buzzer` PWM 频率→WebAudio 方波 | 发声 | 蜂鸣器按频率发声 | 已完成 2026-09-01 |
 | 2.4 | `speaker` I2S PCM→WebAudio 播放 | 音频流 | 喇叭播放正弦波 | 未开始 |
 | 2.5 | `Oscilloscope` 抓 GPIO/PWM/I2S 时序 | 波形面板 | 波形面板显示 GPIO 波形 | 未开始 |
 | 2.6 | 仿真速度倍率 + 暂停/继续（QMP） | sim 控制 | sim 可暂停/继续/调速 | 未开始 |
@@ -468,9 +468,26 @@ Previously applyNetlist leaked old instances on re-apply.
 > 重构为"按 instanceId 排序的多屏瓦片"，每屏各自持 canvas、按 format 分派 mono/rgb565 渲染器，
 > 240×240 TFT 在 280px 侧栏内等比缩放且 `imageRendering:pixelated` 保持像素清晰。
 
+> P2.3 验证记录（2026-09-01）：`pnpm typecheck` 0 错误；全仓测试 260 通过 + 6 跳过（Windows 门控，
+> 新增 pwm e2e 跳过项）。分四层验证——buzzer 模型 14 项单测（pwm 解码含小数厘赫、零占空/零频静默、
+> 稳态去重、440→880 变调、占空比钳制、截断负载忽略、读事务/异类事务过滤；bit-bang 沿测频、4 沿下限、
+> 漂移带去重、频率跟踪、超音频段拒绝）；路由/协议层 NetlistResolver 21 项（pwm 按 GPIO 连线路由 +
+> 未连线引脚）与 DBusChannel 8 项（pwm 帧透传 ns→ms）；UI 层 BuzzerAudio 14 项（纯映射钳制/非有限值/
+> 非 tone 拒绝，每实例一条方波声道的 osc→gain→destination 接线、原地变调、静音不停振、自定义音量、
+> 无 AudioContext 静默、suspended 才 resume、一次性手势钩子、dispose 后重建）；真实 QEMU e2e
+> （pwm-buzzer.e2e.test.ts）于 WSL 验证通过（Docker 重建的 Linux breadesp QEMU，含 LEDC/GPIO 矩阵
+> 影子）：buzzer.elf 的 LEDC 440Hz→880Hz 配置序列落到 buzz1 的 tone 快照（430–450Hz → 860–900Hz，
+> duty≈0.5），无广播泄漏，UART 出现 `BUZZ 440`/`BUZZ 880` 标记；spi-st7789/netlist-routing/dbus-device
+> e2e 对同一重建二进制回归通过（WSL 全量 127 通过）。金标固件 `buzzer.elf` 由
+> `scripts/make-buzzer-elf.mjs` 确定性生成，`--check` 模式可校验入库 fixture 无漂移。
+> 设计要点：QEMU 自带 esp32_ledc 模型只存寄存器不驱动引脚（GPIO 矩阵未建模），故设备侧新增
+> LEDC 寄存器影子 + GPIO FUNCn_OUT_SEL 观测，把定时器/通道配置按 TRM 公式解码为每引脚
+> (频率, 占空比) 并以 pwm 事务（6 字节：厘赫 u32 LE + 千分占空 u16 LE）去重下发；
+> 快照新增 'tone' 类型（§6.4 追加式联合扩展，duty 兼作视觉亮度，避免每实例单快照位相互覆盖）。
+
 ### M2 清单
 - [x] TFT 渲染 rgb565 彩图
-- [ ] 蜂鸣器按 PWM 频率发声
+- [x] 蜂鸣器按 PWM 频率发声
 - [ ] 喇叭播放 I2S 正弦波
 - [ ] 示波器显示 GPIO 波形
 - [ ] 仿真可暂停/继续/调速
