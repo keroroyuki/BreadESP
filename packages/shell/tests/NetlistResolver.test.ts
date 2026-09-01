@@ -30,6 +30,11 @@ function spiWrite(cs: number, bus = 0): BusTransaction {
   return { kind: 'spi', bus, target: cs, dir: 'write', data: Uint8Array.from([0x2a]), ts: 1 };
 }
 
+function pwmWrite(pin: number): BusTransaction {
+  // LEDC-decoded tone on a GPIO (dev-plan P2.3): freq centi-Hz + duty permille.
+  return { kind: 'pwm', bus: 0, target: pin, dir: 'write', data: Uint8Array.from([0xe0, 0xab, 0, 0, 0xf4, 0x01]), ts: 1 };
+}
+
 describe('NetlistResolver (PRD §4.2/§6.5 routing)', () => {
   it('routes an I2C transaction to the instance claiming that address', () => {
     const r = new NetlistResolver(netlist([
@@ -144,12 +149,21 @@ describe('NetlistResolver (PRD §4.2/§6.5 routing)', () => {
     expect(r.resolve(spiWrite(1))).toEqual([]);
   });
 
-  it('does not route pwm/i2s/adc transactions yet', () => {
+  it('routes a pwm transaction by GPIO wire like a gpio write (P2.3)', () => {
+    const r = new NetlistResolver(netlist(
+      [{ instanceId: 'buzz1', kind: 'buzzer' }],
+      [wire('w1', { instanceId: 'buzz1', pin: '+' }, { instanceId: 'mcu', pin: 'GPIO4' })],
+    ));
+    expect(r.resolve(pwmWrite(4))).toEqual([{ instanceId: 'buzz1', pin: '+' }]);
+    expect(r.resolve(pwmWrite(5))).toEqual([]); // unwired pin
+  });
+
+  it('does not route i2s/adc transactions yet', () => {
     const r = new NetlistResolver(netlist(
       [{ instanceId: 'oled1', kind: 'ssd1306', props: { address: 0x3c } }],
       [wire('w1', { instanceId: 'oled1', pin: 'SDA' }, { instanceId: 'mcu', pin: 'GPIO21' })],
     ));
-    for (const kind of ['pwm', 'i2s', 'adc'] as const) {
+    for (const kind of ['i2s', 'adc'] as const) {
       const tx: BusTransaction = { kind, bus: 0, target: 1, dir: 'write', data: new Uint8Array(1), ts: 1 };
       expect(r.resolve(tx)).toEqual([]);
     }

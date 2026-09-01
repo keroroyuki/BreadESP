@@ -72,6 +72,21 @@ describe('DBusChannel (PRD §6.7 frame protocol)', () => {
     ]);
   });
 
+  it('deserializes a pwm transaction (P2.3 LEDC tone frame)', async () => {
+    const { txs } = await fixture([
+      '{"v":1,"tx":[' +
+        '{"kind":"pwm","bus":0,"target":4,"dir":"write","ts":3000000,"data":[224,171,0,0,244,1]}' +
+      ']}',
+    ]);
+    await waitUntil(() => txs.length >= 1);
+    expect(txs).toEqual([
+      {
+        kind: 'pwm', bus: 0, target: 4, dir: 'write',
+        ts: 3, data: Uint8Array.from([0xe0, 0xab, 0, 0, 0xf4, 0x01]),
+      },
+    ]);
+  });
+
   it('reassembles frames split across TCP segment boundaries', async () => {
     const payload =
       '{"v":1,"tx":[{"kind":"i2c","bus":0,"target":60,"dir":"read","length":4,"ts":500000}]}';
