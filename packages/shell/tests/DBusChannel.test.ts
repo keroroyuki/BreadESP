@@ -87,6 +87,21 @@ describe('DBusChannel (PRD §6.7 frame protocol)', () => {
     ]);
   });
 
+  it('deserializes an i2s transaction (P2.4 DMA PCM frame)', async () => {
+    const { txs } = await fixture([
+      '{"v":1,"tx":[' +
+        '{"kind":"i2s","bus":0,"dir":"write","ts":4000000,"data":[103,65,0,0,16,2,1,0,0,128]}' +
+      ']}',
+    ]);
+    await waitUntil(() => txs.length >= 1);
+    expect(txs).toEqual([
+      {
+        kind: 'i2s', bus: 0, dir: 'write',
+        ts: 4, data: Uint8Array.from([0x67, 0x41, 0, 0, 16, 2, 1, 0, 0, 128]),
+      },
+    ]);
+  });
+
   it('reassembles frames split across TCP segment boundaries', async () => {
     const payload =
       '{"v":1,"tx":[{"kind":"i2c","bus":0,"target":60,"dir":"read","length":4,"ts":500000}]}';

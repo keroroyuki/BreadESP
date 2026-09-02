@@ -72,6 +72,21 @@ function gpioWrite(pin: number, level: 0 | 1): BusTransaction {
   return { kind: 'gpio', bus: 0, target: pin, dir: 'write', data: Uint8Array.from([level]), ts: 6 };
 }
 
+const SPEAKER_ON_I2S0: Netlist = {
+  version: 1,
+  chip: 'esp32',
+  peripherals: [{ instanceId: 'spk1', kind: 'speaker' }],
+  wires: [],
+};
+
+/** P2.4 device wire frame: 8-byte header + `frames` stereo s16le frames of zeros. */
+function i2sWrite(frames: number): BusTransaction {
+  const rate = 16000;
+  const data = new Uint8Array(8 + frames * 4);
+  data.set([rate & 0xff, (rate >> 8) & 0xff, 0, 0, 16, 2, 0, 0], 0);
+  return { kind: 'i2s', bus: 0, dir: 'write', data, ts: 7 };
+}
+
 function managerWith(netlist: Netlist, now: () => number = Date.now): { manager: PeripheralManager; snapshots: RenderSnapshot[] } {
   const manager = new PeripheralManager(now);
   const snapshots: RenderSnapshot[] = [];
@@ -230,6 +245,15 @@ describe('snapshot throttling (dev-plan task P1.5: 30fps cap, PRD §9)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('bypasses the throttle for audio snapshots (P2.4: a PCM stream must not coalesce)', () => {
+    const { manager, snapshots } = managerWith(SPEAKER_ON_I2S0);
+    for (let i = 0; i < 10; i++) manager.route(i2sWrite(600));
+    // 10 transactions x 600 samples: two 512+ chunks per... — every emitted
+    // chunk survives (no last-write-wins dropping).
+    expect(snapshots.length).toBeGreaterThanOrEqual(10);
+    expect(snapshots.every((s) => s.type === 'audio' && s.instanceId === 'spk1')).toBe(true);
   });
 
   it('keeps an independent budget per instanceId', () => {

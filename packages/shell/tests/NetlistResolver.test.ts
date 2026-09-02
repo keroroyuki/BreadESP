@@ -158,15 +158,42 @@ describe('NetlistResolver (PRD §4.2/§6.5 routing)', () => {
     expect(r.resolve(pwmWrite(5))).toEqual([]); // unwired pin
   });
 
-  it('does not route i2s/adc transactions yet', () => {
+  it('routes an i2s transaction to the instance claiming that controller (P2.4)', () => {
+    const r = new NetlistResolver(netlist([
+      { instanceId: 'spk1', kind: 'speaker', props: { bus: 1 } },
+      { instanceId: 'spk2', kind: 'speaker' }, // factory default bus 0
+    ]));
+    const tx = (bus: number): BusTransaction => ({ kind: 'i2s', bus, dir: 'write', data: new Uint8Array(8), ts: 1 });
+    expect(r.resolve(tx(1))).toEqual([{ instanceId: 'spk1', pin: 'DIN' }]);
+    expect(r.resolve(tx(0))).toEqual([{ instanceId: 'spk2', pin: 'DIN' }]);
+  });
+
+  it('falls back to the factory default I2S bus when props.bus is omitted', () => {
+    const r = new NetlistResolver(netlist([{ instanceId: 'spk1', kind: 'speaker' }]));
+    const tx: BusTransaction = { kind: 'i2s', bus: 0, dir: 'write', data: new Uint8Array(8), ts: 1 };
+    expect(r.resolve(tx)).toEqual([{ instanceId: 'spk1', pin: 'DIN' }]);
+  });
+
+  it('returns [] for an I2S bus no instance claims and rejects out-of-range claims', () => {
+    const r = new NetlistResolver(netlist([{ instanceId: 'spk1', kind: 'speaker', props: { bus: 5 } }]));
+    const tx: BusTransaction = { kind: 'i2s', bus: 0, dir: 'write', data: new Uint8Array(8), ts: 1 };
+    expect(r.resolve(tx)).toEqual([]);
+  });
+
+  it('does not route i2s to a kind without an i2s-data-in pin role', () => {
+    // e.g. an LED with a stray numeric 'bus' prop must not claim I2S traffic.
+    const r = new NetlistResolver(netlist([{ instanceId: 'led1', kind: 'led', props: { bus: 0 } }]));
+    const tx: BusTransaction = { kind: 'i2s', bus: 0, dir: 'write', data: new Uint8Array(8), ts: 1 };
+    expect(r.resolve(tx)).toEqual([]);
+  });
+
+  it('does not route adc transactions yet', () => {
     const r = new NetlistResolver(netlist(
       [{ instanceId: 'oled1', kind: 'ssd1306', props: { address: 0x3c } }],
       [wire('w1', { instanceId: 'oled1', pin: 'SDA' }, { instanceId: 'mcu', pin: 'GPIO21' })],
     ));
-    for (const kind of ['i2s', 'adc'] as const) {
-      const tx: BusTransaction = { kind, bus: 0, target: 1, dir: 'write', data: new Uint8Array(1), ts: 1 };
-      expect(r.resolve(tx)).toEqual([]);
-    }
+    const tx: BusTransaction = { kind: 'adc', bus: 0, target: 1, dir: 'write', data: new Uint8Array(1), ts: 1 };
+    expect(r.resolve(tx)).toEqual([]);
   });
 
   it('rebuilds routing when the netlist is replaced', () => {
