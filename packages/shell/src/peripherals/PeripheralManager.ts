@@ -113,6 +113,15 @@ export class PeripheralManager extends EventEmitter {
    * always converges to the latest state.
    */
   private emitThrottled(s: RenderSnapshot): void {
+    // 'audio' snapshots (P2.4) are a PCM *stream*, not a restatable state:
+    // last-write-wins coalescing would silently drop samples and corrupt the
+    // waveform, so they bypass the throttle. The stream rate is bounded at
+    // the source (the speaker model batches ~30ms chunks; the QEMU device
+    // ticks at 10ms), so the PRD §9 flood budget still holds.
+    if (s.type === 'audio') {
+      this.emit('snapshot', s);
+      return;
+    }
     const key = `${s.instanceId}|${s.type}`;
     const now = this.now();
     const slot = this.throttle.get(key);

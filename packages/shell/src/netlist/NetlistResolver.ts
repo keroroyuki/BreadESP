@@ -15,7 +15,14 @@
 //           transaction to the peripheral at the other endpoint.
 //   - pwm:  same pin-level wire routing as gpio (dev-plan task P2.3: the
 //           device's LEDC shadow decodes freq/duty per output pin).
-//   - i2s/adc: not routable yet (no consumers; TODO with their phases).
+//   - i2s:  controller-number claim (dev-plan task P2.4). tx.bus is the I2S
+//           controller index (0/1); the instance claims it via props.bus
+//           (factory default 0), and only kinds whose factory pin table
+//           exposes an i2s-data-in role match — mirroring the SPI CS claim.
+//           The DIN/WS/BCK wires are for UI drawing only: the QEMU device
+//           forwards PCM straight from the DMA engine, before the GPIO
+//           matrix, so no pin identity exists at the transaction level.
+//   - adc:  not routable yet (no consumers; TODO with P3).
 import type { Netlist, PeripheralInstance } from '@breadesp/netlist';
 import { MCU_INSTANCE_ID } from '@breadesp/netlist';
 import { getFactory } from '@breadesp/peripherals';
@@ -30,6 +37,8 @@ const EMPTY_NETLIST: Netlist = { version: 1, chip: 'esp32', peripherals: [], wir
 
 /** ESP32 SPI controllers expose three hardware CS lines (hw/ssi/esp32_spi.h). */
 const SPI_CS_MAX = 2;
+/** ESP32 has two legacy I2S controllers (I2S0/I2S1). */
+const I2S_BUS_MAX = 1;
 
 export class NetlistResolver {
   /** 7-bit I2C address -> instances claiming it. */
@@ -38,6 +47,8 @@ export class NetlistResolver {
   private spiByCs = new Map<number, ResolvedTarget[]>();
   /** MCU pin name (e.g. 'GPIO2') -> wired peripheral endpoints. */
   private gpioByPin = new Map<string, ResolvedTarget[]>();
+  /** I2S controller number -> instances claiming it. */
+  private i2sByBus = new Map<number, ResolvedTarget[]>();
 
   constructor(netlist: Netlist = EMPTY_NETLIST) {
     this.setNetlist(netlist);
@@ -48,10 +59,12 @@ export class NetlistResolver {
     this.i2cByAddress = new Map();
     this.spiByCs = new Map();
     this.gpioByPin = new Map();
+    this.i2sByBus = new Map();
 
     for (const inst of n.peripherals) {
       this.indexI2cAddress(inst);
       this.indexSpiCs(inst);
+      this.indexI2sBus(inst);
     }
     for (const wire of n.wires) this.indexGpioWire(wire.from, wire.to);
   }
@@ -73,9 +86,12 @@ export class NetlistResolver {
         // (LEDC decoded by the device shadow, P2.3) is a per-pin output like
         // gpio level writes, so it follows the same wire routing.
         return tx.target === undefined ? [] : [...(this.gpioByPin.get(`GPIO${tx.target}`) ?? [])];
+      case 'i2s':
+        // tx.bus is the I2S controller number (the device forwards DMA PCM
+        // per controller); routing follows the claimed bus, not the wires.
+        return [...(this.i2sByBus.get(tx.bus) ?? [])];
       default:
-        // TODO(PRD §4.2): i2s/adc pin-level routing lands with the
-        // corresponding peripheral models (P2.4/P3); nothing consumes them today.
+        // TODO(PRD §4.2): adc routing lands with the input models (P3).
         return [];
     }
   }
@@ -97,6 +113,17 @@ export class NetlistResolver {
     const cs = Number(raw);
     if (!Number.isInteger(cs) || cs < 0 || cs > SPI_CS_MAX) return;
     this.push(this.spiByCs, cs, { instanceId: inst.instanceId, pin: 'CS' });
+  }
+
+  private indexI2sBus(inst: PeripheralInstance): void {
+    // Only kinds that actually consume I2S data claim I2S transactions; the
+    // role filter keeps e.g. an LED with a numeric prop from matching.
+    const factory = getFactory(inst.kind);
+    if (!factory?.pins.some((p) => p.role === 'i2s-data-in')) return;
+    const raw = inst.props?.bus ?? factory.defaults?.bus;
+    const bus = Number(raw);
+    if (!Number.isInteger(bus) || bus < 0 || bus > I2S_BUS_MAX) return;
+    this.push(this.i2sByBus, bus, { instanceId: inst.instanceId, pin: 'DIN' });
   }
 
   private indexGpioWire(

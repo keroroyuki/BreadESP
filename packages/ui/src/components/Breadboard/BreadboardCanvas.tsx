@@ -365,6 +365,33 @@ export function BreadboardCanvas() {
                     </Group>
                   );
                 })()}
+                {item.kind === 'speaker' && (() => {
+                  // 'audio' snapshot (P2.4): presence of PCM = playing.
+                  const chunk = snap?.type === 'audio'
+                    ? (snap.payload as { samples: number[]; sampleRate: number })
+                    : null;
+                  const on = chunk !== null && Array.isArray(chunk.samples) && chunk.samples.length > 0;
+                  return (
+                    <Group listening={false}>
+                      <Circle
+                        x={NODE_W / 2}
+                        y={34}
+                        radius={12}
+                        fill={on ? '#38bdf8' : '#e2e8f0'}
+                        stroke="#075985"
+                      />
+                      <Text
+                        x={14}
+                        y={48}
+                        width={NODE_W - 28}
+                        align="center"
+                        text={on ? `${(chunk.sampleRate / 1000).toFixed(1)} kHz` : 'silent'}
+                        fontSize={9}
+                        fill="#64748b"
+                      />
+                    </Group>
+                  );
+                })()}
                 {item.kind === 'ssd1306' && (
                   // Live pixels render in ScreenView; canvas preview is a TODO(PRD §F-PER-3).
                   <Group listening={false}>

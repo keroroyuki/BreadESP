@@ -20,6 +20,18 @@
  *    sniffer's own GPIO inputs: CS assert starts a frame (the asserted line's
  *    index becomes tx.target), CS release emits one spi write transaction.
  *
+ *  - I2S (dev-plan task P2.4): the stock tree models esp32.i2s0/1 as
+ *    "unimplemented-device" stubs, so firmware PCM is invisible without a
+ *    shadow. Higher-priority MMIO overlays on the two legacy register banks
+ *    (0x3ff4f000 / 0x3ff6d000) observe CONF / CLKM_CONF / SAMPLE_RATE_CONF /
+ *    OUT_LINK. When TX is started with a DMA out-link, a virtual-clock timer
+ *    consumes the linked-list descriptors (lldesc_t) from guest memory at the
+ *    decoded PCM byte rate — descriptor rings loop naturally — and each 10ms
+ *    tick emits one i2s transaction: 8-byte header [rate u32 LE][bits u8]
+ *    [channels u8][flags u8][reserved u8] followed by the raw interleaved PCM
+ *    bytes exactly as the DMA engine would shift them out. APLL and the
+ *    non-DMA FIFO_WR path are documented gaps.
+ *
  *  - GPIO: higher-priority MMIO shadow regions are overlaid on the esp32.gpio
  *    register bank at both of its mappings (DPORT 0x3ff44000 and the APB alias
  *    0x60004000, see esp32_soc_add_periph_device). Output-level register
@@ -46,6 +58,10 @@
  *                 "data":[f0,f1,f2,f3,d0,d1],"ts":<virtual ns>}
  *                 (target = GPIO number; f = freq centihertz u32 LE,
  *                  d = duty permille u16 LE; 0Hz/0% = silent)
+ *   i2s       := {"kind":"i2s","bus":0,"dir":"write","ts":<virtual ns>,
+ *                 "data":[r0..r3,bits,channels,flags,0,<pcm>...]}
+ *                 (bus = I2S controller 0/1; r = sample rate u32 LE;
+ *                  pcm = raw interleaved little-endian samples)
  *
  * PWM forwarding (dev-plan task P2.3): QEMU's esp32.ledc model stores the
  * LEDC registers but never drives pins (its "led" widgets are graphical
@@ -59,7 +75,7 @@
  * effective tone emits one pwm transaction. HS timers are assumed to run on
  * APB_CLK 80MHz (TICK_SEL=1; the Arduino/ESP-IDF default for ledc).
  *
- * TODO(PRD §4.2): I2S/ADC forwarding (M3, dev-plan tasks 3.x).
+ * TODO(PRD §4.2): ADC forwarding (M3, dev-plan tasks 3.x).
  * TODO(PRD §6.3): bridge-supplied I2C/SPI read data (reverse channel).
  * TODO(PRD §1.3): esp32s3/c3 GPIO banks use a different device (M4, task 4.1).
  *
@@ -155,6 +171,85 @@ static const hwaddr breadesp_gpio_bases[] = { 0x3ff44000, 0x60004000 };
 /* esp32.ledc iomem mappings (same dual-mapping scheme as esp32.gpio). */
 static const hwaddr breadesp_ledc_bases[] = { 0x3ff59000, 0x60019000 };
 
+/*
+ * esp32 legacy I2S register banks (DR_REG_I2S_BASE / DR_REG_I2S1_BASE,
+ * single DPORT mapping each; the stock tree places unimplemented-device
+ * stubs there — esp32.c:esp32_soc_add_unimp_device "esp32.i2s0/1").
+ */
+static const hwaddr breadesp_i2s_bases[] = { 0x3ff4f000, 0x3ff6d000 };
+#define BREADESP_I2S_BANK_SIZE 0x1000
+
+/* Legacy I2S register offsets within the bank (ESP32 TRM, esp-idf i2s_reg.h). */
+#define I2S_CONF_REG          0x08
+#define I2S_OUT_LINK_REG      0x30
+#define I2S_CLKM_CONF_REG     0xac
+#define I2S_SAMPLE_RATE_CONF_REG 0xb0
+
+/* I2S_CONF_REG bit fields. */
+#define I2S_CONF_TX_RESET       (1u << 1)
+#define I2S_CONF_TX_START       (1u << 5)
+#define I2S_CONF_TX_MSB_SHIFT   (1u << 11)
+#define I2S_CONF_TX_MONO        (1u << 13)
+
+/* I2S_CLKM_CONF_REG bit fields (APLL unsupported: source is PLL 160MHz). */
+#define I2S_CLKM_DIV_NUM_MASK   0xff
+#define I2S_CLKM_DIV_B_SHIFT    8
+#define I2S_CLKM_DIV_B_MASK     0x3f
+#define I2S_CLKM_DIV_A_SHIFT    14
+#define I2S_CLKM_DIV_A_MASK     0x3f
+#define I2S_CLKM_PLL_HZ         160000000.0
+
+/* I2S_SAMPLE_RATE_CONF_REG bit fields. */
+#define I2S_TX_BCK_DIV_SHIFT    6
+#define I2S_TX_BCK_DIV_MASK     0x3f
+#define I2S_TX_BITS_MOD_SHIFT   18
+#define I2S_TX_BITS_MOD_MASK    0x3f
+
+/* I2S_OUT_LINK_REG bit fields. */
+#define I2S_OUTLINK_ADDR_MASK   0xfffff
+/*
+ * OUTLINK_ADDR is the 20-bit offset of the first descriptor within the DRAM
+ * window: the hardware reconstructs the physical address as 0x3ff00000|field
+ * (esp-idf writes the pointer masked to 0xfffff; lldesc_t buf/next fields
+ * carry full 32-bit pointers, only the link register is windowed).
+ */
+#define I2S_OUTLINK_ADDR_BASE   0x3ff00000
+#define I2S_OUTLINK_STOP        (1u << 28)
+#define I2S_OUTLINK_START       (1u << 29)
+#define I2S_OUTLINK_RESTART     (1u << 30)
+
+/*
+ * DMA linked-list descriptor (esp-idf lldesc_t), 12 bytes:
+ *   dw0: size[11:0], length[23:12], offset[28:24], sosf[29], eof[30], owner[31]
+ *   +4: buf address, +8: next descriptor address (0 = end of chain).
+ */
+#define I2S_LLDESC_LEN_SHIFT    12
+#define I2S_LLDESC_LEN_MASK     0xfff
+
+/* PCM consumption tick (virtual clock) and per-tick byte cap. */
+#define I2S_TICK_MS             10
+#define I2S_TICK_MAX_BYTES      16384
+/* Header prepended to every i2s transaction payload (see frame docs above). */
+#define I2S_TX_HEADER_BYTES     8
+
+/* Per-controller I2S DMA sniffing state (see the P2.4 section below). */
+typedef struct BreadespI2sChan BreadespI2sChan;
+struct BreadespI2sChan {
+    BreadespDbusState *owner;
+    uint8_t bus;               /* I2S controller index (0/1) */
+    uint32_t conf;
+    uint32_t clkm_conf;
+    uint32_t srate_conf;
+    uint32_t out_link;         /* last OUT_LINK write (addr + control bits) */
+    bool streaming;            /* TX started with a valid DMA out-link */
+    uint32_t desc;             /* address of the next lldesc_t to load */
+    uint32_t buf;              /* current descriptor's data cursor */
+    uint32_t remaining;        /* bytes left in the current descriptor */
+    bool dma_warned;           /* one-shot warn on unreadable guest memory */
+    GByteArray *chunk;         /* PCM collected for the current tick */
+    QEMUTimer *tick;
+};
+
 #define BREADESP_DBUS_PROTO_VERSION 1
 /* Cap for a single I2C write payload mirrored to the bridge, in bytes. */
 #define BREADESP_I2C_MAX_PAYLOAD 4096
@@ -200,6 +295,11 @@ struct BreadespDbusState {
     /* Last tone emitted per pin (dedupe): 0 centihertz/0 permille = silent. */
     uint32_t pwm_last_centi[ESP32_GPIO_PIN_COUNT];
     uint16_t pwm_last_duty[ESP32_GPIO_PIN_COUNT];
+
+    /* I2S shadows + DMA sniffing state, one per legacy controller. */
+    MemoryRegion i2s_mr[ARRAY_SIZE(breadesp_i2s_bases)];
+    MemoryRegion *i2s_orig[ARRAY_SIZE(breadesp_i2s_bases)];
+    BreadespI2sChan i2s[ARRAY_SIZE(breadesp_i2s_bases)];
 
     /* Sniffer devices living on the esp32.i2c buses (bus-owned). */
     GPtrArray *sniffers;
@@ -348,6 +448,25 @@ static void dbus_emit_pwm(BreadespDbusState *s, uint8_t pin,
                      centi_hz & 0xff, (centi_hz >> 8) & 0xff,
                      (centi_hz >> 16) & 0xff, (centi_hz >> 24) & 0xff,
                      duty_permille & 0xff, (duty_permille >> 8) & 0xff);
+    dbus_queue(s, j);
+}
+
+static void dbus_emit_i2s(BreadespDbusState *s, uint8_t bus, uint32_t rate,
+                          uint8_t bits, uint8_t channels, uint8_t flags,
+                          const uint8_t *data, size_t len)
+{
+    GString *j = g_string_sized_new(96 + len * 4);
+    size_t i;
+
+    g_string_printf(j, "{\"kind\":\"i2s\",\"bus\":%u,\"dir\":\"write\","
+                     "\"ts\":%lld,\"data\":[%u,%u,%u,%u,%u,%u,%u,0",
+                     bus, (long long)qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),
+                     rate & 0xff, (rate >> 8) & 0xff, (rate >> 16) & 0xff,
+                     (rate >> 24) & 0xff, bits, channels, flags);
+    for (i = 0; i < len; i++) {
+        g_string_append_printf(j, ",%u", data[i]);
+    }
+    g_string_append(j, "]}");
     dbus_queue(s, j);
 }
 
@@ -947,6 +1066,263 @@ static void dbus_setup_ledc_shadow(BreadespDbusState *s, Object *ledc)
 }
 
 /* ------------------------------------------------------------------ */
+/* I2S MMIO shadow + DMA PCM walker (P2.4)                             */
+
+/*
+ * Decode the effective PCM format from the observed registers. Mirrors the
+ * ESP32 TRM master-mode formulas with a fixed 160MHz PLL source (APLL is a
+ * documented gap): sck = 160M / (div_num + div_b/div_a), bck = sck / bck_div,
+ * ws = bck / (bits * channels). Returns false for configurations that cannot
+ * produce audio (bypass divisors, implausible rates).
+ */
+static bool i2s_decode_format(BreadespI2sChan *c, uint32_t *rate_out,
+                              uint8_t *bits_out, uint8_t *channels_out)
+{
+    uint32_t div_num = c->clkm_conf & I2S_CLKM_DIV_NUM_MASK;
+    uint32_t div_b = (c->clkm_conf >> I2S_CLKM_DIV_B_SHIFT) & I2S_CLKM_DIV_B_MASK;
+    uint32_t div_a = (c->clkm_conf >> I2S_CLKM_DIV_A_SHIFT) & I2S_CLKM_DIV_A_MASK;
+    uint32_t bck_div = (c->srate_conf >> I2S_TX_BCK_DIV_SHIFT) & I2S_TX_BCK_DIV_MASK;
+    uint32_t bits = (c->srate_conf >> I2S_TX_BITS_MOD_SHIFT) & I2S_TX_BITS_MOD_MASK;
+    uint32_t channels = (c->conf & I2S_CONF_TX_MONO) ? 1 : 2;
+    double div, ws;
+
+    if (div_num < 2 || bck_div == 0) {
+        return false;
+    }
+    if (bits == 0) {
+        bits = 16; /* driver default when the field is left at reset */
+    }
+    if (bits < 8 || bits > 32 || (bits & 7) != 0) {
+        return false;
+    }
+    div = (double)div_num + (div_a != 0 ? (double)div_b / (double)div_a : 0.0);
+    ws = I2S_CLKM_PLL_HZ / div / (double)bck_div / ((double)bits * channels);
+    if (ws < 1000.0 || ws > 192000.0) {
+        return false;
+    }
+    *rate_out = (uint32_t)(ws + 0.5);
+    *bits_out = (uint8_t)bits;
+    *channels_out = (uint8_t)channels;
+    return true;
+}
+
+static void i2s_stop_channel(BreadespI2sChan *c)
+{
+    c->streaming = false;
+    if (c->tick) {
+        timer_del(c->tick);
+    }
+    if (c->chunk) {
+        g_byte_array_set_size(c->chunk, 0);
+    }
+}
+
+/*
+ * Re-evaluate the streaming condition after a CONF / OUT_LINK write:
+ * TX started, not held in reset, and an out-link chain was armed. Stopping
+ * (TX_START cleared, TX_RESET, or OUTLINK_STOP) halts the walker and drops
+ * the partial chunk.
+ */
+static void i2s_eval(BreadespI2sChan *c)
+{
+    bool want = (c->conf & I2S_CONF_TX_START) != 0
+                && (c->conf & I2S_CONF_TX_RESET) == 0
+                && (c->out_link & I2S_OUTLINK_STOP) == 0
+                && c->desc != 0;
+
+    if (want && !c->streaming) {
+        c->streaming = true;
+        timer_mod(c->tick,
+                  qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + I2S_TICK_MS);
+    } else if (!want && c->streaming) {
+        i2s_stop_channel(c);
+    }
+}
+
+/* Guest-memory read for descriptor chain walking / PCM fetching. */
+static bool i2s_dma_read(BreadespI2sChan *c, uint64_t addr, void *dst,
+                         size_t len)
+{
+    if (address_space_read(&address_space_memory, addr,
+                           MEMTXATTRS_UNSPECIFIED, dst, len) != MEMTX_OK) {
+        if (!c->dma_warned) {
+            c->dma_warned = true;
+            warn_report("breadesp-dbus: i2s%u DMA read at 0x%llx failed; "
+                        "stream stopped", c->bus, (unsigned long long)addr);
+        }
+        return false;
+    }
+    return true;
+}
+
+/*
+ * Consumption tick: pull I2S_TICK_MS worth of PCM through the descriptor
+ * chain at the decoded byte rate and emit it as one i2s transaction. Rings
+ * (a descriptor whose next points back into the chain) loop forever, which
+ * is exactly how firmware sustains a continuous tone; the per-tick byte and
+ * descriptor-fetch caps keep zero-length/self-pointing descriptors from
+ * spinning the loop.
+ */
+#define I2S_TICK_MAX_FETCHES 64
+
+static void i2s_tick(void *opaque)
+{
+    BreadespI2sChan *c = opaque;
+    BreadespDbusState *s = c->owner;
+    uint32_t rate, due;
+    uint8_t bits, channels;
+    unsigned fetches = 0;
+
+    if (!c->streaming) {
+        return;
+    }
+    if (!i2s_decode_format(c, &rate, &bits, &channels)) {
+        i2s_stop_channel(c);
+        return;
+    }
+
+    due = (uint32_t)((double)rate * (bits / 8.0) * channels * I2S_TICK_MS
+                     / 1000.0 + 0.5);
+    if (due > I2S_TICK_MAX_BYTES) {
+        due = I2S_TICK_MAX_BYTES;
+    }
+
+    while (due > 0) {
+        if (c->remaining == 0) {
+            uint8_t d[12];
+            uint32_t len;
+            if (c->desc == 0 || ++fetches > I2S_TICK_MAX_FETCHES) {
+                break; /* chain drained (or pathological): idle until restart */
+            }
+            if (!i2s_dma_read(c, c->desc, d, sizeof(d))) {
+                i2s_stop_channel(c);
+                return;
+            }
+            len = (ldl_le_p(d) >> I2S_LLDESC_LEN_SHIFT) & I2S_LLDESC_LEN_MASK;
+            c->buf = ldl_le_p(d + 4);
+            c->desc = ldl_le_p(d + 8);
+            c->remaining = len;
+            continue;
+        }
+        uint32_t n = MIN(due, c->remaining);
+        g_byte_array_set_size(c->chunk, c->chunk->len + n);
+        if (!i2s_dma_read(c, c->buf,
+                          c->chunk->data + c->chunk->len - n, n)) {
+            i2s_stop_channel(c);
+            return;
+        }
+        c->buf += n;
+        c->remaining -= n;
+        due -= n;
+    }
+
+    if (c->chunk->len > 0) {
+        uint8_t flags = (c->conf & I2S_CONF_TX_MSB_SHIFT) ? 1 : 0;
+        dbus_emit_i2s(s, c->bus, rate, bits, channels, flags,
+                      c->chunk->data, c->chunk->len);
+        g_byte_array_set_size(c->chunk, 0);
+    }
+    if (c->streaming) {
+        timer_mod(c->tick,
+                  qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + I2S_TICK_MS);
+    }
+}
+
+static uint64_t dbus_i2s_read(void *opaque, hwaddr addr, unsigned size)
+{
+    BreadespI2sChan *c = opaque;
+    uint64_t val = 0;
+
+    if (c->owner->i2s_orig[c->bus]) {
+        memory_region_dispatch_read(c->owner->i2s_orig[c->bus], addr, &val,
+                                    size_memop(size) | MO_LE,
+                                    MEMTXATTRS_UNSPECIFIED);
+    }
+    return val;
+}
+
+static void dbus_i2s_write(void *opaque, hwaddr addr, uint64_t value,
+                           unsigned size)
+{
+    BreadespI2sChan *c = opaque;
+    uint32_t v = (uint32_t)value;
+
+    switch (addr) {
+    case I2S_CONF_REG:
+        c->conf = v;
+        i2s_eval(c);
+        break;
+    case I2S_OUT_LINK_REG:
+        c->out_link = v;
+        if (v & (I2S_OUTLINK_START | I2S_OUTLINK_RESTART)) {
+            c->desc = I2S_OUTLINK_ADDR_BASE | (v & I2S_OUTLINK_ADDR_MASK);
+            c->buf = 0;
+            c->remaining = 0;
+            c->dma_warned = false;
+        }
+        i2s_eval(c);
+        break;
+    case I2S_CLKM_CONF_REG:
+        c->clkm_conf = v;
+        break;
+    case I2S_SAMPLE_RATE_CONF_REG:
+        c->srate_conf = v;
+        break;
+    default:
+        break;
+    }
+
+    if (c->owner->i2s_orig[c->bus]) {
+        /* Observe-only shadow: keep the stub's register view in sync. */
+        memory_region_dispatch_write(c->owner->i2s_orig[c->bus], addr, value,
+                                     size_memop(size) | MO_LE,
+                                     MEMTXATTRS_UNSPECIFIED);
+    }
+}
+
+static const MemoryRegionOps dbus_i2s_ops = {
+    .read = dbus_i2s_read,
+    .write = dbus_i2s_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 4,
+    },
+};
+
+/*
+ * The stock tree models esp32.i2s0/1 as unimplemented-device stubs, so there
+ * is no QOM type to match in the scan — probe the two esp32 base addresses
+ * directly (esp32s3/c3 map their I2S banks elsewhere, so the probe doubles
+ * as the esp32-only guard, like the GPIO shadow's DPORT probe).
+ */
+static void dbus_setup_i2s_shadows(BreadespDbusState *s)
+{
+    size_t i;
+
+    for (i = 0; i < ARRAY_SIZE(breadesp_i2s_bases); i++) {
+        MemoryRegionSection sec = memory_region_find(get_system_memory(),
+                                                     breadesp_i2s_bases[i], 4);
+        BreadespI2sChan *c;
+
+        if (!sec.mr) {
+            continue;
+        }
+        c = &s->i2s[i];
+        c->owner = s;
+        c->bus = (uint8_t)i;
+        c->chunk = g_byte_array_new();
+        c->tick = timer_new_ms(QEMU_CLOCK_VIRTUAL, i2s_tick, c);
+        s->i2s_orig[i] = sec.mr;
+        memory_region_init_io(&s->i2s_mr[i], OBJECT(s), &dbus_i2s_ops, c,
+                              "breadesp.i2s-shadow", BREADESP_I2S_BANK_SIZE);
+        memory_region_add_subregion_overlap(get_system_memory(),
+                                            breadesp_i2s_bases[i],
+                                            &s->i2s_mr[i], 1);
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* QOM tree scan                                                       */
 
 static int dbus_scan_visit(Object *obj, void *opaque)
@@ -1021,6 +1397,12 @@ static void breadesp_dbus_realize(DeviceState *dev, Error **errp)
         warn_report("breadesp-dbus: no esp32.hspi/vspi controllers found; "
                     "SPI forwarding disabled");
     }
+
+    dbus_setup_i2s_shadows(s);
+    if (!s->i2s_orig[0] && !s->i2s_orig[1]) {
+        warn_report("breadesp-dbus: no esp32.i2s register banks found; "
+                    "I2S forwarding disabled");
+    }
 }
 
 static void breadesp_dbus_unrealize(DeviceState *dev)
@@ -1039,6 +1421,21 @@ static void breadesp_dbus_unrealize(DeviceState *dev)
                                     &s->ledc_mr[s->ledc_nmr]);
     }
     s->ledc_orig = NULL;
+    for (guint i = 0; i < ARRAY_SIZE(breadesp_i2s_bases); i++) {
+        BreadespI2sChan *c = &s->i2s[i];
+        if (s->i2s_orig[i]) {
+            memory_region_del_subregion(get_system_memory(), &s->i2s_mr[i]);
+            s->i2s_orig[i] = NULL;
+        }
+        if (c->tick) {
+            timer_free(c->tick);
+            c->tick = NULL;
+        }
+        if (c->chunk) {
+            g_byte_array_free(c->chunk, TRUE);
+            c->chunk = NULL;
+        }
+    }
     if (s->sniffers) {
         for (guint i = 0; i < s->sniffers->len; i++) {
             BREADESP_I2C_SNIFFER(g_ptr_array_index(s->sniffers, i))->owner = NULL;
@@ -1079,6 +1476,18 @@ static void breadesp_dbus_reset_hold(Object *obj, ResetType type)
     memset(s->ledc_ch_duty, 0, sizeof(s->ledc_ch_duty));
     memset(s->pwm_last_centi, 0, sizeof(s->pwm_last_centi));
     memset(s->pwm_last_duty, 0, sizeof(s->pwm_last_duty));
+    for (guint i = 0; i < ARRAY_SIZE(breadesp_i2s_bases); i++) {
+        BreadespI2sChan *c = &s->i2s[i];
+        c->conf = 0;
+        c->clkm_conf = 0;
+        c->srate_conf = 0;
+        c->out_link = 0;
+        c->desc = 0;
+        c->buf = 0;
+        c->remaining = 0;
+        c->dma_warned = false;
+        i2s_stop_channel(c);
+    }
     g_string_truncate(s->pending, 0);
     s->pending_count = 0;
 }

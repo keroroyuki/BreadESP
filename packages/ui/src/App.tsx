@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import type { RenderSnapshot } from '@breadesp/peripherals';
 import { useSimulationStore } from './store/simulationStore';
 import { sharedBuzzerEngine, toneFromSnapshot } from './audio/BuzzerAudio';
+import { audioFromSnapshot, sharedSpeakerEngine } from './audio/SpeakerAudio';
 import { useProjectStore } from './store/projectStore';
 import { useDebuggerStore } from './store/debuggerStore';
 import { bridge } from './ipc/bridge';
@@ -37,17 +38,22 @@ export function App() {
     });
   }, [netlist]);
 
-  // Buzzer audio (dev-plan task P2.3): every 'tone' snapshot addressed at a
-  // buzzer instance drives its WebAudio square-wave voice. Subscribing to the
-  // raw store (not React state) keeps audio latency off the render path.
+  // Buzzer + speaker audio (dev-plan tasks P2.3/P2.4): 'tone' snapshots
+  // addressed at buzzer instances drive WebAudio square-wave voices, 'audio'
+  // snapshots addressed at speaker instances queue PCM for playback.
+  // Subscribing to the raw store (not React state) keeps audio latency off
+  // the render path.
   useEffect(() => {
-    const engine = sharedBuzzerEngine();
-    const isBuzzer = (instanceId: string): boolean =>
-      useProjectStore.getState().netlist.peripherals.some(
-        (p) => p.instanceId === instanceId && p.kind === 'buzzer',
-      );
+    const buzzerEngine = sharedBuzzerEngine();
+    const speakerEngine = sharedSpeakerEngine();
+    const kindOf = (instanceId: string): string | undefined =>
+      useProjectStore.getState().netlist.peripherals.find(
+        (p) => p.instanceId === instanceId,
+      )?.kind;
     const apply = (snap: RenderSnapshot): void => {
-      if (isBuzzer(snap.instanceId)) engine.update(snap.instanceId, toneFromSnapshot(snap));
+      const kind = kindOf(snap.instanceId);
+      if (kind === 'buzzer') buzzerEngine.update(snap.instanceId, toneFromSnapshot(snap));
+      else if (kind === 'speaker') speakerEngine.push(snap.instanceId, audioFromSnapshot(snap));
     };
     const unsub = useSimulationStore.subscribe((state, prev) => {
       if (state.snapshots === prev.snapshots) return;
@@ -57,7 +63,8 @@ export function App() {
     });
     return () => {
       unsub();
-      engine.dispose();
+      buzzerEngine.dispose();
+      speakerEngine.dispose();
     };
   }, []);
 
