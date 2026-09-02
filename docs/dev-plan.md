@@ -104,7 +104,7 @@
 | 2.1 | `st7789` SPI 命令解释 + rgb565 帧缓冲 | TFT 彩屏渲染 | SPI 事务落到 tft1 且像素入帧缓冲 | 已完成 2026-08-31 |
 | 2.2 | `TftRenderer`（rgb565→ImageData） | UI Canvas | 画布显示 TFT 内容 | 已完成 2026-09-01 |
 | 2.3 | `buzzer` PWM 频率→WebAudio 方波 | 发声 | 蜂鸣器按频率发声 | 已完成 2026-09-01 |
-| 2.4 | `speaker` I2S PCM→WebAudio 播放 | 音频流 | 喇叭播放正弦波 | 未开始 |
+| 2.4 | `speaker` I2S PCM→WebAudio 播放 | 音频流 | 喇叭播放正弦波 | 已完成 2026-09-02 |
 | 2.5 | `Oscilloscope` 抓 GPIO/PWM/I2S 时序 | 波形面板 | 波形面板显示 GPIO 波形 | 未开始 |
 | 2.6 | 仿真速度倍率 + 暂停/继续（QMP） | sim 控制 | sim 可暂停/继续/调速 | 未开始 |
 
@@ -485,10 +485,29 @@ Previously applyNetlist leaked old instances on re-apply.
 > (频率, 占空比) 并以 pwm 事务（6 字节：厘赫 u32 LE + 千分占空 u16 LE）去重下发；
 > 快照新增 'tone' 类型（§6.4 追加式联合扩展，duty 兼作视觉亮度，避免每实例单快照位相互覆盖）。
 
+> P2.4 验证记录（2026-09-02）：`pnpm typecheck` 0 错误；全仓测试 290 通过 + 7 跳过（Windows 门控，
+> 新增 i2s e2e 跳过项）。分四层验证——speaker 模型 13 项单测（s16le 立体声混单声道、mono/8-bit/24-bit
+> 解码与符号扩展、截断头/零采样率/零声道/非法位宽拒绝、部分尾帧丢弃、批量阈值冲刷、跨事务分帧重组、
+> 格式变更按旧采样率先冲刷、异类/读事务过滤、i2s-data-in 角色与 bus 缺省）；路由/协议层
+> NetlistResolver 25 项（i2s 按控制器号认领、factory 缺省回退、未认领/越界总线、角色过滤）与
+> DBusChannel 9 项（i2s 帧透传）；PeripheralManager 16 项（新增 'audio' 快照绕过 30fps 合并——PCM 是流
+> 不是可重述状态，合并即丢样本，e2e 曾以 1867Hz≈1.8× 倍频抓出此 bug）；UI 层 SpeakerAudio 13 项
+> （纯映射、首块 lead 调度、游标无缝接龙、每实例独立游标、欠载重同步、硬削波、音量、无 AudioContext
+> 静默、一次性手势钩子、dispose 停源重建）；真实 QEMU e2e（i2s-speaker.e2e.test.ts）于 WSL 验证通过
+> （Docker 重建的 Linux breadesp QEMU，含 I2S 影子）：speaker.elf 的 I2S0 DMA 正弦环流到 spk1 的
+> audio 快照（采样率 15800–17500Hz 区间实测 16667，过零法估频 1041.7Hz±5%，峰值 0.4–0.7），无广播
+> 泄漏，UART 出现 `SPK SINE` 标记；spi-st7789/pwm-buzzer/netlist-routing/dbus-device e2e 对同一重建
+> 二进制回归通过（WSL 全量 134 通过）。金标固件 `speaker.elf` 由 `scripts/make-speaker-elf.mjs`
+> 确定性生成，`--check` 模式可校验入库 fixture 无漂移。
+> 开发期两个真实 bug 被验证链抓出并修复：① QEMU 侧 OUTLINK_ADDR 是 20 位 DRAM 窗口字段
+> （物理地址 = 0x3ff00000|field，lldesc 的 buf/next 才是完整指针），首版按绝对地址读描述符导致全流无声；
+> ② 设备 10ms tick 按字节速率切 chunk 会把 4 字节立体声帧劈到两条事务里，模型首版逐事务独立解码
+> 丢弃残帧，流相位错位表现为 ~2× 视在频率——模型改为跨事务残帧重组（e2e 过零估频 2099.9Hz 抓出）。
+
 ### M2 清单
 - [x] TFT 渲染 rgb565 彩图
 - [x] 蜂鸣器按 PWM 频率发声
-- [ ] 喇叭播放 I2S 正弦波
+- [x] 喇叭播放 I2S 正弦波
 - [ ] 示波器显示 GPIO 波形
 - [ ] 仿真可暂停/继续/调速
 

@@ -22,6 +22,8 @@ QEMU-ESP32 默认外设模型不全。我们在 QEMU 源码中新增一个 devic
 - **I2C**：动态给每个 `esp32-i2c` 控制器挂一个通配从机（`breadesp-dbus.i2c-sniffer`），只 ACK 未被 QEMU 内建外设占用的地址，完整捕获 START/数据/STOP。
 - **SPI**（P2.1）：给每个通用 `esp32.spi` 控制器总线挂一个 SSI 嗅探从机（`breadesp-dbus.spi-sniffer`，`SSI_CS_NONE` 极性故能看见每个字节），控制器硬件 CS 输出线接到嗅探器的 GPIO 输入：CS 拉低开帧（线号成为 `tx.target`，即 CS 索引 0–2），CS 释放时整帧字节作为一条 `spi` 写事务发出。flash/PSRAM 所在的总线不挂嗅探器。SSI 从机类必须实现 `realize` 回调，否则 QEMU 在 realize 阶段解引用空指针直接 SIGSEGV。
 - **GPIO**：对 DPORT(0x3ff44000) 与 APB(0x60004000) 双基地址的 GPIO 寄存器组做高优先级影子 MMIO，解码 OUT_W1TS/W1TC 写为引脚级事务并透传原始访问。
+- **PWM**（P2.3）：对 LEDC 寄存器组（双基地址同法）做只观影子，定时器/通道配置解码为 (频率, 占空比)，GPIO 矩阵 `FUNCn_OUT_SEL` 写把 LEDC 输出信号映射到引脚，每个引脚音调变化发一条 `pwm` 事务（QEMU 自带 LEDC 模型从不驱动引脚，无影子则固件音调不可见）。
+- **I2S**（P2.4）：stock 树把 esp32.i2s0/1 建模为 unimplemented-device，故对两个 legacy 寄存器组（0x3ff4f000/0x3ff6d000，各 0x1000，探测基地址存在即附着，兼作 esp32-only 守卫）做高优先级影子，观察 CONF/CLKM_CONF/SAMPLE_RATE_CONF/OUT_LINK。TX_START + OUT_LINK_START 后，虚拟时钟定时器（10ms tick）按解码出的 PCM 字节速率遍历 TX DMA 链表描述符（lldesc_t：dw0 的 length[23:12]、buf、next；`OUTLINK_ADDR` 是 20 位窗口字段，物理地址 = 0x3ff00000|field，而 buf/next 是完整 32 位指针——曾在此踩坑导致首版无声），经 `address_space_read` 读客户内存，描述符环（next 指回链内）自然循环——固件持续放音的标准手法；每 tick 汇成一条 `i2s` 事务（8 字节格式头 + 原始交错小端 PCM）。采样率公式：sck=160M/div、bck=sck/bck_div、ws=bck/(bits×channels)（APLL 为文档化缺口；非 DMA 的 FIFO_WR 直写路径未建模）。
 - 事务以 bottom-half 批量冲刷成长度前缀 JSON 帧（PRD §6.7），通过 TCP/unix socket 发往 Bridge。
 - Bridge 的 `DBusChannel` 反序列化（虚拟 ns → 逻辑 ms）后交给 `PeripheralManager` 路由到对应外设实例。
 
@@ -102,6 +104,17 @@ TFT_eSPI / Adafruit_ST7789 常用绘制路径（init 序列 + 窗口推送 RGB56
   MADCTL 的 RGB/BGR 序（快照期做通道交换）。快照为 240x240 RGB565 数组。
 - **未建模项**（文档化缺口）：gamma 曲线、局部/滚动区域、idle 模式、RST 硬线
   （SWRESET 0x01 已覆盖软复位）、MISO 读通道（与 I2C 共享的 PRD §6.3 TODO）。
+
+### 3.5 Speaker I2S PCM 管道（P2.4）
+
+设备转发的 `i2s` 事务经 `NetlistResolver` 按控制器号认领路由（实例 `props.bus`，
+缺省回退 factory 默认 0；factory 引脚表须含 `i2s-data-in` 角色——与 SPI CS 认领同构，
+DIN/WS/BCK 连线仅用于 UI 绘制）。`packages/peripherals/src/speaker.ts` 把
+`[采样率][位宽][声道]` 头 + 原始 PCM 解码为单声道 Float32（多声道取平均），逐事务发
+`audio` 快照（`{samples, sampleRate}`，PRD §6.4 既有类型首次启用）。UI 侧
+`audio/SpeakerAudio.ts` 的 `SpeakerPcmEngine` 为每个实例维护一条播放游标，把陆续到达的
+chunk 排成首尾相接的 AudioBufferSourceNode（欠载超阈值则对时时钟重同步，避免积压播放
+陈旧音频）；`audioFromSnapshot` 纯映射与引擎分离，Node 单测以 stub AudioContext 覆盖。
 
 ## 4. 调试链路
 

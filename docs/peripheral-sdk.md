@@ -58,7 +58,14 @@ registerPeripheral(myLedFactory);
   影子寄存器把定时器/通道配置解码为每引脚的 `pwm` 事务——`target` 为 GPIO 编号，
   `data` 为 6 字节：`[频率 0.01Hz u32 LE][占空比 ‰ u16 LE]`（0Hz/0‰ = 静默），
   由蜂鸣器等模型消费；手工翻转 GPIO 的 bit-bang 固件则由模型侧沿测量兜底。
-- **I2S/ADC**：暂不路由（待 P2.4/P3 对应外设模型落地）。
+- **I2S**：按控制器号认领（P2.4 起）——QEMU 设备的 I2S 影子寄存器直接监听 TX DMA
+  引擎：解码时钟配置（采样率/位宽/声道数），按 PCM 字节速率遍历 DMA 链表描述符，
+  每个 10ms tick 发一条 `i2s` 事务——`bus` 为控制器号（0/1），`data` 为 8 字节头
+  `[采样率 u32 LE][位宽 u8][声道数 u8][flags u8][保留 u8]` + 原始交错小端 PCM。
+  实例用 `props.bus` 认领（缺省回退 `factory.defaults.bus`，如 speaker 默认 `0`），
+  只有 factory 引脚表声明了 `i2s-data-in` 角色的实例才参与匹配（同 SPI 的角色过滤）。
+  DIN/WS/BCK 连线仅用于 UI 绘制：PCM 在 GPIO 矩阵之前就被转发，事务层没有引脚身份。
+- **ADC**：暂不路由（待 P3 对应外设模型落地）。
 
 > TODO(PRD §6.1): 基于 `pins[].role` 的连线合法性校验（如 i2c-sda 不能接到 gpio-out）在
 > 后续里程碑补齐。
