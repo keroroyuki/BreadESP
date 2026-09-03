@@ -36,6 +36,11 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   });
   ipcMain.handle('sim:reset', async () => qemu.reset());
   ipcMain.handle('sim:status', async () => qemu.getStatus());
+  // Simulation speed multiplier (PRD §F-SIM-2, dev-plan task P2.6): the runner
+  // validates the [0.1, 10] range and throttles the logical clock by QMP
+  // duty-cycling; out-of-range factors reject with [BB-116].
+  ipcMain.handle('sim:setSpeed', async (_e, p: { factor: number }) => qemu.setSpeed(p.factor));
+  ipcMain.handle('sim:getSpeed', async () => qemu.getSpeed());
   // UART0 input injection (PRD §F-SER-2, dev-plan task P1.10): bytes written to
   // the QEMU stdin pipe land in the guest UART RX FIFO. Unloaded VMs reject
   // with [BB-102] straight from QemuRunner.writeStdin.
@@ -104,6 +109,7 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   // Forward peripheral snapshots to the renderer (Bridge -> UI, PRD §6.6).
   peripherals.on('snapshot', (s: unknown) => deps.win?.webContents.send('per:snapshot', s));
   qemu.on('status', (s: string) => deps.win?.webContents.send('sim:status', s));
+  qemu.on('speed', (f: number) => deps.win?.webContents.send('sim:speed', f));
   qemu.on('uart', (s: string) => deps.win?.webContents.send('sim:uart', s));
   // QemuRunner only emits 'error' when listened for; subscribing here also
   // keeps the message out of the 'log' fallback (dev-plan task P1.1).

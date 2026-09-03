@@ -59,9 +59,13 @@ interface BridgeApi {
     step: () => Promise<void>;
     reset: () => Promise<void>;
     status: () => Promise<unknown>;
+    /** Speed multiplier (PRD §F-SIM-2, dev-plan task P2.6). */
+    setSpeed: (p: { factor: number }) => Promise<void>;
+    getSpeed: () => Promise<number>;
     /** UART0 input injection (PRD §F-SER-2, dev-plan task P1.10). */
     sendUart: (p: { data: string }) => Promise<void>;
     onStatus: (cb: (s: unknown) => void) => () => void;
+    onSpeed: (cb: (f: number) => void) => () => void;
     onUart: (cb: (s: string) => void) => () => void;
     onError: (cb: (msg: string) => void) => () => void;
   };

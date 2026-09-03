@@ -29,12 +29,20 @@ const api = {
     step: () => ipcRenderer.invoke('sim:step'),
     reset: () => ipcRenderer.invoke('sim:reset'),
     status: () => ipcRenderer.invoke('sim:status'),
+    // Speed multiplier (PRD §F-SIM-2, dev-plan task P2.6).
+    setSpeed: (p: { factor: number }) => ipcRenderer.invoke('sim:setSpeed', p),
+    getSpeed: () => ipcRenderer.invoke('sim:getSpeed'),
     // UART0 input injection (PRD §F-SER-2, dev-plan task P1.10).
     sendUart: (p: { data: string }) => ipcRenderer.invoke('sim:sendUart', p),
     onStatus: (cb: (s: unknown) => void) => {
       const h = (_e: unknown, s: unknown) => cb(s);
       ipcRenderer.on('sim:status', h);
       return () => ipcRenderer.removeListener('sim:status', h);
+    },
+    onSpeed: (cb: (f: number) => void) => {
+      const h = (_e: unknown, f: number) => cb(f);
+      ipcRenderer.on('sim:speed', h);
+      return () => ipcRenderer.removeListener('sim:speed', h);
     },
     onUart: (cb: (s: string) => void) => {
       const h = (_e: unknown, s: string) => cb(s);

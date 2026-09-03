@@ -11,6 +11,7 @@ import { BreadboardCanvas } from './components/Breadboard/BreadboardCanvas';
 import { Palette } from './components/Palette/Palette';
 import { Inspector } from './components/Inspector/Inspector';
 import { ProjectToolbar } from './components/ProjectToolbar/ProjectToolbar';
+import { SimControls } from './components/SimControls/SimControls';
 import { SerialConsole } from './components/SerialConsole/SerialConsole';
 import { ScreenView } from './components/ScreenView/ScreenView';
 import { Oscilloscope } from './components/Oscilloscope/Oscilloscope';
@@ -23,11 +24,13 @@ export function App() {
     // Subscribe to peripheral snapshots (Bridge -> UI).
     const unsubSnap = bridge.per.onSnapshot((s) => useSimulationStore.getState().applySnapshot(s as never));
     const unsubStatus = bridge.sim.onStatus((s) => useSimulationStore.getState().setStatus(s as never));
+    // P2.6 (PRD §F-SIM-2): authoritative speed changes pushed by the Bridge.
+    const unsubSpeed = bridge.sim.onSpeed((f) => useSimulationStore.getState().setSpeed(f));
     // Debugger pushes (dev-plan task P1.9): async stops refresh the panel.
     const unsubStopped = bridge.dbg.onStopped((info) => useDebuggerStore.getState().onStop(info));
     const unsubRunning = bridge.dbg.onRunning(() => useDebuggerStore.getState().onRunning());
     const unsubExit = bridge.dbg.onExit((code) => useDebuggerStore.getState().onExit(code));
-    return () => { unsubSnap(); unsubStatus(); unsubStopped(); unsubRunning(); unsubExit(); };
+    return () => { unsubSnap(); unsubStatus(); unsubSpeed(); unsubStopped(); unsubRunning(); unsubExit(); };
   }, []);
 
   useEffect(() => {
@@ -76,6 +79,7 @@ export function App() {
         <span style={{ marginLeft: 12 }}>sim: {status}</span>
       </header>
       <ProjectToolbar />
+      <SimControls />
       <div style={main}>
         <Palette />
         <BreadboardCanvas />

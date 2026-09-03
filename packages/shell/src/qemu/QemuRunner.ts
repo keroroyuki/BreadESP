@@ -13,6 +13,18 @@ import { QmpClient } from './QmpClient.js';
 
 export type SimStatus = 'idle' | 'loaded' | 'running' | 'paused' | 'stopped' | 'error';
 
+/** PRD §F-SIM-2 — accepted simulation speed multiplier range. */
+export const MIN_SPEED = 0.1;
+export const MAX_SPEED = 10;
+
+export interface QemuRunnerOptions {
+  /**
+   * Test seam: throttle duty-cycle quantum in ms (default 200). Each quantum
+   * the VM runs `speed × quantum` and is halted for the remainder.
+   */
+  throttleQuantumMs?: number;
+}
+
 export interface QemuLoadInput {
   firmwareElf: string;
   chip: ChipKind;
@@ -42,8 +54,45 @@ export class QemuRunner extends EventEmitter {
   private firmwareElf: string | null = null;
   private stopping = false;
   private exitWaiter: Promise<number | null> = Promise.resolve(null);
+  /** PRD §F-SIM-2 — logical-clock throttle multiplier (see setSpeed). */
+  private speed = 1;
+  private readonly throttleQuantumMs: number;
+  private throttleTimer: NodeJS.Timeout | null = null;
+  /** Generation guard retiring in-flight throttle phases on rearm/clear. */
+  private throttleGen = 0;
+  /** True while the VM sits in a throttle halt window (QMP `stop` sent). */
+  private throttleHalted = false;
+
+  constructor(opts: QemuRunnerOptions = {}) {
+    super();
+    this.throttleQuantumMs = opts.throttleQuantumMs ?? 200;
+  }
 
   getStatus(): SimStatus { return this.status; }
+
+  /** Current speed multiplier (PRD §F-SIM-2). 1 = wall clock. */
+  getSpeed(): number { return this.speed; }
+
+  /**
+   * Set the simulation speed multiplier (PRD §F-SIM-2, dev-plan task P2.6).
+   * QMP offers no CPU clock control, so factors below 1 throttle the logical
+   * clock by duty-cycling the vCPU: every quantum the VM runs
+   * `speed × quantum` and is halted (QMP `stop`) for the rest, which freezes
+   * QEMU's virtual clock and therefore every dbus timestamp. Factors above 1
+   * are accepted but saturate at wall-clock speed — QEMU cannot execute the
+   * guest faster than the host. Emits 'speed' with the applied factor.
+   */
+  setSpeed(factor: number): void {
+    if (typeof factor !== 'number' || !Number.isFinite(factor)
+        || factor < MIN_SPEED || factor > MAX_SPEED) {
+      throw new Error(
+        `[BB-116] speed factor must be a finite number in [${MIN_SPEED}, ${MAX_SPEED}], got ${String(factor)}`,
+      );
+    }
+    this.speed = factor;
+    this.emit('speed', factor);
+    this.rearmThrottle();
+  }
 
   /** QMP control port of the current/last process, if any. */
   getQmpPort(): number | null { return this.qmpPort; }
@@ -97,6 +146,7 @@ export class QemuRunner extends EventEmitter {
     this.exitWaiter = new Promise<number | null>((resolve) => {
       child.once('exit', (code) => {
         this.qmp.close();
+        this.clearThrottle();
         this.proc = null;
         // Deliberate stop or clean quit => stopped; crash => error (PRD F-SIM-4).
         this.setStatus(this.stopping || code === 0 ? 'stopped' : 'error');
@@ -132,11 +182,14 @@ export class QemuRunner extends EventEmitter {
     await this.connectQmp();
     await this.qmp.cont();
     this.setStatus('running');
+    this.rearmThrottle(); // speed < 1 resumes under the duty cycle (P2.6)
   }
 
   /** Pause the virtual CPU via QMP `stop`. */
   async pause(): Promise<void> {
     if (!this.proc || this.status !== 'running') throw new Error('[BB-103] QEMU is not running');
+    this.clearThrottle(); // a user pause supersedes any throttle halt window
+    this.throttleHalted = false;
     await this.qmp.stop();
     this.setStatus('paused');
   }
@@ -156,6 +209,8 @@ export class QemuRunner extends EventEmitter {
       return;
     }
     this.stopping = true;
+    this.clearThrottle();
+    this.throttleHalted = false;
     try {
       if (this.qmpPort !== null) {
         await this.qmp.connect({ port: this.qmpPort, timeoutMs: 1000 });
@@ -190,6 +245,83 @@ export class QemuRunner extends EventEmitter {
         }
         await delay(100); // QEMU binds the chardev early in boot; retry briefly.
       }
+    }
+  }
+
+  /**
+   * (Re)arm the duty-cycle throttle for the current speed/status. A no-op
+   * unless the VM is running below 1x. When the VM currently sits in a halt
+   * window the next phase is scheduled from where the cycle left off, and a
+   * speed restored to >= 1 resumes the halted VM immediately.
+   */
+  private rearmThrottle(): void {
+    this.clearThrottle();
+    if (this.status !== 'running') return;
+    if (this.speed >= 1) {
+      if (this.throttleHalted) {
+        this.throttleHalted = false;
+        void this.throttleQmp('cont');
+      }
+      return;
+    }
+    const gen = this.throttleGen;
+    if (this.throttleHalted) {
+      this.throttleTimer = setTimeout(() => { void this.throttleRunPhase(gen); },
+        (1 - this.speed) * this.throttleQuantumMs);
+    } else {
+      this.throttleTimer = setTimeout(() => { void this.throttleHaltPhase(gen); },
+        this.speed * this.throttleQuantumMs);
+    }
+  }
+
+  private clearThrottle(): void {
+    // Bumping the generation retires any in-flight phase: a stale phase that
+    // already sent QMP `stop` undoes it with `cont` instead of scheduling on.
+    this.throttleGen++;
+    if (this.throttleTimer !== null) {
+      clearTimeout(this.throttleTimer);
+      this.throttleTimer = null;
+    }
+  }
+
+  /** End of a run window: halt the vCPU and schedule the next run window. */
+  private async throttleHaltPhase(gen: number): Promise<void> {
+    if (gen !== this.throttleGen || this.status !== 'running' || this.speed >= 1) return;
+    if (!await this.throttleQmp('stop')) return;
+    if (gen !== this.throttleGen || this.status !== 'running' || this.speed >= 1) {
+      // Retired mid-flight (setSpeed/pause raced us): the VM must not stay
+      // halted unless a user pause owns it — undo the stop and bow out.
+      if (this.status === 'running') void this.throttleQmp('cont');
+      return;
+    }
+    this.throttleHalted = true;
+    this.throttleTimer = setTimeout(() => { void this.throttleRunPhase(gen); },
+      (1 - this.speed) * this.throttleQuantumMs);
+  }
+
+  /** End of a halt window: resume the vCPU and schedule the next halt. */
+  private async throttleRunPhase(gen: number): Promise<void> {
+    if (gen !== this.throttleGen || this.status !== 'running' || this.speed >= 1) return;
+    this.throttleHalted = false;
+    if (!await this.throttleQmp('cont')) return;
+    if (gen !== this.throttleGen || this.status !== 'running' || this.speed >= 1) return;
+    this.throttleTimer = setTimeout(() => { void this.throttleHaltPhase(gen); },
+      this.speed * this.throttleQuantumMs);
+  }
+
+  /**
+   * Throttle QMP call with failure containment: a wedged control channel
+   * logs once and disarms the cycle instead of throwing from a timer.
+   */
+  private async throttleQmp(command: 'stop' | 'cont'): Promise<boolean> {
+    try {
+      if (command === 'stop') await this.qmp.stop();
+      else await this.qmp.cont();
+      return true;
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.emit('log', `[qemu] speed throttle ${command} failed: ${reason}`);
+      return false;
     }
   }
 
