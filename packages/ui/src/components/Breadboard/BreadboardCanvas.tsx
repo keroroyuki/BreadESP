@@ -392,6 +392,30 @@ export function BreadboardCanvas() {
                     </Group>
                   );
                 })()}
+                {item.kind === 'oscilloscope' && (
+                  // Live traces render in the Oscilloscope panel (P2.5); the
+                  // canvas node is a labeled placeholder like the OLED's.
+                  <Group listening={false}>
+                    <Rect
+                      x={14}
+                      y={22}
+                      width={NODE_W - 28}
+                      height={32}
+                      fill="#0b1120"
+                      cornerRadius={3}
+                      stroke="#475569"
+                    />
+                    <Text
+                      x={14}
+                      y={34}
+                      width={NODE_W - 28}
+                      align="center"
+                      text="SCOPE"
+                      fontSize={9}
+                      fill="#64748b"
+                    />
+                  </Group>
+                )}
                 {item.kind === 'ssd1306' && (
                   // Live pixels render in ScreenView; canvas preview is a TODO(PRD §F-PER-3).
                   <Group listening={false}>

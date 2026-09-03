@@ -6,6 +6,7 @@ const PALETTE: { kind: string; label: string }[] = [
   { kind: 'ssd1306', label: 'SSD1306 OLED' },
   { kind: 'buzzer', label: 'Buzzer' },
   { kind: 'speaker', label: 'Speaker (I2S)' },
+  { kind: 'oscilloscope', label: 'Oscilloscope' },
 ];
 
 export function Palette() {

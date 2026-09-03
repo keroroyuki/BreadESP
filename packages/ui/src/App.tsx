@@ -13,6 +13,7 @@ import { Inspector } from './components/Inspector/Inspector';
 import { ProjectToolbar } from './components/ProjectToolbar/ProjectToolbar';
 import { SerialConsole } from './components/SerialConsole/SerialConsole';
 import { ScreenView } from './components/ScreenView/ScreenView';
+import { Oscilloscope } from './components/Oscilloscope/Oscilloscope';
 
 export function App() {
   const status = useSimulationStore((s) => s.status);
@@ -83,6 +84,7 @@ export function App() {
       <div style={bottom}>
         <SerialConsole />
         <ScreenView />
+        <Oscilloscope />
       </div>
     </div>
   );

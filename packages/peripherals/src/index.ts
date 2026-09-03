@@ -7,4 +7,5 @@ export { ssd1306Factory } from './ssd1306';
 export { st7789Factory } from './st7789';
 export { buzzerFactory } from './buzzer';
 export { speakerFactory } from './speaker';
+export { oscilloscopeFactory, OscilloscopePeripheral } from './oscilloscope';
 export { micFactory } from './mic';

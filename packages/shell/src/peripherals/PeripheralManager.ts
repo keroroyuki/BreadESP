@@ -75,7 +75,9 @@ export class PeripheralManager extends EventEmitter {
       const p = this.instances.get(target.instanceId);
       if (!p) continue;
       try {
-        p.onTransaction(tx);
+        // viaPin (P2.5): multi-pin taps like the oscilloscope attribute the
+        // transaction to a channel; single-pin models ignore the argument.
+        p.onTransaction(tx, target.pin);
       } catch (err) {
         // One failing model must not break delivery to the other targets; the
         // error is logged with instance/transaction context (PRD §4.7).

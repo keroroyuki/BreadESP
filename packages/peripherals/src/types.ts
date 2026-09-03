@@ -10,6 +10,9 @@ export type PinRole =
   | 'i2s-ws' | 'i2s-bck'
   | 'i2s-data-in' | 'i2s-data-out'
   | 'adc-in'
+  // 'probe' added by P2.5 (PRD §F-PER-8): oscilloscope channel tap. Additive
+  // union member; consumers that switch on roles must keep a default arm.
+  | 'probe'
   | 'power' | 'gnd';
 
 export interface PinDescriptor {
@@ -29,6 +32,31 @@ export interface BusTransaction {
   ts: number;             // logical timestamp (virtual ms)
 }
 
+// §6.4, §F-PER-8 — Oscilloscope waveform payload (P2.5). A snapshot carries the
+// complete edge list of every active channel inside one scrolling window, so it
+// is a restatable state: last-write-wins coalescing in the manager is safe.
+export interface WaveformEdge {
+  /** Milliseconds from the window start (virtual clock, 0..windowMs). */
+  t: number;
+  level: 0 | 1;
+}
+
+export interface WaveformChannel {
+  /** Channel label, e.g. 'CH1'. */
+  label: string;
+  /** Ordered edges inside the window; the level before the first edge is the
+   *  inverse of that edge's level (an edge is by definition a transition). */
+  edges: WaveformEdge[];
+}
+
+export interface WaveformPayload {
+  /** Virtual-clock timestamp of the window start (anchor of every edge.t). */
+  startMs: number;
+  /** Window width in milliseconds (the scope's time base). */
+  windowMs: number;
+  channels: WaveformChannel[];
+}
+
 // §6.4 RenderSnapshot (peripheral model -> UI)
 export interface RenderSnapshot {
   instanceId: string;
@@ -39,7 +67,8 @@ export interface RenderSnapshot {
     | { width: number; height: number; format: 'mono' | 'rgb565' | 'argb8888'; buffer: number[] | string }
     | { level: number }                                   // 0..1 brightness
     | { samples: number[]; sampleRate: number }            // audio (JSON-safe Float32 as number[])
-    | { samples: number[] }                               // waveform
+    | { samples: number[] }                               // waveform (legacy analog samples)
+    | WaveformPayload                                     // waveform (P2.5 digital channels)
     | { text: string }
     | { freqHz: number; duty: number };                    // tone: freqHz>0 & duty>0 = sounding
 }
@@ -57,8 +86,13 @@ export interface PeripheralContext {
 export interface Peripheral {
   readonly kind: string;
   readonly instanceId: string;
-  /** Inbound bus transaction from the simulated MCU. */
-  onTransaction(tx: BusTransaction): void;
+  /**
+   * Inbound bus transaction from the simulated MCU.
+   * @param viaPin the instance's own pin the transaction was routed through
+   *   (P2.5, additive optional parameter — the NetlistResolver knows which
+   *   wire delivered a gpio/pwm transaction; single-pin models ignore it).
+   */
+  onTransaction(tx: BusTransaction, viaPin?: string): void;
   /** Peripheral drives an MCU input pin (e.g. button). */
   driveInput?(pinId: string, level: 0 | 1): void;
   dispose?(): void;
