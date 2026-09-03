@@ -42,6 +42,8 @@ const server = qmpPort === null ? null : net.createServer((socket) => {
       if (!line.trim()) continue;
       let msg;
       try { msg = JSON.parse(line); } catch { continue; }
+      // P2.6: throttle tests observe the stop/cont duty cycle via 'log' events.
+      if (msg.execute) process.stderr.write(`mock-qemu: qmp ${msg.execute}\n`);
       switch (msg.execute) {
         case 'cont':
           reply(socket, msg.id);

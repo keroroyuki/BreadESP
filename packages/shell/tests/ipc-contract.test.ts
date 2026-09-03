@@ -50,6 +50,7 @@ import { registerIpcHandlers, type HandlerDeps } from '../src/ipc/handlers.js';
 /** PRD §6.6 contract — renderer -> main invoke channels (P1.1 + P1.9 dbg surface). */
 const EXPECTED_INVOKE_CHANNELS = [
   'sim:load', 'sim:start', 'sim:pause', 'sim:step', 'sim:reset', 'sim:status', 'sim:sendUart',
+  'sim:setSpeed', 'sim:getSpeed',
   'fw:load', 'fw:listSymbols',
   'dbg:connect', 'dbg:disconnect', 'dbg:status',
   'dbg:setBreakpoint', 'dbg:removeBreakpoint', 'dbg:clearBreakpoints', 'dbg:listBreakpoints',
@@ -61,7 +62,7 @@ const EXPECTED_INVOKE_CHANNELS = [
 
 /** PRD §6.6 contract — main -> renderer one-way push channels. */
 const EXPECTED_PUSH_CHANNELS = [
-  'per:snapshot', 'sim:status', 'sim:uart', 'sim:error',
+  'per:snapshot', 'sim:status', 'sim:uart', 'sim:error', 'sim:speed',
   'dbg:stopped', 'dbg:running', 'dbg:exit',
 ] as const;
 
@@ -83,6 +84,8 @@ const qemu = {
   pause: vi.fn(),
   reset: vi.fn(),
   getStatus: vi.fn(),
+  setSpeed: vi.fn(),
+  getSpeed: vi.fn().mockReturnValue(1),
   getGdbPort: vi.fn().mockReturnValue(null),
   getFirmwareElf: vi.fn().mockReturnValue(null),
   on: vi.fn(),
@@ -129,6 +132,7 @@ beforeAll(async () => {
   // Fire one probe event per emitter so every Bridge -> UI push channel is
   // observable in `sends` (subscriptions alone do not send anything).
   listenerFor(qemu, 'status')('running');
+  listenerFor(qemu, 'speed')(0.5);
   listenerFor(qemu, 'uart')('');
   listenerFor(qemu, 'error')(new Error('probe'));
   listenerFor(peripherals, 'snapshot')({ instanceId: 'probe' });
@@ -187,6 +191,20 @@ describe('preload ↔ handlers IPC contract (P1.1)', () => {
   it('forwards peripheral snapshots on per:snapshot', () => {
     listenerFor(peripherals, 'snapshot')({ instanceId: 'led-1' });
     expect(state.sends).toContainEqual({ channel: 'per:snapshot', payload: { instanceId: 'led-1' } });
+  });
+
+  it('forwards QEMU speed changes on sim:speed with the payload intact (P2.6)', () => {
+    listenerFor(qemu, 'speed')(0.25);
+    expect(state.sends).toContainEqual({ channel: 'sim:speed', payload: 0.25 });
+  });
+
+  it('routes sim:setSpeed to QemuRunner and sim:getSpeed returns its factor (P2.6)', async () => {
+    const setHandler = state.handles.get('sim:setSpeed');
+    await setHandler!(undefined, { factor: 0.5 });
+    expect(qemu.setSpeed).toHaveBeenCalledWith(0.5);
+    qemu.getSpeed.mockReturnValueOnce(0.5);
+    const getHandler = state.handles.get('sim:getSpeed');
+    await expect(getHandler!(undefined)).resolves.toBe(0.5);
   });
 
   it('routes proj:save through ProjectManager with both persistence halves', async () => {

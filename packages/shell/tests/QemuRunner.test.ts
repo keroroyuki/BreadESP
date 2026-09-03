@@ -115,6 +115,75 @@ describe('QemuRunner (mock subprocess)', () => {
     await expect(runner.start()).rejects.toThrow(/\[BB-102\]/);
   });
 
+  // --- P2.6 (PRD §F-SIM-2): speed multiplier + duty-cycle throttle ---
+
+  it('rejects non-finite or out-of-range speed factors with [BB-116]', () => {
+    const runner = new QemuRunner();
+    expect(runner.getSpeed()).toBe(1);
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, 0, 0.05, 10.5, -1]) {
+      expect(() => runner.setSpeed(bad)).toThrow(/\[BB-116\] speed factor/);
+    }
+    expect(() => runner.setSpeed(0.1)).not.toThrow();
+    expect(() => runner.setSpeed(10)).not.toThrow();
+    expect(runner.getSpeed()).toBe(10);
+  });
+
+  it('emits speed events with the applied factor', () => {
+    const runner = new QemuRunner();
+    const seen: number[] = [];
+    runner.on('speed', (f: number) => seen.push(f));
+    runner.setSpeed(0.5);
+    runner.setSpeed(2);
+    expect(seen).toEqual([0.5, 2]);
+  });
+
+  it('throttles a running VM below 1x by QMP stop/cont duty-cycling', async () => {
+    const runner = new QemuRunner({ throttleQuantumMs: 40 });
+    const logs: string[] = [];
+    runner.on('log', (s: string) => logs.push(s));
+    const countStops = () => logs.join('').split('mock-qemu: qmp stop').length - 1;
+
+    runner.setSpeed(0.5); // armed before start; applies once running
+    await runner.load({
+      firmwareElf: 'mock://blink.elf',
+      chip: 'esp32',
+      qemuBin: NODE,
+      argsBuilder: mockArgsBuilder(),
+    });
+    await runner.start();
+    expect(runner.getStatus()).toBe('running');
+
+    // 40ms quantum: ~12 halt windows per 500ms of wall time.
+    await until(() => countStops() >= 4, 5000, 'throttle halt windows');
+    // Throttle halts are internal: the broadcast status stays 'running'.
+    expect(runner.getStatus()).toBe('running');
+    const contCount = logs.join('').split('mock-qemu: qmp cont').length - 1;
+    expect(contCount).toBeGreaterThanOrEqual(4);
+
+    // A user pause supersedes the cycle: no further throttle stops arrive.
+    await runner.pause();
+    expect(runner.getStatus()).toBe('paused');
+    // Settle first: a stop already in flight when pause() landed may flush
+    // its stderr log line a tick late — that one predates the pause.
+    await new Promise((r) => setTimeout(r, 60));
+    const stopsAtPause = countStops();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(countStops()).toBe(stopsAtPause);
+
+    // Resume keeps throttling, and restoring 1x disarms the cycle.
+    await runner.start();
+    await until(() => countStops() > stopsAtPause, 5000, 'throttle resumes after start');
+    runner.setSpeed(1);
+    await new Promise((r) => setTimeout(r, 60)); // settle in-flight stop logs
+    const stopsAtFull = countStops();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(countStops()).toBe(stopsAtFull);
+    expect(runner.getStatus()).toBe('running');
+
+    await runner.stop();
+    expect(runner.getStatus()).toBe('stopped');
+  }, 20000);
+
   it('forwards writeStdin bytes to the subprocess stdin (P1.10)', async () => {
     const runner = new QemuRunner();
     const chunks: string[] = [];
