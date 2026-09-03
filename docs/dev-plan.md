@@ -106,7 +106,7 @@
 | 2.3 | `buzzer` PWM 频率→WebAudio 方波 | 发声 | 蜂鸣器按频率发声 | 已完成 2026-09-01 |
 | 2.4 | `speaker` I2S PCM→WebAudio 播放 | 音频流 | 喇叭播放正弦波 | 已完成 2026-09-02 |
 | 2.5 | `Oscilloscope` 抓 GPIO/PWM/I2S 时序 | 波形面板 | 波形面板显示 GPIO 波形 | 已完成 2026-09-02 |
-| 2.6 | 仿真速度倍率 + 暂停/继续（QMP） | sim 控制 | sim 可暂停/继续/调速 | 未开始 |
+| 2.6 | 仿真速度倍率 + 暂停/继续（QMP） | sim 控制 | sim 可暂停/继续/调速 | 已完成 2026-09-03 |
 
 ### Phase 3 — 输入类外设（M3）
 
@@ -525,12 +525,34 @@ Previously applyNetlist leaked old instances on re-apply.
 > 30fps last-write-wins 合并安全）；LEDC 驱动引脚无真实翻转，PWM 稳态在快照构建时按窗口
 > 合成边沿（等效真实示波器触发视图）。I2S 总线抓取留作 P3 TODO。
 
+> P2.6 验证记录（2026-09-03）：`pnpm typecheck` 0 错误；全仓测试 328 通过 + 9 跳过（Windows 门控，
+> 新增 sim-speed e2e 跳过项）。分四层验证——QemuRunner 12 项 mock 子进程测试（新增 [BB-116]
+> 倍率校验（NaN/∞/0/0.05/10.5/-1 拒绝，0.1/10 边界接受）、'speed' 事件透传、40ms 量子的
+> 0.5x 占空比节流（≥4 个 stop/cont 停走窗口、节流期 status 保持 'running'、用户 pause 取代
+> 周期后无新增节流 stop、resume 后恢复节流、回 1x 撤防））；IPC 契约 17 项（新增 sim:setSpeed/
+> sim:getSpeed 通道与 sim:speed 推送，payload 原样透传）；UI 层 simulationStore 3 项（默认 1x、
+> setSpeed 镜像、clear 复位）；真实 QEMU e2e（sim-speed.e2e.test.ts）于 WSL 验证通过：
+> blink.elf 的 GPIO2 事务流——全速基线到达率 >0 → pause 后 800ms 零事务（虚拟时钟冻结）→
+> resume 恢复 → 0.25x 时节流速率落在全速的 5%–60% 带内（同一虚拟时间 blink 摊到 ~4x 墙钟）→
+> 回 1x 恢复全速；gpio-scope/spi-st7789/pwm-buzzer/i2s-speaker/netlist-routing/dbus-device/
+> qemu-uart e2e 对同一二进制回归通过（WSL 全量 142 通过 + 5 跳过）。
+> 设计要点：QMP 无 CPU 时钟控制，<1x 通过 QMP stop/cont 占空比节流实现"逻辑时钟节流"
+> （PRD §F-SIM-2 原文）——每个量子 VM 运行 speed×quantum 后以 stop 冻结虚拟时钟，dbus 时间戳
+> 随之拉伸；>1x 接受但饱和于墙钟（QEMU 不能快过宿主机）。节流停走是内部实现，广播 status
+> 保持 'running'（F-SIM-4 不变）；世代计数器退役在途相位，竞态的 stop 必以 cont 撤销，
+> 除非用户 pause 接管。两处迭代暴露并已修复：① 全量并行下 sim-speed e2e 的长时占空比客户机
+> 抢占 CPU 致 gpio-scope 10% 沿距带抖动超界（10.3%/41%）——shell vitest 改为单线程串行，
+> 真实硬件测量不再互相竞争；② Windows 上 pause 前在途 stop 的 stderr 日志晚一拍 flush
+> 导致计数断言 5≠4——测试加 60ms 沉降窗口（连跑 5 次稳定）。
+> UI：新增 SimControls 控制条（Pause/Resume/Reset + 0.1x–10x 倍率选择），simulationStore
+> 镜像 sim:speed 推送。
+
 ### M2 清单
 - [x] TFT 渲染 rgb565 彩图
 - [x] 蜂鸣器按 PWM 频率发声
 - [x] 喇叭播放 I2S 正弦波
 - [x] 示波器显示 GPIO 波形
-- [ ] 仿真可暂停/继续/调速
+- [x] 仿真可暂停/继续/调速
 
 ### M3 清单
 - [ ] 麦克风注入后固件读到采样
