@@ -105,7 +105,7 @@
 | 2.2 | `TftRenderer`（rgb565→ImageData） | UI Canvas | 画布显示 TFT 内容 | 已完成 2026-09-01 |
 | 2.3 | `buzzer` PWM 频率→WebAudio 方波 | 发声 | 蜂鸣器按频率发声 | 已完成 2026-09-01 |
 | 2.4 | `speaker` I2S PCM→WebAudio 播放 | 音频流 | 喇叭播放正弦波 | 已完成 2026-09-02 |
-| 2.5 | `Oscilloscope` 抓 GPIO/PWM/I2S 时序 | 波形面板 | 波形面板显示 GPIO 波形 | 未开始 |
+| 2.5 | `Oscilloscope` 抓 GPIO/PWM/I2S 时序 | 波形面板 | 波形面板显示 GPIO 波形 | 已完成 2026-09-02 |
 | 2.6 | 仿真速度倍率 + 暂停/继续（QMP） | sim 控制 | sim 可暂停/继续/调速 | 未开始 |
 
 ### Phase 3 — 输入类外设（M3）
@@ -504,11 +504,32 @@ Previously applyNetlist leaked old instances on re-apply.
 > ② 设备 10ms tick 按字节速率切 chunk 会把 4 字节立体声帧劈到两条事务里，模型首版逐事务独立解码
 > 丢弃残帧，流相位错位表现为 ~2× 视在频率——模型改为跨事务残帧重组（e2e 过零估频 2099.9Hz 抓出）。
 
+> P2.5 验证记录（2026-09-02）：`pnpm typecheck` 0 错误；全仓测试 320 通过 + 8 跳过（Windows 门控，
+> 新增 gpio e2e 跳过项）。分四层验证——oscilloscope 模型 16 项单测（viaPin 通道归属、方波周期
+> 重建、同电平去重、窗口滚动剪枝（窗前一沿保留并重锚定 t=0）、边缘数上限、无 viaPin/未知引脚/
+> 读事务/非有限时间戳/异类事务过滤；PWM 稳态合成展开（100Hz/50%→21 沿含右边界、25% 占空高沿
+> 2.5ms、停止出空通道平轨、真实 gpio 写取代合成、截断负载忽略、极速音调边缘封顶）、全窗重述态
+> 快照源侧去重）；路由层 PeripheralManager 17 项（新增 viaPin 传递——同一 scope 的 CH1/CH3 分线
+> 各归其通道，30fps 窗口内第二条波形经尾随冲刷送达）；UI 层 traceBuilder/renderScope 13 项
+> （waveformOf 载荷收窄、阶梯折线几何（首沿反推前级、方波交替轨、越界钳制、空通道平低轨）、
+> 网格等分/通道分带/稳定配色、记录式 2d context 画布绑定——背景/标签/时基标注、每通道一条
+> step trace、非波形载荷只画背景、无 2d context 静默返回）；真实 QEMU e2e
+> （gpio-scope.e2e.test.ts）于 WSL 验证通过：blink.elf 的 GPIO2 翻转流落到 scope1 CH1 的
+> waveform 快照（≥6 沿、电平严格交替、沿间距中位数 10% 带内一致——busy 环对称性），无广播
+> 泄漏，UART 出现 `Hello ESP32` 标记；spi-st7789/pwm-buzzer/i2s-speaker/netlist-routing/
+> dbus-device e2e 对同一二进制回归通过（WSL 全量 136 通过 + 5 跳过）。
+> 设计要点：QEMU 设备侧无需改动——GPIO 影子本就以虚拟时钟（ns，DBusChannel 归一化为 ms）
+> 上报电平变化；示波器作为面包板器件接入既有连线级 gpio/pwm 路由，多通道归属通过
+> `Peripheral.onTransaction(tx, viaPin?)` 追加式可选参数传递（§6.2 契约兼容）；'waveform'
+> 快照载荷追加 `WaveformPayload` 变体（{startMs, windowMs, channels[]}，全窗重述态，
+> 30fps last-write-wins 合并安全）；LEDC 驱动引脚无真实翻转，PWM 稳态在快照构建时按窗口
+> 合成边沿（等效真实示波器触发视图）。I2S 总线抓取留作 P3 TODO。
+
 ### M2 清单
 - [x] TFT 渲染 rgb565 彩图
 - [x] 蜂鸣器按 PWM 频率发声
 - [x] 喇叭播放 I2S 正弦波
-- [ ] 示波器显示 GPIO 波形
+- [x] 示波器显示 GPIO 波形
 - [ ] 仿真可暂停/继续/调速
 
 ### M3 清单

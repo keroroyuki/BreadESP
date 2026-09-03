@@ -116,6 +116,23 @@ DIN/WS/BCK 连线仅用于 UI 绘制）。`packages/peripherals/src/speaker.ts` 
 chunk 排成首尾相接的 AudioBufferSourceNode（欠载超阈值则对时时钟重同步，避免积压播放
 陈旧音频）；`audioFromSnapshot` 纯映射与引擎分离，Node 单测以 stub AudioContext 覆盖。
 
+### 3.6 Oscilloscope 波形捕获（P2.5）
+
+示波器是面包板器件而非全局探针：`oscilloscope` 模型暴露 CH1..CH4（`probe`
+角色，§6.1 追加成员），经既有连线级 gpio/pwm 路由收事务——QEMU 设备侧无需
+改动（GPIO 影子本就按虚拟时钟上报电平变化）。多通道归属依赖 §6.2 追加的可选
+参数 `Peripheral.onTransaction(tx, viaPin?)`：PeripheralManager 把 NetlistResolver
+解析出的落线引脚传给模型。模型为每通道维护边沿环形缓冲（虚拟 ms 时间戳），按
+滚动窗口（`props.windowMs`，默认 200ms）剪枝——窗前保留一条边沿并重锚定到
+t=0，使轨迹以正确电平进入窗口。LEDC 驱动的引脚没有真实翻转，`pwm` 事务的稳态
+（频率, 占空比）在快照构建时合成窗口内边沿（等效真实示波器的触发视图）；真实
+gpio 写会取代合成态。快照为 'waveform' 类型的新追加载荷变体 `WaveformPayload`
+（`{startMs, windowMs, channels:[{label, edges:[{t, level}]}]}`）——全窗重述态，
+30fps last-write-wins 合并安全，相同载荷在源侧去重。UI 侧
+`components/Oscilloscope/traceBuilder.ts` 为纯几何（阶梯折线：首沿反推前级、
+越界钳制、空通道平低轨、网格等分、通道分带、稳定配色），面板组件绘制暗色网格 +
+标注时间基准的多通道数字轨迹。I2S 总线抓取为 P3 TODO。
+
 ## 4. 调试链路
 
 - QEMU 启动带 `-gdb tcp::1234`，暴露 GDB stub。
