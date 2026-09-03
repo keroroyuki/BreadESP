@@ -169,6 +169,37 @@ describe('PeripheralManager routing (PRD §4.2, dev-plan P1.4)', () => {
     }
   });
 
+  it('attributes a gpio transaction to the wired channel pin of an oscilloscope (P2.5 viaPin)', async () => {
+    // Two channels of one scope on two GPIOs: the manager must pass the
+    // resolved via-pin so the model can attribute the edge to its channel.
+    const SCOPE_TWO_CHANNELS: Netlist = {
+      version: 1,
+      chip: 'esp32',
+      peripherals: [{ instanceId: 'scope1', kind: 'oscilloscope' }],
+      wires: [
+        { id: 'w-ch1', from: { instanceId: 'scope1', pin: 'CH1' }, to: { instanceId: 'mcu', pin: 'GPIO2' } },
+        { id: 'w-ch3', from: { instanceId: 'scope1', pin: 'CH3' }, to: { instanceId: 'mcu', pin: 'GPIO4' } },
+      ],
+    };
+    vi.useFakeTimers();
+    let snapshots: RenderSnapshot[] = [];
+    try {
+      const clocked = clockedManager(SCOPE_TWO_CHANNELS);
+      snapshots = clocked.snapshots;
+      clocked.manager.route({ kind: 'gpio', bus: 0, target: 2, dir: 'write', data: Uint8Array.from([1]), ts: 10 });
+      clocked.manager.route({ kind: 'gpio', bus: 0, target: 4, dir: 'write', data: Uint8Array.from([1]), ts: 20 });
+      // The second waveform lands inside the 30fps window: trailing flush.
+      await clocked.advance(50);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(snapshots).toHaveLength(2);
+    const wf = snapshots[1].payload as { channels: { label: string; edges: { t: number; level: number }[] }[] };
+    expect(snapshots[1]).toMatchObject({ instanceId: 'scope1', type: 'waveform' });
+    expect(wf.channels.map((c) => c.label)).toEqual(['CH1', 'CH3']);
+  });
+
   it('drops all routing when the netlist is re-applied without wires', () => {
     const { manager, snapshots } = managerWith(LED_ON_GPIO2);
     manager.route(gpioWrite(2, 1));
