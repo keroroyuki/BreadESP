@@ -6,7 +6,7 @@
 // robustness (error isolation, atomic netlist apply, teardown).
 import { describe, expect, it, vi } from 'vitest';
 import type { Netlist } from '@breadesp/netlist';
-import type { BusTransaction, RenderSnapshot } from '@breadesp/peripherals';
+import type { BusTransaction, I2sInjection, RenderSnapshot } from '@breadesp/peripherals';
 import { registerBuiltins, registerPeripheral } from '@breadesp/peripherals';
 import { PeripheralManager } from '../src/peripherals/PeripheralManager.js';
 
@@ -373,6 +373,33 @@ describe('routing robustness (dev-plan task P1.5)', () => {
     expect(probeDisposals).toEqual(['probe1', 'probe2']);
     manager.dispose();
     expect(probeDisposals).toEqual(['probe1', 'probe2', 'probe1', 'probe2']);
+  });
+});
+
+describe('input injection (dev-plan task P3.1, PRD §F-PER-7/§6.7)', () => {
+  it('forwards mic ctx.emitInput injections as the inject event and stops on dispose', () => {
+    vi.useFakeTimers();
+    try {
+      const manager = new PeripheralManager();
+      const injections: I2sInjection[] = [];
+      manager.on('inject', (inj: I2sInjection) => injections.push(inj));
+      manager.applyNetlist({
+        version: 1, chip: 'esp32',
+        peripherals: [{ instanceId: 'mic1', kind: 'mic', props: { sampleRate: 8000, chunkMs: 10, freqHz: 440 } }],
+        wires: [],
+      });
+
+      vi.advanceTimersByTime(35);
+      expect(injections.length).toBe(3);
+      expect(injections[0]).toMatchObject({ bus: 0, rate: 8000, bits: 16, channels: 1 });
+      expect(injections[0].data.length).toBe(160); // 80 frames * 1ch * 2B
+
+      manager.dispose(); // the mic's interval dies with the instance
+      vi.advanceTimersByTime(50);
+      expect(injections.length).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

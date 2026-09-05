@@ -167,6 +167,35 @@ describe('DBusChannel (PRD §6.7 frame protocol)', () => {
     expect(txs).toHaveLength(0);
     expect(device.destroyed).toBe(true);
   });
+
+  // --- P3.1 reverse channel (PRD §6.7, §F-PER-7): bridge -> device ---
+
+  it('sendInject writes one length-prefixed {"v":1,"in":[...]} frame to the device', async () => {
+    const { channel, device } = await fixture([]);
+    // The fake device's client-side connect callback can fire before the
+    // server registers the socket; wait for the channel to see it.
+    await waitUntil(() => channel.sendInject({ bus: 0, rate: 16000, bits: 16, channels: 1, data: [1, 2, 255] }));
+    const raw = await new Promise<Buffer>((resolve) => {
+      const chunks: Buffer[] = [];
+      device.on('data', (c: Buffer) => {
+        chunks.push(c);
+        const all = Buffer.concat(chunks);
+        if (all.length >= 4 && all.length >= 4 + all.readUInt32LE(0)) resolve(all);
+      });
+    });
+    const payload = raw.subarray(4, 4 + raw.readUInt32LE(0)).toString('utf8');
+    expect(JSON.parse(payload)).toEqual({
+      v: 1, in: [{ kind: 'i2s-in', bus: 0, rate: 16000, bits: 16, channels: 1, data: [1, 2, 255] }],
+    });
+  });
+
+  it('sendInject returns false when no device is connected', async () => {
+    const channel = new DBusChannel();
+    channel.onTransaction(() => {});
+    await channel.listen({});
+    openChannels.push(channel);
+    expect(channel.sendInject({ bus: 0, rate: 16000, bits: 16, channels: 1, data: [] })).toBe(false);
+  });
 });
 
 function waitUntil(pred: () => boolean, timeoutMs = 2000): Promise<void> {
