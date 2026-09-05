@@ -10,7 +10,7 @@
 // handed to the registered handler. TCP loopback by default so Windows hosts
 // work (Node cannot serve AF_UNIX there); unix socket on POSIX.
 import { createServer, type Server, type Socket } from 'node:net';
-import type { BusTransaction } from '@breadesp/peripherals';
+import type { BusTransaction, I2sInjection } from '@breadesp/peripherals';
 
 export type TransactionHandler = (tx: BusTransaction) => void;
 
@@ -57,6 +57,26 @@ export class DBusChannel {
 
   onTransaction(handler: TransactionHandler): void {
     this.handler = handler;
+  }
+
+  /**
+   * Reverse channel (P3.1, PRD §6.7): push a peripheral -> MCU I2S RX PCM
+   * injection to the device as one length-prefixed frame
+   * ({"v":1,"in":[<I2sInjection>]}). The device queues the samples and feeds
+   * the firmware's RX DMA descriptor ring. Returns false when no device is
+   * connected (e.g. the VM is not running); the caller may drop or retry.
+   */
+  sendInject(injection: I2sInjection): boolean {
+    if (this.sockets.size === 0) return false;
+    const payload = Buffer.from(
+      JSON.stringify({ v: PROTOCOL_VERSION, in: [{ kind: 'i2s-in', ...injection }] }),
+      'utf8',
+    );
+    const header = Buffer.alloc(4);
+    header.writeUInt32LE(payload.length, 0);
+    const frame = Buffer.concat([header, payload]);
+    for (const sock of this.sockets) sock.write(frame);
+    return true;
   }
 
   /**

@@ -316,6 +316,16 @@ tx      := {"kind":"i2c"|"gpio","bus":0,"target":<7bit addr|pin>,
 - 接收端 MUST 容错：畸形帧/版本不匹配直接丢弃，流继续；超长（>64MB）前缀断开连接。
 - 设备侧拦截策略：I2C 用通配从机（只 ACK 未被 QEMU 内建外设占用的地址）；GPIO 用 DPORT(0x3ff44000)/APB(0x60004000) 双基地址影子 MMIO，透传原始读写。
 
+反向通道（Bridge → 设备，P3.1 起追加，向后兼容）：同一 socket 上 Bridge 可回写长度前缀帧：
+
+```
+payload := {"v":1,"in":[{"kind":"i2s-in","bus":0,"rate":16000,"bits":16,"channels":1,"data":[byte,...]}]}
+```
+
+- 字段顺序（bus, rate, bits, channels, data）是协议的一部分（设备侧为有序扫描器，非完整 JSON 解析器）。
+- 设备将 PCM 排入对应 I2S 控制器的注入队列（每控制器上限 256KB，溢出丢最旧并一次性告警），RX DMA 影子按固件解码的采样率把样本写入 in-link 描述符缓冲（owner 清零 + length 回填 + eof，与真实 DMA 引擎一致）；队列枯竭时保持描述符 armed 而不以静音抢占，避免"收到数据才 re-arm"的固件死锁。
+- 畸形/超长（>4MB）反向帧仅禁用反向路径，正向事务流不受影响。
+
 ---
 
 ## 7. 目录结构（硬约束，§7）

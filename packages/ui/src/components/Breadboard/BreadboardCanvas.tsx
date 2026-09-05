@@ -416,6 +416,22 @@ export function BreadboardCanvas() {
                     />
                   </Group>
                 )}
+                {item.kind === 'mic' && (
+                  // Input peripheral (P3.1): the mic injects I2S RX samples
+                  // upstream; the canvas node is a labeled placeholder.
+                  <Group listening={false}>
+                    <Circle x={NODE_W / 2} y={34} radius={12} fill="#e2e8f0" stroke="#166534" />
+                    <Text
+                      x={14}
+                      y={48}
+                      width={NODE_W - 28}
+                      align="center"
+                      text="MIC"
+                      fontSize={9}
+                      fill="#64748b"
+                    />
+                  </Group>
+                )}
                 {item.kind === 'ssd1306' && (
                   // Live pixels render in ScreenView; canvas preview is a TODO(PRD §F-PER-3).
                   <Group listening={false}>

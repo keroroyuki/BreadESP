@@ -73,10 +73,33 @@ export interface RenderSnapshot {
     | { freqHz: number; duty: number };                    // tone: freqHz>0 & duty>0 = sounding
 }
 
+// §6.7 reverse channel (P3.1, PRD §F-PER-7): a peripheral -> MCU PCM injection.
+// The Bridge serializes one injection per frame ({"v":1,"in":[<I2sInjection>]})
+// back to the breadesp-dbus device, which queues the samples and feeds them
+// into the I2S RX DMA descriptors the firmware armed.
+export interface I2sInjection {
+  /** I2S controller index (0/1) the firmware receives on. */
+  bus: number;
+  /** Samples per second per channel (must match the firmware's RX config). */
+  rate: number;
+  /** Bits per sample (8/16/24/32). */
+  bits: number;
+  /** Channel count (1 = mono, 2 = stereo interleaved). */
+  channels: number;
+  /** Raw interleaved little-endian PCM bytes (JSON-safe number[]). */
+  data: number[];
+}
+
 // §6.2 Context given to a peripheral at creation time.
 export interface PeripheralContext {
   /** Push a render snapshot to the UI (throttled by the manager). */
   emitSnapshot: (snapshot: RenderSnapshot) => void;
+  /**
+   * Push an I2S RX PCM injection upstream towards the MCU (P3.1, additive
+   * optional member — input peripherals like the mic use it; consumers
+   * without an injection path may leave it undefined).
+   */
+  emitInput?: (injection: I2sInjection) => void;
   log: (level: 'info' | 'warn' | 'error', msg: string) => void;
   /** Subscribe to logical clock ticks. Returns unsubscribe. */
   onTick: (cb: (virtualMs: number) => void) => () => void;

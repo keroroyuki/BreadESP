@@ -51,6 +51,9 @@ export class PeripheralManager extends EventEmitter {
         if (!factory) throw new Error(`Unknown peripheral kind: ${inst.kind}`);
         const ctx: PeripheralContext = {
           emitSnapshot: (s) => this.emitThrottled(s),
+          // Input peripherals (mic, P3.1) push I2S RX injections upstream;
+          // the owner wires the 'inject' event to DBusChannel.sendInject.
+          emitInput: (inj) => this.emit('inject', inj),
           log: (lvl, msg) => this.emit('log', { level: lvl, msg }),
           onTick: () => () => {},
         };

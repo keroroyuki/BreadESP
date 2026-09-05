@@ -32,6 +32,20 @@
  *    bytes exactly as the DMA engine would shift them out. APLL and the
  *    non-DMA FIFO_WR path are documented gaps.
  *
+ *  - I2S RX injection (dev-plan task P3.1, PRD §F-PER-7): the same shadow
+ *    also observes IN_LINK and the RX side of CONF / SAMPLE_RATE_CONF, and
+ *    the socket becomes bidirectional — the Bridge pushes length-prefixed
+ *    frames {"v":1,"in":[{"kind":"i2s-in","bus":B,"rate":R,"bits":W,
+ *    "channels":C,"data":[..]}]} which are queued per controller. When RX is
+ *    started with a DMA in-link, the 10ms tick walks the in-link descriptors:
+ *    for each descriptor the DMA owns (owner bit set) it writes queued PCM
+ *    into the descriptor's buffer, then writes dw0 back with the owner bit
+ *    cleared, the length field set and eof raised — exactly what the real DMA
+ *    engine reports, so polling firmware observes arriving microphone
+ *    samples. A starved queue leaves the descriptors armed (no silent
+ *    claiming), so firmware that re-arms only on real data cannot deadlock
+ *    the ring.
+ *
  *  - GPIO: higher-priority MMIO shadow regions are overlaid on the esp32.gpio
  *    register bank at both of its mappings (DPORT 0x3ff44000 and the APB alias
  *    0x60004000, see esp32_soc_add_periph_device). Output-level register
@@ -63,6 +77,15 @@
  *                 (bus = I2S controller 0/1; r = sample rate u32 LE;
  *                  pcm = raw interleaved little-endian samples)
  *
+ * Reverse direction (Bridge -> device, P3.1), same length-prefix framing:
+ *
+ *   payload := {"v":1,"in":[{"kind":"i2s-in","bus":0,"rate":16000,
+ *               "bits":16,"channels":1,"data":[<pcm byte>,...]}]}
+ *
+ *   The fields MUST appear in that order (the device uses a minimal ordered
+ *   scanner, not a JSON parser). Unknown members/frames are ignored; a
+ *   malformed or oversized frame disables only the reverse path.
+ *
  * PWM forwarding (dev-plan task P2.3): QEMU's esp32.ledc model stores the
  * LEDC registers but never drives pins (its "led" widgets are graphical
  * only), and the GPIO matrix is unmodeled, so a firmware buzzer tone never
@@ -76,7 +99,8 @@
  * APB_CLK 80MHz (TICK_SEL=1; the Arduino/ESP-IDF default for ledc).
  *
  * TODO(PRD §4.2): ADC forwarding (M3, dev-plan tasks 3.x).
- * TODO(PRD §6.3): bridge-supplied I2C/SPI read data (reverse channel).
+ * TODO(PRD §6.3): bridge-supplied I2C/SPI read data (reverse channel exists
+ *                 for i2s-in since P3.1; i2c/spi read replies still open).
  * TODO(PRD §1.3): esp32s3/c3 GPIO banks use a different device (M4, task 4.1).
  *
  * Copyright (c) 2026 BreadESP contributors
@@ -182,14 +206,18 @@ static const hwaddr breadesp_i2s_bases[] = { 0x3ff4f000, 0x3ff6d000 };
 /* Legacy I2S register offsets within the bank (ESP32 TRM, esp-idf i2s_reg.h). */
 #define I2S_CONF_REG          0x08
 #define I2S_OUT_LINK_REG      0x30
+#define I2S_IN_LINK_REG       0x34
 #define I2S_CLKM_CONF_REG     0xac
 #define I2S_SAMPLE_RATE_CONF_REG 0xb0
 
 /* I2S_CONF_REG bit fields. */
+#define I2S_CONF_RX_RESET       (1u << 0)
 #define I2S_CONF_TX_RESET       (1u << 1)
+#define I2S_CONF_RX_START       (1u << 4)
 #define I2S_CONF_TX_START       (1u << 5)
 #define I2S_CONF_TX_MSB_SHIFT   (1u << 11)
 #define I2S_CONF_TX_MONO        (1u << 13)
+#define I2S_CONF_RX_MONO        (1u << 14)
 
 /* I2S_CLKM_CONF_REG bit fields (APLL unsupported: source is PLL 160MHz). */
 #define I2S_CLKM_DIV_NUM_MASK   0xff
@@ -200,6 +228,10 @@ static const hwaddr breadesp_i2s_bases[] = { 0x3ff4f000, 0x3ff6d000 };
 #define I2S_CLKM_PLL_HZ         160000000.0
 
 /* I2S_SAMPLE_RATE_CONF_REG bit fields. */
+#define I2S_RX_BCK_DIV_SHIFT    0
+#define I2S_RX_BCK_DIV_MASK     0x3f
+#define I2S_RX_BITS_MOD_SHIFT   12
+#define I2S_RX_BITS_MOD_MASK    0x3f
 #define I2S_TX_BCK_DIV_SHIFT    6
 #define I2S_TX_BCK_DIV_MASK     0x3f
 #define I2S_TX_BITS_MOD_SHIFT   18
@@ -212,11 +244,17 @@ static const hwaddr breadesp_i2s_bases[] = { 0x3ff4f000, 0x3ff6d000 };
  * window: the hardware reconstructs the physical address as 0x3ff00000|field
  * (esp-idf writes the pointer masked to 0xfffff; lldesc_t buf/next fields
  * carry full 32-bit pointers, only the link register is windowed).
+ * IN_LINK follows the same windowing (P3.1 RX path).
  */
 #define I2S_OUTLINK_ADDR_BASE   0x3ff00000
 #define I2S_OUTLINK_STOP        (1u << 28)
 #define I2S_OUTLINK_START       (1u << 29)
 #define I2S_OUTLINK_RESTART     (1u << 30)
+#define I2S_INLINK_ADDR_MASK    I2S_OUTLINK_ADDR_MASK
+#define I2S_INLINK_ADDR_BASE    I2S_OUTLINK_ADDR_BASE
+#define I2S_INLINK_STOP         I2S_OUTLINK_STOP
+#define I2S_INLINK_START        I2S_OUTLINK_START
+#define I2S_INLINK_RESTART      I2S_OUTLINK_RESTART
 
 /*
  * DMA linked-list descriptor (esp-idf lldesc_t), 12 bytes:
@@ -225,10 +263,15 @@ static const hwaddr breadesp_i2s_bases[] = { 0x3ff4f000, 0x3ff6d000 };
  */
 #define I2S_LLDESC_LEN_SHIFT    12
 #define I2S_LLDESC_LEN_MASK     0xfff
+#define I2S_LLDESC_SIZE_MASK    0xfff
+#define I2S_LLDESC_EOF          (1u << 30)
+#define I2S_LLDESC_OWNER        (1u << 31)
 
 /* PCM consumption tick (virtual clock) and per-tick byte cap. */
 #define I2S_TICK_MS             10
 #define I2S_TICK_MAX_BYTES      16384
+/* Per-tick descriptor-fetch cap (guards zero-length/self-pointing chains). */
+#define I2S_TICK_MAX_FETCHES    64
 /* Header prepended to every i2s transaction payload (see frame docs above). */
 #define I2S_TX_HEADER_BYTES     8
 
@@ -248,6 +291,13 @@ struct BreadespI2sChan {
     bool dma_warned;           /* one-shot warn on unreadable guest memory */
     GByteArray *chunk;         /* PCM collected for the current tick */
     QEMUTimer *tick;
+    /* RX injection (P3.1): bridge-supplied PCM feeding the in-link ring. */
+    uint32_t in_link;          /* last IN_LINK write (addr + control bits) */
+    bool rx_streaming;         /* RX started with a valid DMA in-link */
+    uint32_t rx_desc;          /* address of the next in-link lldesc_t */
+    GByteArray *inj;           /* queued injected PCM bytes */
+    bool rx_dma_warned;        /* one-shot warn on unwritable guest memory */
+    bool inj_overflow_warned;  /* one-shot warn on queue overflow */
 };
 
 #define BREADESP_DBUS_PROTO_VERSION 1
@@ -255,6 +305,9 @@ struct BreadespI2sChan {
 #define BREADESP_I2C_MAX_PAYLOAD 4096
 /* Cap for a single SPI frame payload (one CS assertion), in bytes. */
 #define BREADESP_SPI_MAX_PAYLOAD 4096
+/* Reverse channel (P3.1): frame cap and per-controller injection queue cap. */
+#define BREADESP_IN_FRAME_MAX   (4 * 1024 * 1024)
+#define BREADESP_INJ_QUEUE_MAX  (256 * 1024)
 
 struct BreadespDbusState {
     DeviceState parent_obj;
@@ -274,6 +327,11 @@ struct BreadespDbusState {
     /* Peer disappeared: forwarding is disabled until the next run. */
     bool broken;
     bool overflowed;
+
+    /* Reverse channel (P3.1): raw bytes arriving from the Bridge and a
+     * poison flag for malformed/oversized reverse frames. */
+    GByteArray *in_buf;
+    bool in_broken;
 
     /* GPIO shadow state (one overlay per mapping in breadesp_gpio_bases). */
     MemoryRegion gpio_mr[ARRAY_SIZE(breadesp_gpio_bases)];
@@ -1072,18 +1130,19 @@ static void dbus_setup_ledc_shadow(BreadespDbusState *s, Object *ledc)
  * Decode the effective PCM format from the observed registers. Mirrors the
  * ESP32 TRM master-mode formulas with a fixed 160MHz PLL source (APLL is a
  * documented gap): sck = 160M / (div_num + div_b/div_a), bck = sck / bck_div,
- * ws = bck / (bits * channels). Returns false for configurations that cannot
+ * ws = bck / (bits * channels). The bck/bits/channels arguments are the
+ * caller-selected TX or RX fields (the RX shadow uses the RX halves of
+ * SAMPLE_RATE_CONF, P3.1). Returns false for configurations that cannot
  * produce audio (bypass divisors, implausible rates).
  */
-static bool i2s_decode_format(BreadespI2sChan *c, uint32_t *rate_out,
-                              uint8_t *bits_out, uint8_t *channels_out)
+static bool i2s_decode_format(BreadespI2sChan *c, uint32_t bck_div,
+                              uint32_t bits, uint32_t channels,
+                              uint32_t *rate_out, uint8_t *bits_out,
+                              uint8_t *channels_out)
 {
     uint32_t div_num = c->clkm_conf & I2S_CLKM_DIV_NUM_MASK;
     uint32_t div_b = (c->clkm_conf >> I2S_CLKM_DIV_B_SHIFT) & I2S_CLKM_DIV_B_MASK;
     uint32_t div_a = (c->clkm_conf >> I2S_CLKM_DIV_A_SHIFT) & I2S_CLKM_DIV_A_MASK;
-    uint32_t bck_div = (c->srate_conf >> I2S_TX_BCK_DIV_SHIFT) & I2S_TX_BCK_DIV_MASK;
-    uint32_t bits = (c->srate_conf >> I2S_TX_BITS_MOD_SHIFT) & I2S_TX_BITS_MOD_MASK;
-    uint32_t channels = (c->conf & I2S_CONF_TX_MONO) ? 1 : 2;
     double div, ws;
 
     if (div_num < 2 || bck_div == 0) {
@@ -1092,7 +1151,7 @@ static bool i2s_decode_format(BreadespI2sChan *c, uint32_t *rate_out,
     if (bits == 0) {
         bits = 16; /* driver default when the field is left at reset */
     }
-    if (bits < 8 || bits > 32 || (bits & 7) != 0) {
+    if (bits < 8 || bits > 32 || (bits & 7) != 0 || channels == 0) {
         return false;
     }
     div = (double)div_num + (div_a != 0 ? (double)div_b / (double)div_a : 0.0);
@@ -1106,37 +1165,84 @@ static bool i2s_decode_format(BreadespI2sChan *c, uint32_t *rate_out,
     return true;
 }
 
-static void i2s_stop_channel(BreadespI2sChan *c)
+/* TX format from the TX halves of SAMPLE_RATE_CONF (P2.4). */
+static bool i2s_decode_tx_format(BreadespI2sChan *c, uint32_t *rate,
+                                 uint8_t *bits, uint8_t *channels)
 {
-    c->streaming = false;
-    if (c->tick) {
-        timer_del(c->tick);
+    uint32_t bck_div = (c->srate_conf >> I2S_TX_BCK_DIV_SHIFT) & I2S_TX_BCK_DIV_MASK;
+    uint32_t tx_bits = (c->srate_conf >> I2S_TX_BITS_MOD_SHIFT) & I2S_TX_BITS_MOD_MASK;
+    uint32_t tx_channels = (c->conf & I2S_CONF_TX_MONO) ? 1 : 2;
+
+    return i2s_decode_format(c, bck_div, tx_bits, tx_channels,
+                             rate, bits, channels);
+}
+
+/* RX format from the RX halves of SAMPLE_RATE_CONF (P3.1). */
+static bool i2s_decode_rx_format(BreadespI2sChan *c, uint32_t *rate,
+                                 uint8_t *bits, uint8_t *channels)
+{
+    uint32_t bck_div = (c->srate_conf >> I2S_RX_BCK_DIV_SHIFT) & I2S_RX_BCK_DIV_MASK;
+    uint32_t rx_bits = (c->srate_conf >> I2S_RX_BITS_MOD_SHIFT) & I2S_RX_BITS_MOD_MASK;
+    uint32_t rx_channels = (c->conf & I2S_CONF_RX_MONO) ? 1 : 2;
+
+    return i2s_decode_format(c, bck_div, rx_bits, rx_channels,
+                             rate, bits, channels);
+}
+
+static void i2s_tick_manage(BreadespI2sChan *c)
+{
+    if (!c->tick) {
+        return;
     }
-    if (c->chunk) {
-        g_byte_array_set_size(c->chunk, 0);
+    if (c->streaming || c->rx_streaming) {
+        timer_mod(c->tick,
+                  qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + I2S_TICK_MS);
+    } else {
+        timer_del(c->tick);
     }
 }
 
+static void i2s_stop_channel(BreadespI2sChan *c)
+{
+    c->streaming = false;
+    c->rx_streaming = false;
+    if (c->chunk) {
+        g_byte_array_set_size(c->chunk, 0);
+    }
+    i2s_tick_manage(c);
+}
+
 /*
- * Re-evaluate the streaming condition after a CONF / OUT_LINK write:
- * TX started, not held in reset, and an out-link chain was armed. Stopping
- * (TX_START cleared, TX_RESET, or OUTLINK_STOP) halts the walker and drops
- * the partial chunk.
+ * Re-evaluate the streaming conditions after a CONF / OUT_LINK / IN_LINK
+ * write: each direction streams when started, not held in reset, and with a
+ * link chain armed. Stopping (START cleared, direction RESET, or LINK_STOP)
+ * halts that direction's walker.
  */
 static void i2s_eval(BreadespI2sChan *c)
 {
-    bool want = (c->conf & I2S_CONF_TX_START) != 0
-                && (c->conf & I2S_CONF_TX_RESET) == 0
-                && (c->out_link & I2S_OUTLINK_STOP) == 0
-                && c->desc != 0;
+    bool want_tx = (c->conf & I2S_CONF_TX_START) != 0
+                   && (c->conf & I2S_CONF_TX_RESET) == 0
+                   && (c->out_link & I2S_OUTLINK_STOP) == 0
+                   && c->desc != 0;
+    bool want_rx = (c->conf & I2S_CONF_RX_START) != 0
+                   && (c->conf & I2S_CONF_RX_RESET) == 0
+                   && (c->in_link & I2S_INLINK_STOP) == 0
+                   && c->rx_desc != 0;
 
-    if (want && !c->streaming) {
+    if (want_tx && !c->streaming) {
         c->streaming = true;
-        timer_mod(c->tick,
-                  qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + I2S_TICK_MS);
-    } else if (!want && c->streaming) {
-        i2s_stop_channel(c);
+    } else if (!want_tx && c->streaming) {
+        c->streaming = false;
+        if (c->chunk) {
+            g_byte_array_set_size(c->chunk, 0);
+        }
     }
+    if (want_rx && !c->rx_streaming) {
+        c->rx_streaming = true;
+    } else if (!want_rx && c->rx_streaming) {
+        c->rx_streaming = false;
+    }
+    i2s_tick_manage(c);
 }
 
 /* Guest-memory read for descriptor chain walking / PCM fetching. */
@@ -1156,28 +1262,24 @@ static bool i2s_dma_read(BreadespI2sChan *c, uint64_t addr, void *dst,
 }
 
 /*
- * Consumption tick: pull I2S_TICK_MS worth of PCM through the descriptor
- * chain at the decoded byte rate and emit it as one i2s transaction. Rings
- * (a descriptor whose next points back into the chain) loop forever, which
- * is exactly how firmware sustains a continuous tone; the per-tick byte and
- * descriptor-fetch caps keep zero-length/self-pointing descriptors from
- * spinning the loop.
+ * RX injection walker (P3.1): pull the firmware's decoded PCM byte rate out
+ * of the injection queue and write it into the in-link descriptor buffers,
+ * reporting each fill exactly like the real DMA engine (owner bit cleared,
+ * length field set, eof raised) so polling/interrupt firmware observes
+ * arriving samples. A starved queue leaves the descriptors armed (it does
+ * NOT claim them with silence, so a re-arm-on-data firmware cannot
+ * deadlock); a descriptor the firmware has not re-armed pauses the walker
+ * until the next tick.
  */
-#define I2S_TICK_MAX_FETCHES 64
-
-static void i2s_tick(void *opaque)
+static void i2s_rx_tick(BreadespI2sChan *c)
 {
-    BreadespI2sChan *c = opaque;
-    BreadespDbusState *s = c->owner;
     uint32_t rate, due;
     uint8_t bits, channels;
     unsigned fetches = 0;
 
-    if (!c->streaming) {
-        return;
-    }
-    if (!i2s_decode_format(c, &rate, &bits, &channels)) {
-        i2s_stop_channel(c);
+    if (!i2s_decode_rx_format(c, &rate, &bits, &channels)) {
+        c->rx_streaming = false;
+        i2s_tick_manage(c);
         return;
     }
 
@@ -1188,41 +1290,173 @@ static void i2s_tick(void *opaque)
     }
 
     while (due > 0) {
-        if (c->remaining == 0) {
-            uint8_t d[12];
-            uint32_t len;
-            if (c->desc == 0 || ++fetches > I2S_TICK_MAX_FETCHES) {
-                break; /* chain drained (or pathological): idle until restart */
+        uint8_t d[12];
+        uint32_t dw0, size, buf, next, n, avail, ndw0;
+        /* lldesc_t size is a 12-bit field, so one descriptor holds <= 4095
+         * bytes and this buffer can live on the stack. */
+        uint8_t tmp[4096];
+
+        if (c->rx_desc == 0 || ++fetches > I2S_TICK_MAX_FETCHES) {
+            break; /* chain drained (or pathological): retry next tick */
+        }
+        if (c->inj->len == 0) {
+            /* Bridge starved: leave the descriptors armed instead of
+             * claiming them with silence, so a firmware that only re-arms
+             * after receiving real data cannot deadlock the ring. */
+            break;
+        }
+        if (address_space_read(&address_space_memory, c->rx_desc,
+                               MEMTXATTRS_UNSPECIFIED, d, sizeof(d))
+            != MEMTX_OK) {
+            if (!c->rx_dma_warned) {
+                c->rx_dma_warned = true;
+                warn_report("breadesp-dbus: i2s%u RX DMA descriptor read at "
+                            "0x%llx failed; injection stopped",
+                            c->bus, (unsigned long long)c->rx_desc);
             }
-            if (!i2s_dma_read(c, c->desc, d, sizeof(d))) {
-                i2s_stop_channel(c);
+            c->rx_streaming = false;
+            i2s_tick_manage(c);
+            return;
+        }
+        dw0 = ldl_le_p(d);
+        if (!(dw0 & I2S_LLDESC_OWNER)) {
+            break; /* firmware has not re-armed this descriptor yet */
+        }
+        size = dw0 & I2S_LLDESC_SIZE_MASK;
+        buf = ldl_le_p(d + 4);
+        next = ldl_le_p(d + 8);
+        if (size == 0) {
+            if (next == 0) {
+                c->rx_streaming = false; /* like hardware: stop at chain end */
+                c->rx_desc = 0;
+                i2s_tick_manage(c);
                 return;
             }
-            len = (ldl_le_p(d) >> I2S_LLDESC_LEN_SHIFT) & I2S_LLDESC_LEN_MASK;
-            c->buf = ldl_le_p(d + 4);
-            c->desc = ldl_le_p(d + 8);
-            c->remaining = len;
+            c->rx_desc = next;
             continue;
         }
-        uint32_t n = MIN(due, c->remaining);
-        g_byte_array_set_size(c->chunk, c->chunk->len + n);
-        if (!i2s_dma_read(c, c->buf,
-                          c->chunk->data + c->chunk->len - n, n)) {
+        n = MIN(due, size);
+        avail = MIN(n, c->inj->len);
+        if (avail > 0) {
+            memcpy(tmp, c->inj->data, avail);
+            g_byte_array_remove_range(c->inj, 0, avail);
+        }
+        if (avail < n) {
+            /* Short injection: pad the rest of the descriptor with digital
+             * silence (the queue was proven non-empty above). */
+            memset(tmp + avail, 0, n - avail);
+        }
+        if (address_space_write(&address_space_memory, buf,
+                                MEMTXATTRS_UNSPECIFIED, tmp, n) != MEMTX_OK) {
+            if (!c->rx_dma_warned) {
+                c->rx_dma_warned = true;
+                warn_report("breadesp-dbus: i2s%u RX DMA buffer write at "
+                            "0x%llx failed; injection stopped",
+                            c->bus, (unsigned long long)buf);
+            }
+            c->rx_streaming = false;
+            i2s_tick_manage(c);
+            return;
+        }
+        /* DMA write-back: keep size, set length=n, raise eof, clear owner. */
+        ndw0 = (dw0 & I2S_LLDESC_SIZE_MASK) | (n << I2S_LLDESC_LEN_SHIFT)
+               | I2S_LLDESC_EOF;
+        stl_le_p(d, ndw0);
+        if (address_space_write(&address_space_memory, c->rx_desc,
+                                MEMTXATTRS_UNSPECIFIED, d, 4) != MEMTX_OK) {
+            if (!c->rx_dma_warned) {
+                c->rx_dma_warned = true;
+                warn_report("breadesp-dbus: i2s%u RX DMA write-back at "
+                            "0x%llx failed; injection stopped",
+                            c->bus, (unsigned long long)c->rx_desc);
+            }
+            c->rx_streaming = false;
+            i2s_tick_manage(c);
+            return;
+        }
+        due -= n;
+        if (next == 0) {
+            c->rx_streaming = false; /* like hardware: stop at chain end */
+            c->rx_desc = 0;
+            i2s_tick_manage(c);
+            return;
+        }
+        c->rx_desc = next;
+    }
+}
+
+/*
+ * Consumption tick: pull I2S_TICK_MS worth of PCM through the descriptor
+ * chain at the decoded byte rate and emit it as one i2s transaction. Rings
+ * (a descriptor whose next points back into the chain) loop forever, which
+ * is exactly how firmware sustains a continuous tone; the per-tick byte and
+ * descriptor-fetch caps keep zero-length/self-pointing descriptors from
+ * spinning the loop.
+ */
+static void i2s_tick(void *opaque)
+{
+    BreadespI2sChan *c = opaque;
+    BreadespDbusState *s = c->owner;
+    uint32_t rate, due;
+    uint8_t bits, channels;
+    unsigned fetches = 0;
+
+    if (c->streaming) {
+        if (!i2s_decode_tx_format(c, &rate, &bits, &channels)) {
             i2s_stop_channel(c);
             return;
         }
-        c->buf += n;
-        c->remaining -= n;
-        due -= n;
+
+        due = (uint32_t)((double)rate * (bits / 8.0) * channels * I2S_TICK_MS
+                         / 1000.0 + 0.5);
+        if (due > I2S_TICK_MAX_BYTES) {
+            due = I2S_TICK_MAX_BYTES;
+        }
+
+        while (due > 0) {
+            if (c->remaining == 0) {
+                uint8_t d[12];
+                uint32_t len;
+                if (c->desc == 0 || ++fetches > I2S_TICK_MAX_FETCHES) {
+                    break; /* chain drained (or pathological): idle until restart */
+                }
+                if (!i2s_dma_read(c, c->desc, d, sizeof(d))) {
+                    i2s_stop_channel(c);
+                    return;
+                }
+                len = (ldl_le_p(d) >> I2S_LLDESC_LEN_SHIFT) & I2S_LLDESC_LEN_MASK;
+                c->buf = ldl_le_p(d + 4);
+                c->desc = ldl_le_p(d + 8);
+                c->remaining = len;
+                continue;
+            }
+            uint32_t n = MIN(due, c->remaining);
+            g_byte_array_set_size(c->chunk, c->chunk->len + n);
+            if (!i2s_dma_read(c, c->buf,
+                              c->chunk->data + c->chunk->len - n, n)) {
+                i2s_stop_channel(c);
+                return;
+            }
+            c->buf += n;
+            c->remaining -= n;
+            due -= n;
+        }
+
+        if (c->chunk->len > 0) {
+            uint8_t flags = (c->conf & I2S_CONF_TX_MSB_SHIFT) ? 1 : 0;
+            dbus_emit_i2s(s, c->bus, rate, bits, channels, flags,
+                          c->chunk->data, c->chunk->len);
+            g_byte_array_set_size(c->chunk, 0);
+        }
     }
 
-    if (c->chunk->len > 0) {
-        uint8_t flags = (c->conf & I2S_CONF_TX_MSB_SHIFT) ? 1 : 0;
-        dbus_emit_i2s(s, c->bus, rate, bits, channels, flags,
-                      c->chunk->data, c->chunk->len);
-        g_byte_array_set_size(c->chunk, 0);
+    if (c->rx_streaming) {
+        i2s_rx_tick(c);
+        if (!c->rx_streaming && !c->streaming) {
+            return; /* an error path stopped RX; nothing left to rearm */
+        }
     }
-    if (c->streaming) {
+    if (c->streaming || c->rx_streaming) {
         timer_mod(c->tick,
                   qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + I2S_TICK_MS);
     }
@@ -1259,6 +1493,14 @@ static void dbus_i2s_write(void *opaque, hwaddr addr, uint64_t value,
             c->buf = 0;
             c->remaining = 0;
             c->dma_warned = false;
+        }
+        i2s_eval(c);
+        break;
+    case I2S_IN_LINK_REG:
+        c->in_link = v;
+        if (v & (I2S_INLINK_START | I2S_INLINK_RESTART)) {
+            c->rx_desc = I2S_INLINK_ADDR_BASE | (v & I2S_INLINK_ADDR_MASK);
+            c->rx_dma_warned = false;
         }
         i2s_eval(c);
         break;
@@ -1312,6 +1554,7 @@ static void dbus_setup_i2s_shadows(BreadespDbusState *s)
         c->owner = s;
         c->bus = (uint8_t)i;
         c->chunk = g_byte_array_new();
+        c->inj = g_byte_array_new();
         c->tick = timer_new_ms(QEMU_CLOCK_VIRTUAL, i2s_tick, c);
         s->i2s_orig[i] = sec.mr;
         memory_region_init_io(&s->i2s_mr[i], OBJECT(s), &dbus_i2s_ops, c,
@@ -1320,6 +1563,212 @@ static void dbus_setup_i2s_shadows(BreadespDbusState *s)
                                             breadesp_i2s_bases[i],
                                             &s->i2s_mr[i], 1);
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* Reverse channel: bridge -> device I2S RX injections (P3.1)          */
+
+/*
+ * Append injected PCM to a controller's queue, dropping the oldest bytes on
+ * overflow — a live audio stream prefers losing history over latency.
+ */
+static void i2s_inj_append(BreadespI2sChan *c, const uint8_t *data, size_t len)
+{
+    size_t drop;
+
+    if (c->inj->len + len > BREADESP_INJ_QUEUE_MAX) {
+        drop = c->inj->len + len - BREADESP_INJ_QUEUE_MAX;
+        if (drop > c->inj->len) {
+            drop = c->inj->len;
+        }
+        g_byte_array_remove_range(c->inj, 0, drop);
+        if (!c->inj_overflow_warned) {
+            c->inj_overflow_warned = true;
+            warn_report("breadesp-dbus: i2s%u injection queue exceeds %d "
+                        "bytes; oldest samples dropped",
+                        c->bus, BREADESP_INJ_QUEUE_MAX);
+        }
+    }
+    g_byte_array_append(c->inj, data, len);
+}
+
+/*
+ * Ordered field scanner for the one reverse-frame shape this device accepts
+ * (no JSON parser in-tree): key must include quotes and colon ("\"bus\":").
+ * The search is bounded to [cur, end).
+ */
+static const char *json_field(const char *cur, const char *end,
+                              const char *key)
+{
+    const char *p;
+
+    if (cur >= end) {
+        return NULL;
+    }
+    p = g_strstr_len(cur, end - cur, key);
+    return p ? p + strlen(key) : NULL;
+}
+
+static bool json_uint(const char *cur, const char *end, const char *key,
+                      unsigned long *out)
+{
+    const char *p = json_field(cur, end, key);
+    char *stop;
+    unsigned long v;
+
+    if (!p) {
+        return false;
+    }
+    v = strtoul(p, &stop, 10);
+    if (stop == p || stop > end) {
+        return false;
+    }
+    *out = v;
+    return true;
+}
+
+/*
+ * Parse one {"kind":"i2s-in",...} object at cur (bounded to its closing
+ * brace) and queue the PCM. Returns a cursor past the object, or NULL on a
+ * hard parse error. Field order (bus, rate, bits, channels, data) is part of
+ * the protocol contract.
+ */
+static const char *dbus_parse_i2s_in(BreadespDbusState *s, const char *cur,
+                                     const char *end)
+{
+    const char *obj_end = memchr(cur, '}', end - cur);
+    const char *p, *data_end;
+    unsigned long bus, rate, bits, channels;
+    BreadespI2sChan *c;
+    GByteArray *pcm;
+
+    if (!obj_end) {
+        return NULL;
+    }
+    if (!json_uint(cur, obj_end, "\"bus\":", &bus)
+        || !json_uint(cur, obj_end, "\"rate\":", &rate)
+        || !json_uint(cur, obj_end, "\"bits\":", &bits)
+        || !json_uint(cur, obj_end, "\"channels\":", &channels)) {
+        return NULL;
+    }
+    if (bus > 1 || rate < 1000 || rate > 192000
+        || (bits != 8 && bits != 16 && bits != 24 && bits != 32)
+        || (channels != 1 && channels != 2)) {
+        warn_report_once("breadesp-dbus: i2s-in injection with invalid "
+                         "bus/rate/bits/channels dropped");
+        return obj_end + 1;
+    }
+    c = &s->i2s[bus];
+    if (!c->inj) {
+        warn_report_once("breadesp-dbus: i2s-in injection for a bus without "
+                         "a register shadow dropped");
+        return obj_end + 1;
+    }
+    p = json_field(cur, obj_end, "\"data\":[");
+    if (!p) {
+        return NULL;
+    }
+    /* Byte list until ']': values are 0..255, comma separated. */
+    pcm = g_byte_array_new();
+    for (;;) {
+        char *stop;
+        unsigned long v;
+
+        while (p < obj_end && (*p == ' ' || *p == ',')) {
+            p++;
+        }
+        if (p >= obj_end || *p == ']') {
+            break;
+        }
+        v = strtoul(p, &stop, 10);
+        if (stop == p || stop > obj_end || v > 255
+            || pcm->len > BREADESP_INJ_QUEUE_MAX) {
+            g_byte_array_free(pcm, TRUE);
+            return NULL;
+        }
+        {
+            guint8 b = (guint8)v;
+            g_byte_array_append(pcm, &b, 1);
+        }
+        p = stop;
+    }
+    data_end = p;
+    if (data_end >= obj_end || *data_end != ']') {
+        g_byte_array_free(pcm, TRUE);
+        return NULL;
+    }
+    i2s_inj_append(c, pcm->data, pcm->len);
+    g_byte_array_free(pcm, TRUE);
+    return obj_end + 1;
+}
+
+/* Extract complete length-prefixed reverse frames and dispatch injections. */
+static void dbus_in_drain(BreadespDbusState *s)
+{
+    while (!s->in_broken) {
+        uint32_t len;
+        const char *cur, *end;
+
+        if (s->in_buf->len < 4) {
+            return;
+        }
+        len = ldl_le_p(s->in_buf->data);
+        if (len == 0 || len > BREADESP_IN_FRAME_MAX) {
+            warn_report("breadesp-dbus: malformed reverse frame length %u; "
+                        "injection channel disabled", len);
+            s->in_broken = true;
+            g_byte_array_set_size(s->in_buf, 0);
+            return;
+        }
+        if (s->in_buf->len < 4u + len) {
+            return; /* partial frame: wait for the rest */
+        }
+        cur = (const char *)s->in_buf->data + 4;
+        end = cur + len;
+        while (cur < end) {
+            const char *kind = g_strstr_len(cur, end - cur,
+                                            "\"kind\":\"i2s-in\"");
+            if (!kind) {
+                break; /* no (further) injections in this frame */
+            }
+            cur = dbus_parse_i2s_in(s, kind, end);
+            if (!cur) {
+                warn_report("breadesp-dbus: malformed i2s-in injection; "
+                            "rest of frame dropped");
+                break;
+            }
+        }
+        g_byte_array_remove_range(s->in_buf, 0, 4u + len);
+    }
+}
+
+/*
+ * Socket watch: the channel stays in blocking mode (the flush BH writes with
+ * qio_channel_write_all), and a blocking read here returns as soon as the
+ * bytes the watch fired for are available, so the main loop never stalls.
+ */
+static gboolean dbus_sock_watch(GIOChannel *channel, GIOCondition cond,
+                                void *opaque)
+{
+    BreadespDbusState *s = opaque;
+    uint8_t buf[16384];
+    ssize_t r;
+
+    if (cond & (G_IO_ERR | G_IO_HUP | G_IO_NVAL)) {
+        return G_SOURCE_REMOVE; /* peer gone: the write path reports it */
+    }
+    if (!(cond & G_IO_IN)) {
+        return G_SOURCE_CONTINUE;
+    }
+    r = qio_channel_read(QIO_CHANNEL(s->sock), (char *)buf, sizeof(buf), NULL);
+    if (r <= 0) {
+        return r == 0 ? G_SOURCE_REMOVE : G_SOURCE_CONTINUE;
+    }
+    if (!s->in_broken) {
+        g_byte_array_append(s->in_buf, buf, r);
+        dbus_in_drain(s);
+    }
+    return G_SOURCE_CONTINUE;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1363,6 +1812,7 @@ static void breadesp_dbus_realize(DeviceState *dev, Error **errp)
     }
 
     s->pending = g_string_new(NULL);
+    s->in_buf = g_byte_array_new();
     s->sniffers = g_ptr_array_new();
     s->spi_sniffers = g_ptr_array_new();
     s->flush_bh = qemu_bh_new(dbus_flush_bh, s);
@@ -1387,6 +1837,11 @@ static void breadesp_dbus_realize(DeviceState *dev, Error **errp)
     }
     qapi_free_SocketAddress(saddr);
     qio_channel_set_blocking(QIO_CHANNEL(s->sock), true, NULL);
+
+    /* Reverse channel (P3.1): injections arrive over the same socket. */
+    qio_channel_add_watch(QIO_CHANNEL(s->sock),
+                          G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
+                          dbus_sock_watch, s, NULL);
 
     dbus_scan_visit(object_get_root(), s);
     if (s->sniffers->len == 0) {
@@ -1435,6 +1890,10 @@ static void breadesp_dbus_unrealize(DeviceState *dev)
             g_byte_array_free(c->chunk, TRUE);
             c->chunk = NULL;
         }
+        if (c->inj) {
+            g_byte_array_free(c->inj, TRUE);
+            c->inj = NULL;
+        }
     }
     if (s->sniffers) {
         for (guint i = 0; i < s->sniffers->len; i++) {
@@ -1463,6 +1922,10 @@ static void breadesp_dbus_unrealize(DeviceState *dev)
         g_string_free(s->pending, TRUE);
         s->pending = NULL;
     }
+    if (s->in_buf) {
+        g_byte_array_free(s->in_buf, TRUE);
+        s->in_buf = NULL;
+    }
 }
 
 static void breadesp_dbus_reset_hold(Object *obj, ResetType type)
@@ -1486,6 +1949,13 @@ static void breadesp_dbus_reset_hold(Object *obj, ResetType type)
         c->buf = 0;
         c->remaining = 0;
         c->dma_warned = false;
+        c->in_link = 0;
+        c->rx_desc = 0;
+        c->rx_dma_warned = false;
+        c->inj_overflow_warned = false;
+        if (c->inj) {
+            g_byte_array_set_size(c->inj, 0);
+        }
         i2s_stop_channel(c);
     }
     g_string_truncate(s->pending, 0);
