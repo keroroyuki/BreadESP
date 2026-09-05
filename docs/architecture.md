@@ -24,6 +24,7 @@ QEMU-ESP32 默认外设模型不全。我们在 QEMU 源码中新增一个 devic
 - **GPIO**：对 DPORT(0x3ff44000) 与 APB(0x60004000) 双基地址的 GPIO 寄存器组做高优先级影子 MMIO，解码 OUT_W1TS/W1TC 写为引脚级事务并透传原始访问。
 - **PWM**（P2.3）：对 LEDC 寄存器组（双基地址同法）做只观影子，定时器/通道配置解码为 (频率, 占空比)，GPIO 矩阵 `FUNCn_OUT_SEL` 写把 LEDC 输出信号映射到引脚，每个引脚音调变化发一条 `pwm` 事务（QEMU 自带 LEDC 模型从不驱动引脚，无影子则固件音调不可见）。
 - **I2S**（P2.4）：stock 树把 esp32.i2s0/1 建模为 unimplemented-device，故对两个 legacy 寄存器组（0x3ff4f000/0x3ff6d000，各 0x1000，探测基地址存在即附着，兼作 esp32-only 守卫）做高优先级影子，观察 CONF/CLKM_CONF/SAMPLE_RATE_CONF/OUT_LINK。TX_START + OUT_LINK_START 后，虚拟时钟定时器（10ms tick）按解码出的 PCM 字节速率遍历 TX DMA 链表描述符（lldesc_t：dw0 的 length[23:12]、buf、next；`OUTLINK_ADDR` 是 20 位窗口字段，物理地址 = 0x3ff00000|field，而 buf/next 是完整 32 位指针——曾在此踩坑导致首版无声），经 `address_space_read` 读客户内存，描述符环（next 指回链内）自然循环——固件持续放音的标准手法；每 tick 汇成一条 `i2s` 事务（8 字节格式头 + 原始交错小端 PCM）。采样率公式：sck=160M/div、bck=sck/bck_div、ws=bck/(bits×channels)（APLL 为文档化缺口；非 DMA 的 FIFO_WR 直写路径未建模）。
+- **I2S RX 注入**（P3.1）：socket 变双向——Bridge 以同样的长度前缀帧回写 `{"v":1,"in":[{"kind":"i2s-in",...}]}`（字段顺序为协议一部分，设备侧为有序扫描器）。影子同时观察 IN_LINK 与 CONF/SAMPLE_RATE_CONF 的 RX 半边；RX_START + IN_LINK_START 后，同一 10ms tick 按固件解码的 RX 字节速率消费每控制器的注入队列（256KB 上限，溢出丢最旧并一次性告警），把样本经 `address_space_write` 写入 DMA owner 的描述符缓冲，再回写 dw0（owner 清零、length 回填、eof 置位——与真实 DMA 引擎一致），轮询式固件由此读到麦克风采样。队列枯竭时保持描述符 armed 而不以静音抢占（曾在此踩坑：零填充清空 owner 会与"收到数据才 re-arm"的固件互相等待死锁）。
 - 事务以 bottom-half 批量冲刷成长度前缀 JSON 帧（PRD §6.7），通过 TCP/unix socket 发往 Bridge。
 - Bridge 的 `DBusChannel` 反序列化（虚拟 ns → 逻辑 ms）后交给 `PeripheralManager` 路由到对应外设实例。
 
@@ -132,6 +133,22 @@ gpio 写会取代合成态。快照为 'waveform' 类型的新追加载荷变体
 `components/Oscilloscope/traceBuilder.ts` 为纯几何（阶梯折线：首沿反推前级、
 越界钳制、空通道平低轨、网格等分、通道分带、稳定配色），面板组件绘制暗色网格 +
 标注时间基准的多通道数字轨迹。I2S 总线抓取为 P3 TODO。
+
+### 3.7 Mic I2S RX 注入管道（P3.1）
+
+`mic` 是输入类外设（PRD §F-PER-7）：模型按 props 配置的波形
+（sine/square/noise/silence + freqHz/amplitude/sampleRate/bits/channels/bus，
+全部经校验钳制回退）以墙钟 interval 生成 PCM 块（`generatePcmChunk` 纯函数，
+相位跨块连续，噪声用确定性 xorshift32），经 §6.2 追加的可选
+`PeripheralContext.emitInput(I2sInjection)` 上报；PeripheralManager 转为
+`inject` 事件，持有者接线到 `DBusChannel.sendInject()`（反向帧
+`{"v":1,"in":[{"kind":"i2s-in",...}]}`，sendInject 自动补 `kind` 字段），设备侧
+按 §2 的 RX 注入机制喂给固件 DMA 环形缓冲。宿主/客户时钟漂移只表现为设备队列的
+修剪/等待，不会破坏样本流。UI 侧 palette 与画布各增一个占位节点（波形面板与本地
+采集分别为 P3.3/P3.2）。金标固件 `mic.elf`（`scripts/make-mic-elf.mjs` 确定性生成，
+`--check` 防漂移）搭建 4×256B in-link 环、配置 I2S0 RX（33.3kHz/16bit/mono），
+每轮无条件 re-arm 全部描述符（标准环形消费模式），累计 8 个非零缓冲后打印
+`MIC OK`。
 
 ## 4. 调试链路
 

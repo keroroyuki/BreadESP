@@ -110,12 +110,12 @@
 
 ### Phase 3 — 输入类外设（M3）
 
-| # | 任务 | 产物 |
-|---|---|---|
-| 3.1 | `mic` I2S 输入注入 | 固件读到采样 |
-| 3.2 | 本地麦克风采集→注入 | 实时输入 |
-| 3.3 | 波形生成器面板 | 正弦/方波/噪声 |
-| 3.4 | 旋钮、温湿度传感器模型 | 扩展外设集 |
+| # | 任务 | 产物 | 状态 |
+|---|---|---|---|
+| 3.1 | `mic` I2S 输入注入 | 固件读到采样 | 已完成 2026-09-05 |
+| 3.2 | 本地麦克风采集→注入 | 实时输入 | |
+| 3.3 | 波形生成器面板 | 正弦/方波/噪声 | |
+| 3.4 | 旋钮、温湿度传感器模型 | 扩展外设集 | |
 
 ### Phase 4 — 多芯片与工程化（M4）
 
@@ -547,6 +547,32 @@ Previously applyNetlist leaked old instances on re-apply.
 > UI：新增 SimControls 控制条（Pause/Resume/Reset + 0.1x–10x 倍率选择），simulationStore
 > 镜像 sim:speed 推送。
 
+> P3.1 验证记录（2026-09-05）：`pnpm typecheck` 0 错误；全仓测试 Windows 348 通过 + 10 跳过
+> （门控 e2e），WSL shell 全量（含全部真实 QEMU e2e）146 通过 + 5 跳过。分四层验证——mic 模型
+> 19 项单测（props 校验钳制回退、四波形生成（正弦幅值/相位跨块连续、方波对称轨、xorshift
+> 噪声确定性与有界、静音全零）、8/16/24/32 位小端带符号编码、interval 逐块发射
+> I2sInjection、dispose 停发、无注入通道一次性告警、异类事务忽略、factory 元数据）；
+> 协议层 DBusChannel 11 项（新增 sendInject 反向帧 `{"v":1,"in":[{"kind":"i2s-in",...}]}`
+> 线格式与无设备返回 false）；路由层 PeripheralManager 18 项（新增 emitInput→'inject'
+> 事件转发与 dispose 停流）；真实 QEMU e2e（mic-i2s.e2e.test.ts）于 WSL 验证通过：
+> mic1 注入 440Hz 正弦（33.3kHz 16bit mono）经反向通道进设备 RX 队列，设备按固件解码
+> 速率写入 in-link 环（owner 清零 + length 回填 + eof），mic.elf 轮询到 8 个非零缓冲
+> 后打印 `MIC OK`（且 `MIC RDY` 先于 `MIC OK`）；speaker/st7789/buzzer/scope/sim-speed
+> 等全部 e2e 对同一重建二进制回归通过。金标固件 `mic.elf` 由 `scripts/make-mic-elf.mjs`
+> 确定性生成，`--check` 模式可校验入库 fixture 无漂移。
+> 迭代抓出并已修复两个真实 bug：① 饥饿死锁——注入队列空时设备零填充描述符并清 owner，
+> 而固件只在见到非零数据时才 re-arm，双方互等致环形停摆（探针复现：tick 走但固件永远
+> 等不到数据）——设备改为队列枯竭时不认领描述符（保持 armed），固件改为每轮无条件
+> re-arm（标准环形消费模式）；② 协议字段缺失——TS `sendInject` 首版序列化漏掉
+> `"kind":"i2s-in"`，设备有序扫描器找不到注入对象而静默丢弃（探针对比：手工带 kind 的
+> 注入可通、模型链路不通；设备侧逐层打印定位到 scan miss）——sendInject 现自动补 kind
+> 并以单测冻结线格式。
+> 设计要点：socket 双向化采用 GLib watch 读 + 长度前缀帧（设备侧为有序扫描器而非完整
+> JSON 解析器，字段顺序是协议契约）；注入队列 256KB/控制器，溢出丢最旧保低延迟；RX 时钟
+> 解码复用 TX 公式（SAMPLE_RATE_CONF 的 RX 半边字段），APLL 仍为文档化缺口；
+> `PeripheralContext.emitInput` 为 §6.2 追加式可选成员（向后兼容），本地采集与波形面板
+> 分别留给 P3.2/P3.3。
+
 ### M2 清单
 - [x] TFT 渲染 rgb565 彩图
 - [x] 蜂鸣器按 PWM 频率发声
@@ -555,7 +581,7 @@ Previously applyNetlist leaked old instances on re-apply.
 - [x] 仿真可暂停/继续/调速
 
 ### M3 清单
-- [ ] 麦克风注入后固件读到采样
+- [x] 麦克风注入后固件读到采样
 - [ ] 本地麦克风实时输入可用
 - [ ] 波形生成器可选正弦/方波/噪声
 
