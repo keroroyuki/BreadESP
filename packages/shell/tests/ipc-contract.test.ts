@@ -57,7 +57,7 @@ const EXPECTED_INVOKE_CHANNELS = [
   'dbg:continue', 'dbg:step', 'dbg:stepOver', 'dbg:vars', 'dbg:regs', 'dbg:evaluate',
   'proj:new', 'proj:open', 'proj:save', 'proj:saveAs', 'proj:close',
   'bb:applyNetlist', 'bb:getNetlist',
-  'per:driveInput',
+  'per:driveInput', 'per:captureChunk',
 ] as const;
 
 /** PRD §6.6 contract — main -> renderer one-way push channels. */
@@ -115,7 +115,7 @@ const project = {
   close: vi.fn(),
   loadNetlist: vi.fn(),
 };
-const peripherals = { applyNetlist: vi.fn(), driveInput: vi.fn(), on: vi.fn() };
+const peripherals = { applyNetlist: vi.fn(), driveInput: vi.fn(), feedCapture: vi.fn(), on: vi.fn() };
 const win = { webContents: { send: (channel: string, payload: unknown) => { state.sends.push({ channel, payload }); } } };
 
 /** Extract the callback handlers.ts registered for a stub service event. */
@@ -205,6 +205,35 @@ describe('preload ↔ handlers IPC contract (P1.1)', () => {
     qemu.getSpeed.mockReturnValueOnce(0.5);
     const getHandler = state.handles.get('sim:getSpeed');
     await expect(getHandler!(undefined)).resolves.toBe(0.5);
+  });
+
+  it('routes per:captureChunk to PeripheralManager.feedCapture (P3.2)', async () => {
+    const handler = state.handles.get('per:captureChunk');
+    expect(handler).toBeDefined();
+    await handler!(undefined, { instanceId: 'mic1', rate: 48000, samples: [0, 0.5, -0.5] });
+    expect(peripherals.feedCapture).toHaveBeenCalledWith('mic1', { rate: 48000, samples: [0, 0.5, -0.5] });
+  });
+
+  it('rejects malformed per:captureChunk payloads with [BB-202] (P3.2)', async () => {
+    const handler = state.handles.get('per:captureChunk');
+    expect(handler).toBeDefined();
+    peripherals.feedCapture.mockClear();
+    const valid = { instanceId: 'mic1', rate: 48000, samples: [0] };
+    const bad: unknown[] = [
+      { ...valid, instanceId: '' },
+      { ...valid, instanceId: 7 },
+      { ...valid, rate: NaN },
+      { ...valid, rate: 500 }, // below the 1kHz floor
+      { ...valid, rate: 200000 }, // above the 192kHz ceiling
+      { ...valid, samples: [] },
+      { ...valid, samples: [0, Number.NaN] },
+      { ...valid, samples: 'pcm' },
+      null,
+    ];
+    for (const payload of bad) {
+      await expect(handler!(undefined, payload)).rejects.toThrow('[BB-202]');
+    }
+    expect(peripherals.feedCapture).not.toHaveBeenCalled();
   });
 
   it('routes proj:save through ProjectManager with both persistence halves', async () => {

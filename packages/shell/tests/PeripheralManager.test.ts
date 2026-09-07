@@ -401,6 +401,44 @@ describe('input injection (dev-plan task P3.1, PRD §F-PER-7/§6.7)', () => {
       vi.useRealTimers();
     }
   });
+
+  it('routes feedCapture chunks to the mic acceptCapture sink (P3.2)', () => {
+    vi.useFakeTimers();
+    try {
+      const manager = new PeripheralManager();
+      const injections: I2sInjection[] = [];
+      manager.on('inject', (inj: I2sInjection) => injections.push(inj));
+      manager.applyNetlist({
+        version: 1, chip: 'esp32',
+        peripherals: [{ instanceId: 'mic1', kind: 'mic', props: { sampleRate: 16000, chunkMs: 20, waveform: 'silence' } }],
+        wires: [],
+      });
+
+      manager.feedCapture('mic1', { rate: 16000, samples: new Array<number>(320).fill(0.5) });
+      vi.advanceTimersByTime(20);
+      // The capture chunk overrides the synth silence: 320 frames of 0.5.
+      expect(injections.length).toBe(1);
+      expect(injections[0].data.length).toBe(640);
+      expect(injections[0].data.some((b) => b !== 0)).toBe(true);
+      manager.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops feedCapture for unknown instances and capture-less models (P3.2)', () => {
+    const manager = new PeripheralManager();
+    manager.applyNetlist({
+      version: 1, chip: 'esp32',
+      peripherals: [{ instanceId: 'led1', kind: 'led' }],
+      wires: [],
+    });
+    const chunk = { rate: 16000, samples: [0.5] };
+    // No acceptCapture on led, no 'mic9' instance: neither may throw.
+    expect(() => manager.feedCapture('led1', chunk)).not.toThrow();
+    expect(() => manager.feedCapture('mic9', chunk)).not.toThrow();
+    manager.dispose();
+  });
 });
 
 // Registered once for this file (vitest isolates module state per test file).

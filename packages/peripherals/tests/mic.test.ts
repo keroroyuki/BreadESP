@@ -3,7 +3,7 @@
 // ctx.emitInput towards the device's I2S RX DMA injector.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BusTransaction, I2sInjection, Peripheral, PeripheralContext } from '../src/types';
-import { generatePcmChunk, micConfigFromProps, micFactory, waveformSample } from '../src/mic';
+import { drainResampled, generatePcmChunk, micConfigFromProps, micFactory, waveformSample } from '../src/mic';
 
 function fixture(props?: Record<string, unknown>): {
   per: Peripheral;
@@ -197,5 +197,184 @@ describe('mic factory metadata', () => {
     expect(micFactory.pins.some((p) => p.role === 'i2s-data-out')).toBe(true);
     expect(micFactory.defaults?.bus).toBe(0);
     expect(micFactory.version).toBe('1.0.0');
+  });
+});
+
+// --- P3.2: local mic capture -> resample -> injection (PRD §F-PER-7) ---
+
+describe('drainResampled (pure capture resampler)', () => {
+  it('passes samples through at equal rates and advances the position', () => {
+    const r = drainResampled([0.1, 0.2, 0.3], 0, 16000, 16000, 2);
+    expect(r.samples).toEqual([0.1, 0.2]);
+    expect(r.nextPos).toBe(2);
+    // Continuing from nextPos consumes the rest without repeating.
+    const rest = drainResampled([0.1, 0.2, 0.3], r.nextPos, 16000, 16000, 5);
+    expect(rest.samples).toEqual([0.3]);
+  });
+
+  it('downsamples 2:1 by stepping over every other source sample', () => {
+    const r = drainResampled([0, 0.9, 0.5, 0.9], 0, 32000, 16000, 2);
+    expect(r.samples).toEqual([0, 0.5]); // integer positions -> frac 0, exact picks
+    expect(r.nextPos).toBe(4);
+  });
+
+  it('upsamples 1:2 with linear interpolation between samples', () => {
+    const r = drainResampled([0, 1], 0, 8000, 16000, 8);
+    expect(r.samples).toEqual([0, 0.5, 1]); // stops when the read position runs dry
+  });
+
+  it('produces nothing when the buffer is starved', () => {
+    expect(drainResampled([], 0, 48000, 16000, 10).samples).toEqual([]);
+    expect(drainResampled([1], 1, 48000, 16000, 10).samples).toEqual([]);
+  });
+
+  it('interpolates fractional positions for non-integer rate ratios', () => {
+    // 48k -> 24k is exact; 8k -> 12k (step 2/3) exercises the fractional arm.
+    const r = drainResampled([0, 3, 6], 0, 8000, 12000, 2);
+    expect(r.samples[0]).toBe(0);
+    expect(r.samples[1]).toBeCloseTo(2, 10); // pos 2/3: 0*(1/3) + 3*(2/3)
+  });
+});
+
+describe('mic model — local capture (P3.2, PRD §F-PER-7)', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  /** s16 decode of every emitted chunk concatenated. */
+  const decoded = (injections: I2sInjection[]): number[] => s16(injections.flatMap((i) => i.data));
+
+  it('routes captured chunks into injections while capture is live', () => {
+    const { per, injections } = fixture({ sampleRate: 16000, chunkMs: 20 });
+    per.acceptCapture!({ rate: 16000, samples: new Array<number>(1600).fill(0.5) });
+    vi.advanceTimersByTime(20);
+    expect(injections.length).toBe(1);
+    expect(injections[0]).toMatchObject({ bus: 0, rate: 16000, bits: 16, channels: 1 });
+    expect(injections[0].data.length).toBe(640); // 320 frames of capture, not synth
+    // Capture rides the same 20ms cadence: a full chunk of 0.5 -> 16384 s16.
+    expect(decoded(injections).every((s) => s === 16384)).toBe(true);
+    per.dispose();
+  });
+
+  it('resamples the host rate down to the configured sample rate', () => {
+    const { per, injections } = fixture({ sampleRate: 16000, chunkMs: 20 });
+    per.acceptCapture!({ rate: 48000, samples: new Array<number>(4800).fill(0.25) });
+    vi.advanceTimersByTime(20);
+    expect(injections.length).toBe(1);
+    expect(injections[0].rate).toBe(16000); // the firmware-facing format is unchanged
+    // 48k -> 16k steps over integer positions: the constant survives exactly.
+    expect(decoded(injections).every((s) => s === 8192)).toBe(true);
+    per.dispose();
+  });
+
+  it('emits nothing while the capture buffer is starved', () => {
+    const { per, injections } = fixture({ sampleRate: 16000, chunkMs: 20 });
+    per.acceptCapture!({ rate: 16000, samples: new Array<number>(10).fill(0.5) });
+    vi.advanceTimersByTime(20);
+    expect(injections.length).toBe(1);
+    expect(injections[0].data.length).toBe(20); // partial chunk: only the 10 fed frames
+    vi.advanceTimersByTime(100); // still "live" (< 500ms stale) but nothing left
+    expect(injections.length).toBe(1); // starved capture never injects silence
+    per.dispose();
+  });
+
+  it('falls back to the synth waveform after the feed goes stale', () => {
+    const { per, injections } = fixture({ sampleRate: 16000, chunkMs: 20, waveform: 'silence' });
+    // Exactly one chunk of capture: the buffer runs dry at the first tick.
+    per.acceptCapture!({ rate: 16000, samples: new Array<number>(320).fill(0.5) });
+    vi.advanceTimersByTime(20);
+    expect(injections.length).toBe(1);
+    expect(decoded(injections).every((s) => s === 16384)).toBe(true); // capture won
+    vi.advanceTimersByTime(600); // > 500ms stale window
+    const after = injections.slice(1);
+    expect(after.length).toBeGreaterThan(0);
+    // Synth (silence) resumed: every later chunk is a full-length zero chunk.
+    expect(after.every((i) => i.data.length === 640)).toBe(true);
+    expect(decoded(after).every((s) => s === 0)).toBe(true);
+    per.dispose();
+  });
+
+  it('drops the unplayed capture buffer when the feed goes stale', () => {
+    const { per, injections } = fixture({ sampleRate: 16000, chunkMs: 20 });
+    per.acceptCapture!({ rate: 16000, samples: new Array<number>(1600).fill(1) });
+    vi.advanceTimersByTime(600); // stale -> buffer cleared, silence synth runs
+    injections.length = 0;
+    per.acceptCapture!({ rate: 16000, samples: new Array<number>(10).fill(0.5) });
+    vi.advanceTimersByTime(20);
+    // Only the fresh 10 frames arrive — the pre-stale 1600 were discarded.
+    expect(injections.length).toBe(1);
+    expect(injections[0].data.length).toBe(20);
+    per.dispose();
+  });
+
+  it('resets the buffer when the capture source rate changes', () => {
+    const { per, injections } = fixture({ sampleRate: 16000, chunkMs: 20 });
+    per.acceptCapture!({ rate: 16000, samples: new Array<number>(1600).fill(1) });
+    per.acceptCapture!({ rate: 48000, samples: new Array<number>(96).fill(0.5) });
+    vi.advanceTimersByTime(20);
+    // Buffer restarted at 48k: only the 96 new samples drain (2ms worth).
+    expect(injections.length).toBe(1);
+    expect(injections[0].data.length).toBe(32 * 2); // 96 / 3 = 32 frames
+    expect(decoded(injections).every((s) => s === 16384)).toBe(true);
+    per.dispose();
+  });
+
+  it('caps the buffer at 1s of source audio (drop-oldest) and warns once', () => {
+    const { per, injections, logs } = fixture({ sampleRate: 16000, chunkMs: 20 });
+    per.acceptCapture!({ rate: 16000, samples: new Array<number>(20000).fill(0.25) });
+    per.acceptCapture!({ rate: 16000, samples: new Array<number>(20000).fill(1) });
+    vi.advanceTimersByTime(20);
+    // 40s fed, <=1s kept: the oldest (0.25) is gone, only the newest plays.
+    expect(decoded(injections).every((s) => s === 32767)).toBe(true);
+    const warns = logs.filter((l) => l.level === 'warn' && l.msg.includes('overflow'));
+    expect(warns.length).toBe(1);
+    per.acceptCapture!({ rate: 16000, samples: new Array<number>(20000).fill(1) });
+    expect(logs.filter((l) => l.msg.includes('overflow')).length).toBe(1); // one-shot
+    per.dispose();
+  });
+
+  it('drops malformed chunks without activating capture', () => {
+    const { per, injections } = fixture({ sampleRate: 16000, chunkMs: 20, waveform: 'silence' });
+    per.acceptCapture!({ rate: NaN, samples: [0.5] });
+    per.acceptCapture!({ rate: -16000, samples: [0.5] });
+    per.acceptCapture!({ rate: 16000, samples: [0.5, Number.NaN] });
+    vi.advanceTimersByTime(20);
+    expect(injections.length).toBe(1);
+    expect(injections[0].data.length).toBe(640); // synth silence, not a capture drain
+    expect(decoded(injections).every((s) => s === 0)).toBe(true);
+    per.dispose();
+  });
+
+  it('clamps out-of-range capture samples at full scale', () => {
+    const { per, injections } = fixture({ sampleRate: 16000, chunkMs: 20 });
+    per.acceptCapture!({ rate: 16000, samples: [5, -5] });
+    vi.advanceTimersByTime(20);
+    const [a, b] = decoded(injections);
+    expect(a).toBe(32767);
+    expect(b).toBe(-32767);
+    per.dispose();
+  });
+
+  it('duplicates mono capture into stereo when configured', () => {
+    const { per, injections } = fixture({ sampleRate: 16000, chunkMs: 20, channels: 2 });
+    per.acceptCapture!({ rate: 16000, samples: new Array<number>(1600).fill(0.5) });
+    vi.advanceTimersByTime(20);
+    expect(injections[0].channels).toBe(2);
+    expect(injections[0].data.length).toBe(640 * 2);
+    const frames = s16(injections[0].data);
+    for (let i = 0; i < frames.length; i += 2) {
+      expect(frames[i]).toBe(16384);
+      expect(frames[i + 1]).toBe(16384);
+    }
+    per.dispose();
+  });
+
+  it('stops draining after dispose mid-capture', () => {
+    const { per, injections } = fixture({ sampleRate: 16000, chunkMs: 20 });
+    per.acceptCapture!({ rate: 16000, samples: new Array<number>(16000).fill(0.5) });
+    vi.advanceTimersByTime(20);
+    const n = injections.length;
+    per.dispose();
+    vi.advanceTimersByTime(100);
+    expect(injections.length).toBe(n);
   });
 });
