@@ -113,7 +113,7 @@
 | # | 任务 | 产物 | 状态 |
 |---|---|---|---|
 | 3.1 | `mic` I2S 输入注入 | 固件读到采样 | 已完成 2026-09-05 |
-| 3.2 | 本地麦克风采集→注入 | 实时输入 | |
+| 3.2 | 本地麦克风采集→注入 | 实时输入 | 已完成 2026-09-07 |
 | 3.3 | 波形生成器面板 | 正弦/方波/噪声 | |
 | 3.4 | 旋钮、温湿度传感器模型 | 扩展外设集 | |
 
@@ -567,6 +567,31 @@ Previously applyNetlist leaked old instances on re-apply.
 > `"kind":"i2s-in"`，设备有序扫描器找不到注入对象而静默丢弃（探针对比：手工带 kind 的
 > 注入可通、模型链路不通；设备侧逐层打印定位到 scan miss）——sendInject 现自动补 kind
 > 并以单测冻结线格式。
+
+> P3.2 验证记录（2026-09-07）：`pnpm typecheck` 0 错误；全仓测试 Windows 382 通过 + 11 跳过
+> （门控 e2e），WSL shell 全量（含全部真实 QEMU e2e）151 通过 + 5 跳过。分四层验证——mic 模型
+> 33 项单测（新增 `drainResampled` 纯函数 5 项：等速率透传带位置续接、2:1 整数点精确抽取、
+> 1:2 线性插值升采样、饥饿产零、非整数比率小数点插值；采集路径 10 项：采集覆盖 synth、
+> 48k→16k 宿主速率重采样、饥饿不注入静音、500ms 无喂流回退 synth、stale 缓冲清除、
+> 源速率变更重置缓冲、1s 上限丢最旧+一次性告警、畸形块整包丢弃、超幅值钳制满量程、
+> mono 复制成立体声、dispose 停采）；路由层 PeripheralManager 20 项（新增 feedCapture
+> 路由 + 未知实例/无 acceptCapture 模型静默丢弃）；协议层 IPC 契约 19 项（新增
+> `per:captureChunk` 通道注册对齐、合法负载透传、9 种畸形负载 [BB-202] 拒绝）；UI 层
+> MicCapture 引擎 8 项（零增益接线防回授、按实例打标 emit、start 幂等、getUserMedia
+> 拒绝传播、无 AudioContext 释放流、stop/dispose 拆解图+停轨+关 ctx）+ captureStore 6 项
+> （状态迁移、[BB-210] 错误面、chunk→IPC 接线、reconcile 停采已从网表移除的实例）；
+> 真实 QEMU e2e（mic-capture.e2e.test.ts）于 WSL 验证通过：mic.elf（props 故意配
+> waveform:'silence'，只有采集路径能产生非零样本）被以 48kHz mono Float32 正弦块经
+> `feedCapture` 喂入（与渲染进程 MicCapture 发出的负载同形），模型重采样到固件的
+> 33.3kHz，固件累计 8 个非零 RX DMA 缓冲后打印 `MIC OK`；mic-i2s（synth 路径回归）、
+> spi-st7789、pwm-buzzer、i2s-speaker、gpio-scope、sim-speed、netlist-routing、
+> dbus-device e2e 对同一二进制全部回归通过。
+> 设计要点：采集是纯运行时覆盖态，不落网表（重开工程不应自动请求麦克风权限）——喂流
+> 存活期间每个 chunkMs tick 经 `drainResampled` 线性重采样缓冲的宿主音频，500ms 无喂流
+> 则丢缓冲回退 synth；饥饿只发空（设备保持描述符 armed，不用静音抢占）；缓冲上限 1s
+> 源音频丢最旧限延迟；UI 侧 ScriptProcessor 经零增益 mute 接 destination（不连线不回调，
+> 直连则本地麦克风外放回授）；`Peripheral.acceptCapture(CaptureChunk)` 为 §6.2 追加式
+> 可选成员（向后兼容），QEMU 设备零改动（复用 P3.1 反向通道）。
 > 设计要点：socket 双向化采用 GLib watch 读 + 长度前缀帧（设备侧为有序扫描器而非完整
 > JSON 解析器，字段顺序是协议契约）；注入队列 256KB/控制器，溢出丢最旧保低延迟；RX 时钟
 > 解码复用 TX 公式（SAMPLE_RATE_CONF 的 RX 半边字段），APLL 仍为文档化缺口；
@@ -582,7 +607,7 @@ Previously applyNetlist leaked old instances on re-apply.
 
 ### M3 清单
 - [x] 麦克风注入后固件读到采样
-- [ ] 本地麦克风实时输入可用
+- [x] 本地麦克风实时输入可用
 - [ ] 波形生成器可选正弦/方波/噪声
 
 ### M4 清单

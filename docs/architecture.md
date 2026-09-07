@@ -144,11 +144,30 @@ gpio 写会取代合成态。快照为 'waveform' 类型的新追加载荷变体
 `inject` 事件，持有者接线到 `DBusChannel.sendInject()`（反向帧
 `{"v":1,"in":[{"kind":"i2s-in",...}]}`，sendInject 自动补 `kind` 字段），设备侧
 按 §2 的 RX 注入机制喂给固件 DMA 环形缓冲。宿主/客户时钟漂移只表现为设备队列的
-修剪/等待，不会破坏样本流。UI 侧 palette 与画布各增一个占位节点（波形面板与本地
-采集分别为 P3.3/P3.2）。金标固件 `mic.elf`（`scripts/make-mic-elf.mjs` 确定性生成，
+修剪/等待，不会破坏样本流。UI 侧 palette 与画布节点（采集开关见 §3.8；波形面板为 P3.3）。金标固件 `mic.elf`（`scripts/make-mic-elf.mjs` 确定性生成，
 `--check` 防漂移）搭建 4×256B in-link 环、配置 I2S0 RX（33.3kHz/16bit/mono），
 每轮无条件 re-arm 全部描述符（标准环形消费模式），累计 8 个非零缓冲后打印
 `MIC OK`。
+
+### 3.8 本地麦克风采集（P3.2）
+
+P3.2 给 mic 接上宿主机真实麦克风，构成实时输入链：
+
+```
+渲染进程 getUserMedia → ScriptProcessor 采集（零增益 mute 防回授）
+  → per:captureChunk IPC（48kHz mono Float32，边界校验 [BB-202]）
+  → PeripheralManager.feedCapture → mic.acceptCapture（§6.2 追加可选成员）
+  → drainResampled 线性重采样到 props.sampleRate → 既有 I2sInjection 反向通道
+```
+
+- **采集是纯运行时覆盖态，不落网表**：喂流存活期间（500ms 内有新块）tick 走采集
+  路径，超时丢缓冲回退 synth 波形——重开工程不会自动请求麦克风权限。
+- **饥饿语义**：采集缓冲空时不发注入（设备保持 DMA 描述符 armed），绝不以静音
+  抢占；缓冲上限 1s 源音频，丢最旧保低延迟；源速率变更重置缓冲而非跨速率涂抹。
+- **UI 侧**：`audio/MicCapture.ts`（stub 友好的最小 getUserMedia/WebAudio 面，
+  不依赖 bridge 模块）+ `store/captureStore`（实例级生命周期、[BB-210] 错误面、
+  netlist reconcile 停采已删除实例）+ 画布 mic 节点 REC/LIVE 开关。
+- QEMU 设备零改动（复用 P3.1 反向通道）；波形生成器面板为 P3.3。
 
 ## 4. 调试链路
 
