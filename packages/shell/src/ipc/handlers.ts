@@ -105,6 +105,20 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   // per:*
   ipcMain.handle('per:driveInput', async (_e, p: { instanceId: string; pin: string; level: 0 | 1 }) =>
     peripherals.driveInput(p.instanceId, p.pin, p.level));
+  // Local mic capture (P3.2, PRD §F-PER-7/§6.6): the renderer pushes host-mic
+  // PCM chunks; the model resamples and injects them over the DBus reverse
+  // channel. The payload is renderer-controlled, so validate at this boundary.
+  ipcMain.handle('per:captureChunk', async (_e, p: { instanceId: string; rate: number; samples: number[] }) => {
+    if (
+      typeof p?.instanceId !== 'string' || p.instanceId.length === 0 ||
+      !Number.isFinite(p?.rate) || p.rate < 1000 || p.rate > 192000 ||
+      !Array.isArray(p?.samples) || p.samples.length === 0 || p.samples.length > 192000 ||
+      p.samples.some((s) => typeof s !== 'number' || !Number.isFinite(s))
+    ) {
+      throw new Error('[BB-202] invalid per:captureChunk payload (instanceId/rate/samples)');
+    }
+    peripherals.feedCapture(p.instanceId, { rate: p.rate, samples: p.samples });
+  });
 
   // Forward peripheral snapshots to the renderer (Bridge -> UI, PRD §6.6).
   peripherals.on('snapshot', (s: unknown) => deps.win?.webContents.send('per:snapshot', s));

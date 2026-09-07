@@ -6,6 +6,7 @@ import { sharedBuzzerEngine, toneFromSnapshot } from './audio/BuzzerAudio';
 import { audioFromSnapshot, sharedSpeakerEngine } from './audio/SpeakerAudio';
 import { useProjectStore } from './store/projectStore';
 import { useDebuggerStore } from './store/debuggerStore';
+import { useCaptureStore } from './store/captureStore';
 import { bridge } from './ipc/bridge';
 import { BreadboardCanvas } from './components/Breadboard/BreadboardCanvas';
 import { Palette } from './components/Palette/Palette';
@@ -40,6 +41,9 @@ export function App() {
     bridge.bb.applyNetlist(netlist).catch((err) => {
       console.error('[BB-UI] applyNetlist failed:', err);
     });
+    // P3.2: a mic instance removed from the netlist must stop capturing —
+    // otherwise its getUserMedia stream would keep the host mic open.
+    useCaptureStore.getState().reconcile(new Set(netlist.peripherals.map((p) => p.instanceId)));
   }, [netlist]);
 
   // Buzzer + speaker audio (dev-plan tasks P2.3/P2.4): 'tone' snapshots

@@ -105,6 +105,17 @@ export interface PeripheralContext {
   onTick: (cb: (virtualMs: number) => void) => () => void;
 }
 
+// §6.2, §F-PER-7 — Local microphone capture chunk (P3.2). The renderer captures
+// the host mic with getUserMedia/WebAudio and pushes mono Float32-range chunks
+// over IPC (`per:captureChunk`); the Bridge routes them to the mic instance's
+// `acceptCapture`, which resamples/encodes them into I2sInjection frames.
+export interface CaptureChunk {
+  /** Mono samples in [-1, 1] at `rate` (JSON-safe number[] over IPC). */
+  samples: number[];
+  /** Source sample rate of `samples` (the AudioContext's rate). */
+  rate: number;
+}
+
 // §6.2 The peripheral instance.
 export interface Peripheral {
   readonly kind: string;
@@ -118,6 +129,12 @@ export interface Peripheral {
   onTransaction(tx: BusTransaction, viaPin?: string): void;
   /** Peripheral drives an MCU input pin (e.g. button). */
   driveInput?(pinId: string, level: 0 | 1): void;
+  /**
+   * Feed a host-captured audio chunk (P3.2, additive optional member — only
+   * input peripherals like the mic implement it). Chunks arrive from the
+   * renderer at the capture device's native rate; the model resamples.
+   */
+  acceptCapture?(chunk: CaptureChunk): void;
   dispose?(): void;
 }
 

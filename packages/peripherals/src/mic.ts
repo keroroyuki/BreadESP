@@ -1,19 +1,29 @@
-// PRD: §F-PER-7, §6.7 — Microphone peripheral model (dev-plan task P3.1).
+// PRD: §F-PER-7, §6.7 — Microphone peripheral model (dev-plan tasks P3.1/P3.2).
 //
-// The mic is an input peripheral: it generates PCM samples (a configurable
-// waveform — sine/square/noise/silence; local capture lands with P3.2) and
-// pushes them upstream via ctx.emitInput as I2sInjection frames. The Bridge
-// forwards them over the DBus reverse channel to the breadesp-dbus device,
-// whose I2S RX shadow writes the samples into the firmware's DMA in-link
-// descriptor buffers (packages/sim-core/device/breadesp_dbus.c), so firmware
-// reading I2S RX DMA observes the injected waveform.
+// The mic is an input peripheral: it produces PCM samples and pushes them
+// upstream via ctx.emitInput as I2sInjection frames. The Bridge forwards them
+// over the DBus reverse channel to the breadesp-dbus device, whose I2S RX
+// shadow writes the samples into the firmware's DMA in-link descriptor buffers
+// (packages/sim-core/device/breadesp_dbus.c), so firmware reading I2S RX DMA
+// observes the injected waveform.
 //
-// Generation is wall-clock driven (one chunk per chunkMs). The device queues
-// injections and the firmware consumes them at its own decoded virtual-clock
-// rate, so clock drift between host and guest only shows up as queue
-// trim/zero-pad at the device, never as corruption.
+// Two sample sources (P3.2):
+// - synth (default): a configurable waveform — sine/square/noise/silence —
+//   generated on the wall clock (one chunk per chunkMs);
+// - capture: the renderer captures the host microphone (getUserMedia) and
+//   pushes mono float chunks over IPC; `acceptCapture` buffers them at the
+//   source rate and each tick resamples (linear) one chunkMs worth into the
+//   configured format. Capture is a runtime override, never persisted: while
+//   chunks keep arriving it wins over synth; after CAPTURE_STALE_MS without a
+//   chunk the buffer is dropped and the synth resumes. A starved capture
+//   buffer emits nothing (the device leaves armed DMA descriptors untouched),
+//   so a paused/silent stream never injects fake silence.
+//
+// In both modes the device queues injections and the firmware consumes them at
+// its own decoded virtual-clock rate, so clock drift between host and guest
+// only shows up as queue trim/starvation at the device, never as corruption.
 import type {
-  I2sInjection, Peripheral, PeripheralContext, PeripheralFactory, BusTransaction,
+  CaptureChunk, I2sInjection, Peripheral, PeripheralContext, PeripheralFactory, BusTransaction,
 } from './types';
 
 export type MicWaveform = 'sine' | 'square' | 'noise' | 'silence';
@@ -47,6 +57,10 @@ const DEFAULTS = {
 const WAVEFORMS: readonly MicWaveform[] = ['sine', 'square', 'noise', 'silence'];
 const SAMPLE_RATE_MIN = 1000;
 const SAMPLE_RATE_MAX = 192000;
+/** P3.2: capture is considered stopped after this much feed silence. */
+const CAPTURE_STALE_MS = 500;
+/** P3.2: at most this much unplayed captured audio is buffered (drop-oldest). */
+const CAPTURE_BUFFER_MS = 1000;
 
 function clampNumber(raw: unknown, fallback: number, min: number, max: number): number {
   const v = Number(raw);
@@ -138,6 +152,50 @@ export function generatePcmChunk(
   return { data, nextPhase: p };
 }
 
+/**
+ * Pure capture drain (P3.2): resample up to `maxFrames` mono samples from
+ * `buf` (source rate `srcRate`) to `dstRate` by linear interpolation, starting
+ * at fractional read position `pos`. Returns the produced samples and the next
+ * fractional position. Produces fewer (or zero) samples when the buffer runs
+ * dry — the caller emits nothing in that case (a starved capture must not
+ * inject silence the firmware cannot distinguish from a real quiet mic).
+ * Exported for tests.
+ */
+export function drainResampled(
+  buf: readonly number[],
+  pos: number,
+  srcRate: number,
+  dstRate: number,
+  maxFrames: number,
+): { samples: number[]; nextPos: number } {
+  const step = srcRate / dstRate;
+  const samples: number[] = [];
+  let p = pos;
+  for (let i = 0; i < maxFrames; i++) {
+    // Interpolation reads p and p+1; past the last sample the value clamps to
+    // the final sample, so a readable position needs p <= buf.length - 1.
+    if (p > buf.length - 1) break;
+    const lo = Math.floor(p);
+    const hi = Math.min(lo + 1, buf.length - 1);
+    const frac = p - lo;
+    samples.push(buf[lo] * (1 - frac) + buf[hi] * frac);
+    p += step;
+  }
+  return { samples, nextPos: p };
+}
+
+/** Encode mono float samples into one interleaved LE PCM chunk at cfg format. */
+function encodeMonoSamples(cfg: MicConfig, samples: readonly number[]): number[] {
+  const bytesPerSample = cfg.bits / 8;
+  const data = new Array<number>(samples.length * cfg.channels * bytesPerSample).fill(0);
+  for (let f = 0; f < samples.length; f++) {
+    for (let ch = 0; ch < cfg.channels; ch++) {
+      encodeSample(samples[f], cfg.bits, data, (f * cfg.channels + ch) * bytesPerSample);
+    }
+  }
+  return data;
+}
+
 class MicPeripheral implements Peripheral {
   readonly kind = 'mic';
   readonly instanceId: string;
@@ -147,11 +205,23 @@ class MicPeripheral implements Peripheral {
   private readonly noise = makeNoise(0x1234abcd);
   private timer: ReturnType<typeof setInterval> | null = null;
   private warnedNoChannel = false;
+  /** Wall clock; a field (not a bare Date.now call) keeps the seam explicit. */
+  private readonly now: () => number;
+  // --- P3.2 capture state: mono float samples buffered at the source rate. ---
+  private capBuf: number[] = [];
+  /** Fractional read position into capBuf (drainResampled carries it). */
+  private capPos = 0;
+  /** Source rate of the buffered samples; a rate change resets the buffer. */
+  private capRate = 0;
+  /** now() of the last accepted chunk; stale means "capture stopped". */
+  private lastFeedAt = -Infinity;
+  private warnedCapOverflow = false;
 
-  constructor(instanceId: string, ctx: PeripheralContext, cfg: MicConfig) {
+  constructor(instanceId: string, ctx: PeripheralContext, cfg: MicConfig, now: () => number = Date.now) {
     this.instanceId = instanceId;
     this.ctx = ctx;
     this.cfg = cfg;
+    this.now = now;
     this.timer = setInterval(() => this.tick(), this.cfg.chunkMs);
     // Typing boundary: in Node the interval is a Timeout whose unref() keeps a
     // background injection timer from holding the Bridge process alive; the
@@ -165,6 +235,54 @@ class MicPeripheral implements Peripheral {
   /** The mic is input-only; MCU-originated traffic is ignored. */
   onTransaction(_tx: BusTransaction): void {}
 
+  /**
+   * Local microphone capture (P3.2, PRD §F-PER-7): buffer a host-captured
+   * mono float chunk at its source rate. While chunks keep arriving the tick
+   * drains this buffer instead of synthesizing; malformed chunks (non-finite
+   * rate/samples) are dropped at this boundary.
+   */
+  acceptCapture(chunk: CaptureChunk): void {
+    if (!Number.isFinite(chunk.rate) || chunk.rate <= 0) return;
+    const clean: number[] = [];
+    for (const s of chunk.samples) {
+      if (!Number.isFinite(s)) return; // a corrupt chunk is dropped whole
+      clean.push(Math.min(1, Math.max(-1, s)));
+    }
+    if (chunk.rate !== this.capRate) {
+      // Source-rate change (device switch): resampling across it would smear,
+      // so restart the buffer.
+      this.capBuf = [];
+      this.capPos = 0;
+      this.capRate = chunk.rate;
+    }
+    this.compactCapture();
+    this.capBuf.push(...clean);
+    // Bound latency: keep at most CAPTURE_BUFFER_MS of unplayed source audio.
+    const maxLen = Math.ceil((this.capRate * CAPTURE_BUFFER_MS) / 1000);
+    if (this.capBuf.length > maxLen) {
+      this.capBuf.splice(0, this.capBuf.length - maxLen);
+      if (!this.warnedCapOverflow) {
+        this.warnedCapOverflow = true;
+        this.ctx.log('warn', `mic '${this.instanceId}': capture buffer overflow; dropping oldest samples`);
+      }
+    }
+    this.lastFeedAt = this.now();
+  }
+
+  /** Capture is live while a chunk arrived within the stale window. */
+  private captureActive(): boolean {
+    return this.now() - this.lastFeedAt < CAPTURE_STALE_MS;
+  }
+
+  /** Drop the fully-consumed prefix so the buffer cannot grow without bound. */
+  private compactCapture(): void {
+    const consumed = Math.floor(this.capPos);
+    if (consumed > 0) {
+      this.capBuf.splice(0, consumed);
+      this.capPos -= consumed;
+    }
+  }
+
   private tick(): void {
     if (!this.ctx.emitInput) {
       if (!this.warnedNoChannel) {
@@ -173,16 +291,52 @@ class MicPeripheral implements Peripheral {
       }
       return;
     }
+    if (!this.captureActive()) {
+      // Capture stopped: drop any unplayed buffer so a later capture restart
+      // never replays stale audio, and resume the synth source.
+      if (this.capBuf.length > 0) {
+        this.capBuf = [];
+        this.capPos = 0;
+      }
+      this.ctx.emitInput(this.synthInjection());
+      return;
+    }
+    const injection = this.captureInjection();
+    if (injection !== null) this.ctx.emitInput(injection);
+  }
+
+  /** Synth source (P3.1): one chunkMs of the configured waveform. */
+  private synthInjection(): I2sInjection {
     const chunk = generatePcmChunk(this.cfg, this.phase, this.noise);
     this.phase = chunk.nextPhase;
-    const injection: I2sInjection = {
+    return {
       bus: this.cfg.bus,
       rate: this.cfg.sampleRate,
       bits: this.cfg.bits,
       channels: this.cfg.channels,
       data: chunk.data,
     };
-    this.ctx.emitInput(injection);
+  }
+
+  /**
+   * Capture source (P3.2): drain one chunkMs from the buffered host audio,
+   * resampled to the configured format. Returns null when the buffer is
+   * starved — emitting nothing keeps the device's armed descriptors waiting
+   * for real audio instead of claiming them with silence.
+   */
+  private captureInjection(): I2sInjection | null {
+    this.compactCapture();
+    const frames = Math.max(1, Math.round((this.cfg.sampleRate * this.cfg.chunkMs) / 1000));
+    const drained = drainResampled(this.capBuf, this.capPos, this.capRate, this.cfg.sampleRate, frames);
+    if (drained.samples.length === 0) return null;
+    this.capPos = drained.nextPos;
+    return {
+      bus: this.cfg.bus,
+      rate: this.cfg.sampleRate,
+      bits: this.cfg.bits,
+      channels: this.cfg.channels,
+      data: encodeMonoSamples(this.cfg, drained.samples),
+    };
   }
 
   dispose(): void {
@@ -190,6 +344,8 @@ class MicPeripheral implements Peripheral {
       clearInterval(this.timer);
       this.timer = null;
     }
+    this.capBuf = [];
+    this.capPos = 0;
   }
 }
 

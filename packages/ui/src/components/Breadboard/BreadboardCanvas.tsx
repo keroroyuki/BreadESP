@@ -11,6 +11,7 @@ import type { Stage as KonvaStage } from 'konva/lib/Stage';
 import { MCU_INSTANCE_ID, type WireEndpoint } from '@breadesp/netlist';
 import { useProjectStore } from '../../store/projectStore';
 import { useSimulationStore } from '../../store/simulationStore';
+import { useCaptureStore } from '../../store/captureStore';
 import { bridge } from '../../ipc/bridge';
 import { wirePath } from './Wire';
 import {
@@ -48,6 +49,10 @@ export function BreadboardCanvas() {
   const addWire = useProjectStore((s) => s.addWire);
   const removeWire = useProjectStore((s) => s.removeWire);
   const snapshots = useSimulationStore((s) => s.snapshots);
+  // P3.2: which mic instances are capturing host audio (drives REC/LIVE toggle).
+  const capturing = useCaptureStore((s) => s.capturing);
+  const startCapture = useCaptureStore((s) => s.startCapture);
+  const stopCapture = useCaptureStore((s) => s.stopCapture);
 
   const [pending, setPending] = useState<PendingWire | null>(null);
   const [pointer, setPointer] = useState<Anchor>({ x: 0, y: 0 });
@@ -418,17 +423,34 @@ export function BreadboardCanvas() {
                 )}
                 {item.kind === 'mic' && (
                   // Input peripheral (P3.1): the mic injects I2S RX samples
-                  // upstream; the canvas node is a labeled placeholder.
-                  <Group listening={false}>
-                    <Circle x={NODE_W / 2} y={34} radius={12} fill="#e2e8f0" stroke="#166534" />
+                  // upstream. P3.2: clicking the node toggles local mic
+                  // capture (getUserMedia) for this instance; while capturing,
+                  // host audio replaces the synth waveform.
+                  <Group
+                    onClick={(e) => {
+                      e.cancelBubble = true;
+                      if (capturing[item.instanceId]) stopCapture(item.instanceId);
+                      else void startCapture(item.instanceId);
+                    }}
+                    onMouseEnter={hoverCursor('pointer')}
+                    onMouseLeave={hoverCursor('default')}
+                  >
+                    <Circle
+                      x={NODE_W / 2}
+                      y={34}
+                      radius={12}
+                      fill={capturing[item.instanceId] ? '#ef4444' : '#e2e8f0'}
+                      stroke="#166534"
+                    />
                     <Text
                       x={14}
                       y={48}
                       width={NODE_W - 28}
                       align="center"
-                      text="MIC"
+                      text={capturing[item.instanceId] ? 'LIVE' : 'REC'}
                       fontSize={9}
                       fill="#64748b"
+                      listening={false}
                     />
                   </Group>
                 )}

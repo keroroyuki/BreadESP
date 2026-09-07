@@ -1,7 +1,7 @@
 // PRD: §4.2, §6.2, §9 — Instantiates peripheral models from the netlist and routes
 // BusTransactions. Render snapshots are throttled to a 30fps cap per
 // (instanceId, snapshot type) so high-frequency bus traffic cannot flood the UI.
-import { getFactory, type Peripheral, type PeripheralContext, type BusTransaction, type RenderSnapshot } from '@breadesp/peripherals';
+import { getFactory, type CaptureChunk, type Peripheral, type PeripheralContext, type BusTransaction, type RenderSnapshot } from '@breadesp/peripherals';
 import type { Netlist, PeripheralInstance } from '@breadesp/netlist';
 import { EventEmitter } from 'node:events';
 import { NetlistResolver } from '../netlist/NetlistResolver.js';
@@ -97,6 +97,17 @@ export class PeripheralManager extends EventEmitter {
   driveInput(instanceId: string, pinId: string, level: 0 | 1): void {
     const p = this.instances.get(instanceId);
     p?.driveInput?.(pinId, level);
+  }
+
+  /**
+   * Local mic capture (P3.2, PRD §F-PER-7): route a renderer-captured PCM
+   * chunk to the instance's acceptCapture. Unknown instances and models
+   * without a capture sink drop the chunk silently — a netlist re-apply may
+   * dispose an instance while its renderer-side stream is still live.
+   */
+  feedCapture(instanceId: string, chunk: CaptureChunk): void {
+    const p = this.instances.get(instanceId);
+    p?.acceptCapture?.(chunk);
   }
 
   /** Teardown: dispose instances, cancel pending snapshot timers, drop routing. */

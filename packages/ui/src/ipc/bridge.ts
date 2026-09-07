@@ -99,6 +99,8 @@ interface BridgeApi {
   per: {
     onSnapshot: (cb: (s: unknown) => void) => () => void;
     driveInput: (p: { instanceId: string; pin: string; level: 0 | 1 }) => Promise<void>;
+    /** Local mic capture (P3.2, PRD §F-PER-7): host-mic PCM chunk for one instance. */
+    captureChunk: (p: { instanceId: string; rate: number; samples: number[] }) => Promise<void>;
   };
 }
 

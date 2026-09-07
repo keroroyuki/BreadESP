@@ -8,4 +8,4 @@ export { st7789Factory } from './st7789';
 export { buzzerFactory } from './buzzer';
 export { speakerFactory } from './speaker';
 export { oscilloscopeFactory, OscilloscopePeripheral } from './oscilloscope';
-export { micFactory } from './mic';
+export { micFactory, drainResampled } from './mic';
