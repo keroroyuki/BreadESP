@@ -128,6 +128,47 @@ describe('projectStore', () => {
   });
 });
 
+describe('projectStore.updatePeripheralProps (P3.3, PRD §F-PER-7)', () => {
+  beforeEach(reset);
+
+  it('merges a props patch into the instance, preserving existing props', () => {
+    const st = useProjectStore.getState();
+    st.addPeripheral('mic', 0, 0);
+    st.updatePeripheralProps('mic-1', { bus: 1 });
+    st.updatePeripheralProps('mic-1', { waveform: 'square', freqHz: 880 });
+    const per = useProjectStore.getState().netlist.peripherals[0];
+    expect(per.props).toEqual({ bus: 1, waveform: 'square', freqHz: 880 });
+  });
+
+  it('is a logic-only edit: layout identity untouched, netlist stays valid', () => {
+    const st = useProjectStore.getState();
+    st.addPeripheral('mic', 10, 20);
+    const layoutBefore = useProjectStore.getState().layout;
+    st.updatePeripheralProps('mic-1', { waveform: 'noise', amplitude: 0.7 });
+    const { netlist, layout } = useProjectStore.getState();
+    expect(layout).toBe(layoutBefore); // identity preserved: no visual edit happened
+    expect(validateNetlist(netlist).ok).toBe(true);
+  });
+
+  it('ignores unknown instanceIds (netlist identity unchanged)', () => {
+    useProjectStore.getState().addPeripheral('mic', 0, 0);
+    const netlistBefore = useProjectStore.getState().netlist;
+    useProjectStore.getState().updatePeripheralProps('mic-99', { waveform: 'noise' });
+    expect(useProjectStore.getState().netlist).toBe(netlistBefore);
+  });
+
+  it('props persist through the netlist serialization half', () => {
+    const st = useProjectStore.getState();
+    st.addPeripheral('mic', 0, 0);
+    st.updatePeripheralProps('mic-1', { waveform: 'square', freqHz: 880, sampleRate: 44100, bits: 24, channels: 2 });
+    const net = toNetlistFile(useProjectStore.getState().netlist);
+    const roundTripped = JSON.parse(JSON.stringify(net)) as Netlist;
+    expect(roundTripped.peripherals[0].props).toEqual({
+      waveform: 'square', freqHz: 880, sampleRate: 44100, bits: 24, channels: 2,
+    });
+  });
+});
+
 describe('project load/reset (P1.8)', () => {
   beforeEach(reset);
 
