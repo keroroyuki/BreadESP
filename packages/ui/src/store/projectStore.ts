@@ -23,6 +23,13 @@ interface ProjectState {
   addPeripheral: (kind: string, x: number, y: number) => string;
   movePeripheral: (instanceId: string, x: number, y: number) => void;
   removePeripheral: (instanceId: string) => void;
+  /**
+   * Merge a props patch into one instance (logic-only edit; layout untouched).
+   * P3.3 waveform generator panel (PRD §F-PER-7): props persist in
+   * netlist.json, and the resulting netlist identity change re-applies the
+   * netlist so the Bridge rebuilds the instance with the new config.
+   */
+  updatePeripheralProps: (instanceId: string, patch: Record<string, unknown>) => void;
   addWire: (from: WireEndpoint, to: WireEndpoint) => string | null;
   removeWire: (wireId: string) => void;
 }
@@ -78,6 +85,21 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         ),
       },
       layout: layout.filter((it) => it.instanceId !== instanceId),
+    });
+  },
+
+  updatePeripheralProps: (instanceId, patch) => {
+    const { netlist } = get();
+    // Unknown instances are a no-op: a panel card can outlive its instance
+    // across a concurrent netlist edit.
+    if (!netlist.peripherals.some((p) => p.instanceId === instanceId)) return;
+    set({
+      netlist: {
+        ...netlist,
+        peripherals: netlist.peripherals.map((p) =>
+          p.instanceId === instanceId ? { ...p, props: { ...p.props, ...patch } } : p,
+        ),
+      },
     });
   },
 

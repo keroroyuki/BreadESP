@@ -16,6 +16,7 @@ import { SimControls } from './components/SimControls/SimControls';
 import { SerialConsole } from './components/SerialConsole/SerialConsole';
 import { ScreenView } from './components/ScreenView/ScreenView';
 import { Oscilloscope } from './components/Oscilloscope/Oscilloscope';
+import { WaveGen } from './components/WaveGen/WaveGen';
 
 export function App() {
   const status = useSimulationStore((s) => s.status);
@@ -93,6 +94,7 @@ export function App() {
         <SerialConsole />
         <ScreenView />
         <Oscilloscope />
+        <WaveGen />
       </div>
     </div>
   );
