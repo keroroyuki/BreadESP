@@ -1,4 +1,4 @@
-// PRD: §F-PER-7, §6.7 — Microphone peripheral model (dev-plan tasks P3.1/P3.2).
+// PRD: §F-PER-7, §6.7 — Microphone peripheral model (dev-plan tasks P3.1/P3.2/P3.3).
 //
 // The mic is an input peripheral: it produces PCM samples and pushes them
 // upstream via ctx.emitInput as I2sInjection frames. The Bridge forwards them
@@ -55,8 +55,22 @@ const DEFAULTS = {
 };
 
 const WAVEFORMS: readonly MicWaveform[] = ['sine', 'square', 'noise', 'silence'];
-const SAMPLE_RATE_MIN = 1000;
-const SAMPLE_RATE_MAX = 192000;
+
+/**
+ * Synth parameter bounds/options (P3.3): exported so the UI waveform
+ * generator panel offers exactly the ranges and choices the model accepts —
+ * a single source of truth, never a drifted copy.
+ */
+export const MIC_LIMITS = {
+  waveforms: WAVEFORMS,
+  freqHz: { min: 1, max: 20000 },
+  amplitude: { min: 0, max: 1 },
+  sampleRate: { min: 1000, max: 192000 },
+  bits: [8, 16, 24, 32] as const,
+  channels: [1, 2] as const,
+  bus: [0, 1] as const,
+  chunkMs: { min: 5, max: 1000 },
+} as const;
 /** P3.2: capture is considered stopped after this much feed silence. */
 const CAPTURE_STALE_MS = 500;
 /** P3.2: at most this much unplayed captured audio is buffered (drop-oldest). */
@@ -81,13 +95,13 @@ export function micConfigFromProps(props?: Record<string, unknown>): MicConfig {
   const busRaw = Number(props?.bus ?? DEFAULTS.bus);
   return {
     waveform,
-    freqHz: clampNumber(props?.freqHz, DEFAULTS.freqHz, 1, 20000),
-    amplitude: clampNumber(props?.amplitude, DEFAULTS.amplitude, 0, 1),
-    sampleRate: Math.round(clampNumber(props?.sampleRate, DEFAULTS.sampleRate, SAMPLE_RATE_MIN, SAMPLE_RATE_MAX)),
+    freqHz: clampNumber(props?.freqHz, DEFAULTS.freqHz, MIC_LIMITS.freqHz.min, MIC_LIMITS.freqHz.max),
+    amplitude: clampNumber(props?.amplitude, DEFAULTS.amplitude, MIC_LIMITS.amplitude.min, MIC_LIMITS.amplitude.max),
+    sampleRate: Math.round(clampNumber(props?.sampleRate, DEFAULTS.sampleRate, MIC_LIMITS.sampleRate.min, MIC_LIMITS.sampleRate.max)),
     bits,
     channels,
     bus: busRaw === 1 ? 1 : 0,
-    chunkMs: clampNumber(props?.chunkMs, DEFAULTS.chunkMs, 5, 1000),
+    chunkMs: clampNumber(props?.chunkMs, DEFAULTS.chunkMs, MIC_LIMITS.chunkMs.min, MIC_LIMITS.chunkMs.max),
   };
 }
 

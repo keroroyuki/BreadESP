@@ -8,4 +8,5 @@ export { st7789Factory } from './st7789';
 export { buzzerFactory } from './buzzer';
 export { speakerFactory } from './speaker';
 export { oscilloscopeFactory, OscilloscopePeripheral } from './oscilloscope';
-export { micFactory, drainResampled } from './mic';
+export { micFactory, drainResampled, micConfigFromProps, waveformSample, MIC_LIMITS } from './mic';
+export type { MicConfig, MicWaveform } from './mic';
