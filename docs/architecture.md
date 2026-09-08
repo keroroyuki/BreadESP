@@ -144,7 +144,7 @@ gpio 写会取代合成态。快照为 'waveform' 类型的新追加载荷变体
 `inject` 事件，持有者接线到 `DBusChannel.sendInject()`（反向帧
 `{"v":1,"in":[{"kind":"i2s-in",...}]}`，sendInject 自动补 `kind` 字段），设备侧
 按 §2 的 RX 注入机制喂给固件 DMA 环形缓冲。宿主/客户时钟漂移只表现为设备队列的
-修剪/等待，不会破坏样本流。UI 侧 palette 与画布节点（采集开关见 §3.8；波形面板为 P3.3）。金标固件 `mic.elf`（`scripts/make-mic-elf.mjs` 确定性生成，
+修剪/等待，不会破坏样本流。UI 侧 palette 与画布节点（采集开关见 §3.8；波形面板见 §3.9）。金标固件 `mic.elf`（`scripts/make-mic-elf.mjs` 确定性生成，
 `--check` 防漂移）搭建 4×256B in-link 环、配置 I2S0 RX（33.3kHz/16bit/mono），
 每轮无条件 re-arm 全部描述符（标准环形消费模式），累计 8 个非零缓冲后打印
 `MIC OK`。
@@ -168,6 +168,20 @@ P3.2 给 mic 接上宿主机真实麦克风，构成实时输入链：
   不依赖 bridge 模块）+ `store/captureStore`（实例级生命周期、[BB-210] 错误面、
   netlist reconcile 停采已删除实例）+ 画布 mic 节点 REC/LIVE 开关。
 - QEMU 设备零改动（复用 P3.1 反向通道）；波形生成器面板为 P3.3。
+
+### 3.9 波形生成器面板（P3.3）
+
+`components/WaveGen/WaveGen.tsx` 为面包板上每个 mic 实例渲染一张编辑器卡片：
+波形（sine/square/noise/silence）、频率、幅度滑块、采样率、位深、声道数，
+外加一块固定 5ms 墙钟窗口的波形预览画布（归一化周期预览看不到频率变化，
+固定窗口可以）。编辑经 `projectStore.updatePeripheralProps` 浅合并进实例的
+netlist `props`（纯逻辑编辑：layout 标识不变、未知 instanceId 无操作）——
+netlist 标识变化触发 App 既有 `bb:applyNetlist` 效应，Bridge 原子重建 mic
+实例即生效，**不引入新 IPC**。与采集（§3.8 纯运行时覆盖）不同，生成器配置随
+netlist.json 持久化；采集进行中卡片提示 synth 正被覆盖。纯逻辑抽在
+`wavegenDraft.ts`（draftFromProps/draftPatch/previewTrace/renderWavePreview），
+归一化与取值范围全部委托 mic 模型导出的 `micConfigFromProps`/`MIC_LIMITS`
+单一真相源——面板永远不可能产出模型会拒绝的配置。
 
 ## 4. 调试链路
 

@@ -114,7 +114,7 @@
 |---|---|---|---|
 | 3.1 | `mic` I2S 输入注入 | 固件读到采样 | 已完成 2026-09-05 |
 | 3.2 | 本地麦克风采集→注入 | 实时输入 | 已完成 2026-09-07 |
-| 3.3 | 波形生成器面板 | 正弦/方波/噪声 | |
+| 3.3 | 波形生成器面板 | 正弦/方波/噪声 | 已完成 2026-09-07 |
 | 3.4 | 旋钮、温湿度传感器模型 | 扩展外设集 | |
 
 ### Phase 4 — 多芯片与工程化（M4）
@@ -598,6 +598,28 @@ Previously applyNetlist leaked old instances on re-apply.
 > `PeripheralContext.emitInput` 为 §6.2 追加式可选成员（向后兼容），本地采集与波形面板
 > 分别留给 P3.2/P3.3。
 
+> P3.3 验证记录（2026-09-07）：`pnpm typecheck` 0 错误；全仓测试 Windows 399 通过 + 11 跳过
+> （门控 e2e），WSL shell 全量（含全部真实 QEMU e2e）151 通过 + 5 跳过。分两层验证——UI 纯
+> 逻辑层 13 项 `wavegenDraft` 单测（draftFromProps 默认/钳制回退委托 mic 模型自身
+> micConfigFromProps、draftPatch 恰好六个可编辑键且不含 bus/chunkMs、补丁往返无损、
+> previewTrace 确定性/幅值有界/单周期正弦满摆/方波仅双轨/噪声多样且有界/静音全零/
+> 固定 5ms 窗内频率越高过零越多；renderWavePreview 画布绑定：背景+零线+全点折线、
+> 超幅值钳制进画布、退化输入只画背景与零线、无 2d context 静默返回）+ 4 项
+> projectStore.updatePeripheralProps 单测（补丁合并保留既有 props、纯逻辑编辑 layout
+> 标识不变且网表仍过 validateNetlist、未知 instanceId 无操作、props 经 netlist.json
+> 序列化半区持久化）；端到端消费链由既有 mic-i2s e2e 冻结——面板写出的 props 形状
+> （`{waveform, freqHz, amplitude, sampleRate, ...}`）正是该 e2e 在真实 breadesp QEMU
+> 上验证固件读到注入采样的同一网表形状；mic-i2s/mic-capture/spi-st7789/pwm-buzzer/
+> i2s-speaker/gpio-scope/sim-speed/netlist-routing/dbus-device e2e 对同一二进制全部
+> 回归通过。
+> 设计要点：波形生成器面板不引入新 IPC——编辑经 `projectStore.updatePeripheralProps`
+> 合并进实例 netlist props（纯逻辑编辑，layout 标识不变），netlist 标识变化触发 App 既有
+> `bb:applyNetlist` 效应原子重建 mic 实例即生效；与采集（P3.2，纯运行时覆盖）不同，生成器
+> 配置随 netlist.json 持久化。面板全部归一化委托给模型导出的
+> `micConfigFromProps`/`waveformSample`/`MIC_LIMITS`（单一真相源，UI 永不提供模型会拒绝的
+> 配置）；采集进行中卡片提示"LIVE capture is overriding the synth waveform"。
+> QEMU 设备零改动。
+
 ### M2 清单
 - [x] TFT 渲染 rgb565 彩图
 - [x] 蜂鸣器按 PWM 频率发声
@@ -608,7 +630,7 @@ Previously applyNetlist leaked old instances on re-apply.
 ### M3 清单
 - [x] 麦克风注入后固件读到采样
 - [x] 本地麦克风实时输入可用
-- [ ] 波形生成器可选正弦/方波/噪声
+- [x] 波形生成器可选正弦/方波/噪声
 
 ### M4 清单
 - [ ] 同一工程可在 ESP32 与 ESP32-S3 跑通
