@@ -324,6 +324,7 @@ class MicPeripheral implements Peripheral {
     const chunk = generatePcmChunk(this.cfg, this.phase, this.noise);
     this.phase = chunk.nextPhase;
     return {
+      kind: 'i2s-in',
       bus: this.cfg.bus,
       rate: this.cfg.sampleRate,
       bits: this.cfg.bits,
@@ -345,6 +346,7 @@ class MicPeripheral implements Peripheral {
     if (drained.samples.length === 0) return null;
     this.capPos = drained.nextPos;
     return {
+      kind: 'i2s-in',
       bus: this.cfg.bus,
       rate: this.cfg.sampleRate,
       bits: this.cfg.bits,

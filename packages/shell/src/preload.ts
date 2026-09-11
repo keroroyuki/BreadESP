@@ -114,6 +114,8 @@ const api = {
       return () => ipcRenderer.removeListener('per:snapshot', h);
     },
     driveInput: (p: unknown) => ipcRenderer.invoke('per:driveInput', p),
+    // Rotary knob gesture (P3.4, PRD §F-BB-3): signed detent steps.
+    rotateKnob: (p: { instanceId: string; delta: number }) => ipcRenderer.invoke('per:rotateKnob', p),
     // Local mic capture (P3.2, PRD §F-PER-7): renderer -> Bridge PCM chunks.
     captureChunk: (p: { instanceId: string; rate: number; samples: number[] }) =>
       ipcRenderer.invoke('per:captureChunk', p),

@@ -103,8 +103,28 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   ipcMain.handle('bb:getNetlist', async () => project.loadNetlist());
 
   // per:*
-  ipcMain.handle('per:driveInput', async (_e, p: { instanceId: string; pin: string; level: 0 | 1 }) =>
-    peripherals.driveInput(p.instanceId, p.pin, p.level));
+  // P3.4: the payload is renderer-controlled, so validate at this boundary.
+  ipcMain.handle('per:driveInput', async (_e, p: { instanceId: string; pin: string; level: 0 | 1 }) => {
+    if (
+      typeof p?.instanceId !== 'string' || p.instanceId.length === 0 ||
+      typeof p?.pin !== 'string' || p.pin.length === 0 ||
+      (p?.level !== 0 && p?.level !== 1)
+    ) {
+      throw new Error('[BB-203] invalid per:driveInput payload (instanceId/pin/level)');
+    }
+    peripherals.driveInput(p.instanceId, p.pin, p.level);
+  });
+  // Rotary knob gesture (P3.4, PRD §F-BB-3): delta is signed detent steps
+  // (positive = clockwise); the model plays the quadrature sequence over time.
+  ipcMain.handle('per:rotateKnob', async (_e, p: { instanceId: string; delta: number }) => {
+    if (
+      typeof p?.instanceId !== 'string' || p.instanceId.length === 0 ||
+      !Number.isFinite(p?.delta) || Math.abs(p.delta) > 256
+    ) {
+      throw new Error('[BB-204] invalid per:rotateKnob payload (instanceId/delta)');
+    }
+    peripherals.driveRotate(p.instanceId, Math.trunc(p.delta));
+  });
   // Local mic capture (P3.2, PRD §F-PER-7/§6.6): the renderer pushes host-mic
   // PCM chunks; the model resamples and injects them over the DBus reverse
   // channel. The payload is renderer-controlled, so validate at this boundary.

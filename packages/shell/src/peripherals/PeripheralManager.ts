@@ -24,6 +24,8 @@ export class PeripheralManager extends EventEmitter {
   private instances = new Map<string, Peripheral>();
   private resolver = new NetlistResolver();
   private throttle = new Map<string, ThrottleSlot>();
+  /** Unwired gpio-in endpoints already warned about (P3.4, one-shot each). */
+  private readonly warnedUnwired = new Set<string>();
   /** Time source for the throttle window. Test seam: inject a controllable clock. */
   private readonly now: () => number;
 
@@ -35,9 +37,14 @@ export class PeripheralManager extends EventEmitter {
   /**
    * Build peripheral instances from a validated netlist. Atomic: a rejected
    * netlist (duplicate instanceId, unknown kind) leaves the previous instances
-   * and routing untouched.
+   * and routing untouched. The new routing is built FIRST (into a scratch
+   * resolver) so instance constructors that already drive pins (e.g. the
+   * knob's rest-state sync, P3.4) resolve against the incoming wiring; the
+   * scratch only replaces the live resolver once every instance exists.
    */
   applyNetlist(netlist: Netlist): void {
+    const nextResolver = new NetlistResolver();
+    nextResolver.setNetlist(netlist);
     // Build into a scratch map first; commit only after every instance exists.
     const next = new Map<string, Peripheral>();
     const seen = new Set<string>();
@@ -51,9 +58,14 @@ export class PeripheralManager extends EventEmitter {
         if (!factory) throw new Error(`Unknown peripheral kind: ${inst.kind}`);
         const ctx: PeripheralContext = {
           emitSnapshot: (s) => this.emitThrottled(s),
-          // Input peripherals (mic, P3.1) push I2S RX injections upstream;
-          // the owner wires the 'inject' event to DBusChannel.sendInject.
+          // Input peripherals (mic P3.1, knob/sht30 P3.4) push injections
+          // upstream; the owner wires the 'inject' event to DBusChannel.sendInject.
           emitInput: (inj) => this.emit('inject', inj),
+          // P3.4: input peripherals drive their own gpio-in pins; the manager
+          // resolves (instanceId, pinId) -> MCU GPIO via the netlist wires and
+          // injects the level over the reverse channel. Constructors run before
+          // the commit, so they resolve against the incoming (scratch) routing.
+          drivePin: (pinId, level) => this.injectGpioInput(inst.instanceId, pinId, level, nextResolver),
           log: (lvl, msg) => this.emit('log', { level: lvl, msg }),
           onTick: () => () => {},
         };
@@ -69,7 +81,9 @@ export class PeripheralManager extends EventEmitter {
     // A re-applied netlist rebuilds every instance: stale pending snapshots of
     // disposed models must never reach the UI.
     this.resetThrottle();
-    this.resolver.setNetlist(netlist);
+    // New wiring: unwired-pin warnings (P3.4) restart from a clean slate.
+    this.warnedUnwired.clear();
+    this.resolver = nextResolver;
   }
 
   /** Route an inbound bus transaction to the peripheral(s) wired to that bus/target. */
@@ -93,10 +107,49 @@ export class PeripheralManager extends EventEmitter {
     }
   }
 
-  /** UI button -> drive MCU input. TODO: route to QEMU GPIO input device. */
+  /**
+   * UI input -> drive MCU input pin (P1 button, P3.4): the model hears the
+   * gesture (driveInput hook), and the resolved wire injects the level over
+   * the DBus reverse channel so firmware GPIO_IN reads observe it.
+   */
   driveInput(instanceId: string, pinId: string, level: 0 | 1): void {
     const p = this.instances.get(instanceId);
     p?.driveInput?.(pinId, level);
+    this.injectGpioInput(instanceId, pinId, level);
+  }
+
+  /**
+   * UI rotation gesture -> rotary encoder model (P3.4): the model plays the
+   * quadrature transition sequence onto its pins over time. Unknown instances
+   * and models without rotate() drop the gesture silently — a netlist
+   * re-apply may dispose an instance while its UI widget is still live.
+   */
+  driveRotate(instanceId: string, delta: number): void {
+    const p = this.instances.get(instanceId);
+    p?.rotate?.(delta);
+  }
+
+  /**
+   * Resolve a peripheral pin's wire to an MCU GPIO number and inject the
+   * level as a gpio-in reverse frame (P3.4). Returns false (and warns once
+   * per endpoint) when the pin is not wired to an MCU GPIO. `resolver`
+   * overrides the live routing for constructor-time drives during applyNetlist.
+   */
+  private injectGpioInput(instanceId: string, pinId: string, level: 0 | 1, resolver: NetlistResolver = this.resolver): boolean {
+    const gpio = resolver.resolveGpioInput(instanceId, pinId);
+    if (gpio === undefined) {
+      const key = `${instanceId}|${pinId}`;
+      if (!this.warnedUnwired.has(key)) {
+        this.warnedUnwired.add(key);
+        this.emit('log', {
+          level: 'warn',
+          msg: `[BB-205] '${instanceId}' pin ${pinId} is not wired to an MCU GPIO; input dropped`,
+        });
+      }
+      return false;
+    }
+    this.emit('inject', { kind: 'gpio-in', pin: gpio, level });
+    return true;
   }
 
   /**
@@ -115,6 +168,7 @@ export class PeripheralManager extends EventEmitter {
     for (const p of this.instances.values()) p.dispose?.();
     this.instances.clear();
     this.resetThrottle();
+    this.warnedUnwired.clear();
     this.resolver.setNetlist({ version: 1, chip: 'esp32', peripherals: [], wires: [] });
   }
 

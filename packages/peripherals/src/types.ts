@@ -78,6 +78,8 @@ export interface RenderSnapshot {
 // back to the breadesp-dbus device, which queues the samples and feeds them
 // into the I2S RX DMA descriptors the firmware armed.
 export interface I2sInjection {
+  /** Discriminant of the PeripheralInjection union (P3.4); always 'i2s-in'. */
+  kind: 'i2s-in';
   /** I2S controller index (0/1) the firmware receives on. */
   bus: number;
   /** Samples per second per channel (must match the firmware's RX config). */
@@ -90,16 +92,57 @@ export interface I2sInjection {
   data: number[];
 }
 
+// §6.7 reverse channel (P3.4, PRD §F-BB-3): a peripheral -> MCU GPIO input
+// level injection. The device overlays the level onto the firmware-visible
+// GPIO_IN registers (the stock esp32.gpio model is a strap-only stub).
+export interface GpioInjection {
+  kind: 'gpio-in';
+  /** MCU GPIO number (0..39) to drive. */
+  pin: number;
+  level: 0 | 1;
+}
+
+// §6.7 reverse channel (P3.4, PRD §F-BB-3): a peripheral -> MCU I2C read
+// reply. The device keeps a per-(bus, target) reply mailbox that its I2C
+// sniffer serves byte-by-byte to firmware master reads; each frame atomically
+// replaces the pending reply, mirroring a sensor's readout register holding
+// the latest measurement.
+export interface I2cReply {
+  kind: 'i2c-out';
+  bus: number;
+  /** 7-bit slave address the reply belongs to. */
+  target: number;
+  data: number[];
+}
+
+/**
+ * Union of everything a peripheral can push upstream towards the MCU
+ * (P3.1/P3.4). The discriminant is required: the Bridge serializes each kind
+ * field-by-field (the device is an ordered scanner, so wire field order is
+ * contractual) and a missing kind must be a compile-time, not a runtime,
+ * failure.
+ */
+export type PeripheralInjection = I2sInjection | GpioInjection | I2cReply;
+
 // §6.2 Context given to a peripheral at creation time.
 export interface PeripheralContext {
   /** Push a render snapshot to the UI (throttled by the manager). */
   emitSnapshot: (snapshot: RenderSnapshot) => void;
   /**
-   * Push an I2S RX PCM injection upstream towards the MCU (P3.1, additive
-   * optional member — input peripherals like the mic use it; consumers
-   * without an injection path may leave it undefined).
+   * Push an injection upstream towards the MCU (P3.1: I2S RX PCM; P3.4: GPIO
+   * input levels, I2C read replies). Additive optional member — input
+   * peripherals use it; consumers without an injection path may leave it
+   * undefined.
    */
-  emitInput?: (injection: I2sInjection) => void;
+  emitInput?: (injection: PeripheralInjection) => void;
+  /**
+   * Drive one of the instance's own gpio-in pins towards the MCU (P3.4,
+   * additive optional member). The Bridge resolves the netlist wire
+   * (instanceId, pinId) -> MCU GPIO number and injects the level over the DBus
+   * reverse channel. Returns false when the pin is not wired to an MCU GPIO
+   * (the caller may warn/drop) or when no injection path exists.
+   */
+  drivePin?: (pinId: string, level: 0 | 1) => boolean;
   log: (level: 'info' | 'warn' | 'error', msg: string) => void;
   /** Subscribe to logical clock ticks. Returns unsubscribe. */
   onTick: (cb: (virtualMs: number) => void) => () => void;
@@ -135,6 +178,13 @@ export interface Peripheral {
    * renderer at the capture device's native rate; the model resamples.
    */
   acceptCapture?(chunk: CaptureChunk): void;
+  /**
+   * Rotate a knob/encoder by `delta` detent steps (P3.4, additive optional
+   * member — only rotary-input models implement it). Positive = clockwise.
+   * The model plays the corresponding quadrature transition sequence onto its
+   * gpio-in pins over time.
+   */
+  rotate?(delta: number): void;
   dispose?(): void;
 }
 

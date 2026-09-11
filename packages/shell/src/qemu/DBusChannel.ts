@@ -10,7 +10,7 @@
 // handed to the registered handler. TCP loopback by default so Windows hosts
 // work (Node cannot serve AF_UNIX there); unix socket on POSIX.
 import { createServer, type Server, type Socket } from 'node:net';
-import type { BusTransaction, I2sInjection } from '@breadesp/peripherals';
+import type { BusTransaction, PeripheralInjection } from '@breadesp/peripherals';
 
 export type TransactionHandler = (tx: BusTransaction) => void;
 
@@ -60,16 +60,18 @@ export class DBusChannel {
   }
 
   /**
-   * Reverse channel (P3.1, PRD §6.7): push a peripheral -> MCU I2S RX PCM
-   * injection to the device as one length-prefixed frame
-   * ({"v":1,"in":[<I2sInjection>]}). The device queues the samples and feeds
-   * the firmware's RX DMA descriptor ring. Returns false when no device is
-   * connected (e.g. the VM is not running); the caller may drop or retry.
+   * Reverse channel (P3.1/P3.4, PRD §6.7): push a peripheral -> MCU injection
+   * to the device as one length-prefixed frame ({"v":1,"in":[<injection>]}).
+   * Three kinds exist: 'i2s-in' (PCM queued for the firmware's RX DMA ring),
+   * 'gpio-in' (input pad level overlaid onto the GPIO_IN registers) and
+   * 'i2c-out' (read-reply mailbox served by the I2C sniffer). Returns false
+   * when no device is connected (e.g. the VM is not running); the caller may
+   * drop or retry.
    */
-  sendInject(injection: I2sInjection): boolean {
+  sendInject(injection: PeripheralInjection): boolean {
     if (this.sockets.size === 0) return false;
     const payload = Buffer.from(
-      JSON.stringify({ v: PROTOCOL_VERSION, in: [{ kind: 'i2s-in', ...injection }] }),
+      `{"v":${PROTOCOL_VERSION},"in":[${serializeInjection(injection)}]}`,
       'utf8',
     );
     const header = Buffer.alloc(4);
@@ -196,4 +198,23 @@ function deserializeTransaction(raw: RawTransaction): BusTransaction | null {
   if (raw.target !== undefined) tx.target = raw.target;
   if (raw.dir === 'read' && raw.length !== undefined) tx.length = raw.length;
   return tx;
+}
+
+/**
+ * Serialize one reverse-channel injection field-by-field. The device parses
+ * frames with an ordered scanner (not a JSON parser), so the field ORDER of
+ * each kind is contractual (PRD §6.7) and must be frozen here — never built
+ * by spreading a model object, whose key order is not the contract (the P3.1
+ * missing-kind bug class). Values are model-validated numbers (0..255 bytes,
+ * bounded counts), interpolated without quoting.
+ */
+function serializeInjection(inj: PeripheralInjection): string {
+  switch (inj.kind) {
+    case 'i2s-in':
+      return `{"kind":"i2s-in","bus":${inj.bus},"rate":${inj.rate},"bits":${inj.bits},"channels":${inj.channels},"data":[${inj.data.join(',')}]}`;
+    case 'gpio-in':
+      return `{"kind":"gpio-in","pin":${inj.pin},"level":${inj.level}}`;
+    case 'i2c-out':
+      return `{"kind":"i2c-out","bus":${inj.bus},"target":${inj.target},"data":[${inj.data.join(',')}]}`;
+  }
 }

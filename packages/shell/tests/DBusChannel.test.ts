@@ -174,7 +174,7 @@ describe('DBusChannel (PRD §6.7 frame protocol)', () => {
     const { channel, device } = await fixture([]);
     // The fake device's client-side connect callback can fire before the
     // server registers the socket; wait for the channel to see it.
-    await waitUntil(() => channel.sendInject({ bus: 0, rate: 16000, bits: 16, channels: 1, data: [1, 2, 255] }));
+    await waitUntil(() => channel.sendInject({ kind: 'i2s-in', bus: 0, rate: 16000, bits: 16, channels: 1, data: [1, 2, 255] }));
     const raw = await new Promise<Buffer>((resolve) => {
       const chunks: Buffer[] = [];
       device.on('data', (c: Buffer) => {
@@ -194,7 +194,7 @@ describe('DBusChannel (PRD §6.7 frame protocol)', () => {
     channel.onTransaction(() => {});
     await channel.listen({});
     openChannels.push(channel);
-    expect(channel.sendInject({ bus: 0, rate: 16000, bits: 16, channels: 1, data: [] })).toBe(false);
+    expect(channel.sendInject({ kind: 'i2s-in', bus: 0, rate: 16000, bits: 16, channels: 1, data: [] })).toBe(false);
   });
 });
 

@@ -49,6 +49,8 @@ export class NetlistResolver {
   private gpioByPin = new Map<string, ResolvedTarget[]>();
   /** I2S controller number -> instances claiming it. */
   private i2sByBus = new Map<number, ResolvedTarget[]>();
+  /** `${instanceId}|${pinId}` -> wired MCU GPIO number (P3.4 input injection). */
+  private gpioInputByInstancePin = new Map<string, number>();
 
   constructor(netlist: Netlist = EMPTY_NETLIST) {
     this.setNetlist(netlist);
@@ -60,6 +62,7 @@ export class NetlistResolver {
     this.spiByCs = new Map();
     this.gpioByPin = new Map();
     this.i2sByBus = new Map();
+    this.gpioInputByInstancePin = new Map();
 
     for (const inst of n.peripherals) {
       this.indexI2cAddress(inst);
@@ -94,6 +97,16 @@ export class NetlistResolver {
         // TODO(PRD §4.2): adc routing lands with the input models (P3).
         return [];
     }
+  }
+
+  /**
+   * Reverse lookup (P3.4 input injection): the MCU GPIO number wired to a
+   * peripheral pin, e.g. resolveGpioInput('knob1', 'A') -> 4 when a wire
+   * joins knob1.A to mcu.GPIO4. Undefined when the pin is unwired (or the
+   * wire's MCU endpoint is not a GPIO pin name).
+   */
+  resolveGpioInput(instanceId: string, pinId: string): number | undefined {
+    return this.gpioInputByInstancePin.get(`${instanceId}|${pinId}`);
   }
 
   private indexI2cAddress(inst: PeripheralInstance): void {
@@ -134,9 +147,18 @@ export class NetlistResolver {
     // wires carry no MCU pin and are ignored.
     if (from.instanceId === MCU_INSTANCE_ID && to.instanceId !== MCU_INSTANCE_ID) {
       this.push(this.gpioByPin, from.pin, { instanceId: to.instanceId, pin: to.pin });
+      this.indexGpioInput(from.pin, to.instanceId, to.pin);
     } else if (to.instanceId === MCU_INSTANCE_ID && from.instanceId !== MCU_INSTANCE_ID) {
       this.push(this.gpioByPin, to.pin, { instanceId: from.instanceId, pin: from.pin });
+      this.indexGpioInput(to.pin, from.instanceId, from.pin);
     }
+  }
+
+  /** Reverse-index the peripheral endpoint of an mcu<->peripheral wire (P3.4). */
+  private indexGpioInput(mcuPin: string, instanceId: string, pinId: string): void {
+    const m = /^GPIO(\d+)$/.exec(mcuPin);
+    if (m === null) return; // e.g. 3V3/GND rails carry no routable GPIO
+    this.gpioInputByInstancePin.set(`${instanceId}|${pinId}`, Number(m[1]));
   }
 
   private push(map: Map<string | number, ResolvedTarget[]>, key: string | number, value: ResolvedTarget): void {
