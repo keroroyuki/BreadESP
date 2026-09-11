@@ -216,4 +216,39 @@ describe('NetlistResolver (PRD §4.2/§6.5 routing)', () => {
     expect(r.resolve(i2cWrite(0x3c))).toEqual([]);
     expect(r.resolve(gpioWrite(2))).toEqual([]);
   });
+
+  // P3.4: reverse lookup for input injection (knob quadrature, button level).
+  describe('resolveGpioInput (P3.4)', () => {
+    it('resolves a peripheral pin to its wired MCU GPIO number, either wire direction', () => {
+      const r = new NetlistResolver(netlist(
+        [{ instanceId: 'knob1', kind: 'knob' }],
+        [
+          wire('w1', { instanceId: 'knob1', pin: 'A' }, { instanceId: 'mcu', pin: 'GPIO4' }),
+          wire('w2', { instanceId: 'mcu', pin: 'GPIO16' }, { instanceId: 'knob1', pin: 'B' }),
+        ],
+      ));
+      expect(r.resolveGpioInput('knob1', 'A')).toBe(4);
+      expect(r.resolveGpioInput('knob1', 'B')).toBe(16);
+    });
+
+    it('returns undefined for unwired pins, unknown instances and non-GPIO rails', () => {
+      const r = new NetlistResolver(netlist(
+        [{ instanceId: 'knob1', kind: 'knob' }],
+        [wire('w1', { instanceId: 'knob1', pin: 'GND' }, { instanceId: 'mcu', pin: 'GND' })],
+      ));
+      expect(r.resolveGpioInput('knob1', 'A')).toBeUndefined();
+      expect(r.resolveGpioInput('knob9', 'A')).toBeUndefined();
+      expect(r.resolveGpioInput('knob1', 'GND')).toBeUndefined(); // rail, not GPIO<n>
+    });
+
+    it('rebuilds the reverse index on setNetlist', () => {
+      const r = new NetlistResolver(netlist(
+        [{ instanceId: 'knob1', kind: 'knob' }],
+        [wire('w1', { instanceId: 'knob1', pin: 'A' }, { instanceId: 'mcu', pin: 'GPIO4' })],
+      ));
+      expect(r.resolveGpioInput('knob1', 'A')).toBe(4);
+      r.setNetlist(netlist([{ instanceId: 'knob1', kind: 'knob' }]));
+      expect(r.resolveGpioInput('knob1', 'A')).toBeUndefined();
+    });
+  });
 });

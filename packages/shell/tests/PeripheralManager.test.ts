@@ -6,7 +6,7 @@
 // robustness (error isolation, atomic netlist apply, teardown).
 import { describe, expect, it, vi } from 'vitest';
 import type { Netlist } from '@breadesp/netlist';
-import type { BusTransaction, I2sInjection, RenderSnapshot } from '@breadesp/peripherals';
+import type { BusTransaction, I2sInjection, PeripheralInjection, RenderSnapshot } from '@breadesp/peripherals';
 import { registerBuiltins, registerPeripheral } from '@breadesp/peripherals';
 import { PeripheralManager } from '../src/peripherals/PeripheralManager.js';
 
@@ -438,6 +438,113 @@ describe('input injection (dev-plan task P3.1, PRD §F-PER-7/§6.7)', () => {
     expect(() => manager.feedCapture('led1', chunk)).not.toThrow();
     expect(() => manager.feedCapture('mic9', chunk)).not.toThrow();
     manager.dispose();
+  });
+});
+
+describe('GPIO input injection (dev-plan task P3.4, PRD §F-BB-3/§6.7)', () => {
+  const KNOB_WIRED: Netlist = {
+    version: 1, chip: 'esp32',
+    peripherals: [{ instanceId: 'knob1', kind: 'knob', props: { stepMs: 5 } }],
+    wires: [
+      { id: 'w1', from: { instanceId: 'knob1', pin: 'A' }, to: { instanceId: 'mcu', pin: 'GPIO4' } },
+      { id: 'w2', from: { instanceId: 'mcu', pin: 'GPIO16' }, to: { instanceId: 'knob1', pin: 'B' } },
+    ],
+  };
+
+  it('routes driveRotate through the knob model as gpio-in injections on the wired pins', () => {
+    vi.useFakeTimers();
+    try {
+      const manager = new PeripheralManager();
+      const injections: PeripheralInjection[] = [];
+      manager.on('inject', (inj: PeripheralInjection) => injections.push(inj));
+      manager.applyNetlist(KNOB_WIRED);
+      // The constructor re-syncs the rest state on the wired pins.
+      expect(injections).toEqual([
+        { kind: 'gpio-in', pin: 4, level: 0 },
+        { kind: 'gpio-in', pin: 16, level: 0 },
+      ]);
+      injections.length = 0;
+
+      manager.driveRotate('knob1', 1); // one CW detent = 4 transitions at 5ms
+      vi.advanceTimersByTime(20);
+      expect(injections).toEqual([
+        { kind: 'gpio-in', pin: 4, level: 1 },
+        { kind: 'gpio-in', pin: 16, level: 1 },
+        { kind: 'gpio-in', pin: 4, level: 0 },
+        { kind: 'gpio-in', pin: 16, level: 0 },
+      ]);
+      manager.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('driveInput injects the level onto the GPIO wired to the pin (button path)', () => {
+    const manager = new PeripheralManager();
+    const injections: PeripheralInjection[] = [];
+    manager.on('inject', (inj: PeripheralInjection) => injections.push(inj));
+    manager.applyNetlist({
+      version: 1, chip: 'esp32',
+      peripherals: [{ instanceId: 'btn1', kind: 'button' }],
+      wires: [{ id: 'w1', from: { instanceId: 'btn1', pin: '1' }, to: { instanceId: 'mcu', pin: 'GPIO2' } }],
+    });
+    manager.driveInput('btn1', '1', 1);
+    manager.driveInput('btn1', '1', 0);
+    expect(injections).toEqual([
+      { kind: 'gpio-in', pin: 2, level: 1 },
+      { kind: 'gpio-in', pin: 2, level: 0 },
+    ]);
+    manager.dispose();
+  });
+
+  it('warns once per unwired endpoint ([BB-205]) and drops the injection', () => {
+    const manager = new PeripheralManager();
+    const injections: PeripheralInjection[] = [];
+    const logs: { level: string; msg: string }[] = [];
+    manager.on('inject', (inj: PeripheralInjection) => injections.push(inj));
+    manager.on('log', (l: { level: string; msg: string }) => logs.push(l));
+    manager.applyNetlist({
+      version: 1, chip: 'esp32',
+      peripherals: [{ instanceId: 'btn1', kind: 'button' }],
+      wires: [], // nothing wired
+    });
+    manager.driveInput('btn1', '1', 1);
+    manager.driveInput('btn1', '1', 0);
+    expect(injections).toHaveLength(0);
+    expect(logs.filter((l) => l.level === 'warn' && l.msg.includes('[BB-205]'))).toHaveLength(1);
+    manager.dispose();
+  });
+
+  it('driveRotate silently drops unknown instances and rotate-less models', () => {
+    const manager = new PeripheralManager();
+    manager.applyNetlist({
+      version: 1, chip: 'esp32',
+      peripherals: [{ instanceId: 'led1', kind: 'led' }],
+      wires: [],
+    });
+    expect(() => manager.driveRotate('led1', 1)).not.toThrow();
+    expect(() => manager.driveRotate('knob9', 1)).not.toThrow();
+    manager.dispose();
+  });
+
+  it('stops a mid-flight rotation when the netlist is re-applied', () => {
+    vi.useFakeTimers();
+    try {
+      const manager = new PeripheralManager();
+      const injections: PeripheralInjection[] = [];
+      manager.on('inject', (inj: PeripheralInjection) => injections.push(inj));
+      manager.applyNetlist(KNOB_WIRED);
+      injections.length = 0;
+      manager.driveRotate('knob1', 4);
+      vi.advanceTimersByTime(5); // one transition played
+      const before = injections.length;
+      manager.applyNetlist({ version: 1, chip: 'esp32', peripherals: [], wires: [] });
+      vi.advanceTimersByTime(1000);
+      expect(injections).toHaveLength(before); // the disposed knob's timer is dead
+      manager.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

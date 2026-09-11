@@ -18,6 +18,8 @@
 //   S32I  op0=2, at=t, as=s, r=6,  uimm8x4[23:16]
 //   BNEZ  op0=6, n=1, m=1, as=s, label12[23:12] -> target = pc + 4 + simm12
 //   J     op0=6, n=0, offset18[23:6]            -> target = pc + 4 + simm18
+//   ADD   op0=0, op1=0, op2=8,  RRR           -> ar = as + at        (P3.4)
+//   SUB   op0=0, op1=0, op2=12, RRR           -> ar = as - at        (P3.4)
 
 export function assertRange(what, v, lo, hi) {
   if (!Number.isInteger(v) || v < lo || v > hi) {
@@ -66,6 +68,16 @@ export function encS32i(at, as, off8x4) {
 export function encBnez(as, rel12) {
   assertRange('bnez offset', rel12, -2048, 2047);
   return 0x6 | (1 << 4) | (1 << 6) | ((as & 0xf) << 8) | ((rel12 & 0xfff) << 12);
+}
+
+/** ADD ar, as, at (RRR: op0=0, op1=0, op2=8). */
+export function encAdd(ar, as, at) {
+  return (0x8 << 20) | ((ar & 0xf) << 12) | ((as & 0xf) << 8) | ((at & 0xf) << 4);
+}
+
+/** SUB ar, as, at (RRR: op0=0, op1=0, op2=12). */
+export function encSub(ar, as, at) {
+  return (0xc << 20) | ((ar & 0xf) << 12) | ((as & 0xf) << 8) | ((at & 0xf) << 4);
 }
 
 export function encJ(rel18) {
@@ -191,6 +203,7 @@ export class Program {
       place(item.op, item.text, {
         at_: item.at_,
         as_: item.as_,
+        t_: item.t_,
         imm: item.imm,
         off: item.off,
         lit: item.lit,
@@ -244,6 +257,12 @@ export class Program {
           w = encBnez(p.as_, rel);
           break;
         }
+        case 'add':
+          w = encAdd(p.at_, p.as_, p.t_);
+          break;
+        case 'sub':
+          w = encSub(p.at_, p.as_, p.t_);
+          break;
         case 'j': {
           const rel = addr(p.target) - (pc + 4);
           w = encJ(rel);

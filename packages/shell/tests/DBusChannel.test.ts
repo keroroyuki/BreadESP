@@ -196,7 +196,45 @@ describe('DBusChannel (PRD §6.7 frame protocol)', () => {
     openChannels.push(channel);
     expect(channel.sendInject({ kind: 'i2s-in', bus: 0, rate: 16000, bits: 16, channels: 1, data: [] })).toBe(false);
   });
+
+  // P3.4: the device is an ordered scanner, so the exact wire field order of
+  // each injection kind is frozen here (a reordered spread silently drops
+  // frames device-side — the P3.1 missing-kind bug class).
+  it('sendInject serializes gpio-in frames with the contractual field order (P3.4)', async () => {
+    const { channel, device } = await fixture([]);
+    await waitUntil(() => channel.sendInject({ kind: 'gpio-in', pin: 16, level: 1 }));
+    const payload = await readFramePayload(device);
+    expect(payload).toBe('{"v":1,"in":[{"kind":"gpio-in","pin":16,"level":1}]}');
+  });
+
+  it('sendInject serializes i2c-out reply frames with the contractual field order (P3.4)', async () => {
+    const { channel, device } = await fixture([]);
+    await waitUntil(() => channel.sendInject({ kind: 'i2c-out', bus: 1, target: 0x44, data: [0x66, 0x66, 0x93] }));
+    const payload = await readFramePayload(device);
+    expect(payload).toBe('{"v":1,"in":[{"kind":"i2c-out","bus":1,"target":68,"data":[102,102,147]}]}');
+  });
+
+  it('sendInject keeps the i2s-in wire format field order (P3.1 regression)', async () => {
+    const { channel, device } = await fixture([]);
+    await waitUntil(() => channel.sendInject({ kind: 'i2s-in', bus: 0, rate: 16000, bits: 16, channels: 1, data: [255] }));
+    const payload = await readFramePayload(device);
+    expect(payload).toBe('{"v":1,"in":[{"kind":"i2s-in","bus":0,"rate":16000,"bits":16,"channels":1,"data":[255]}]}');
+  });
 });
+
+/** Read one full length-prefixed frame from the fake device socket; return its payload. */
+function readFramePayload(device: import('node:net').Socket): Promise<string> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    device.on('data', (c: Buffer) => {
+      chunks.push(c);
+      const all = Buffer.concat(chunks);
+      if (all.length >= 4 && all.length >= 4 + all.readUInt32LE(0)) {
+        resolve(all.subarray(4, 4 + all.readUInt32LE(0)).toString('utf8'));
+      }
+    });
+  });
+}
 
 function waitUntil(pred: () => boolean, timeoutMs = 2000): Promise<void> {
   return new Promise((resolve, reject) => {

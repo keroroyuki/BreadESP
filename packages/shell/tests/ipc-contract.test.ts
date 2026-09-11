@@ -57,7 +57,7 @@ const EXPECTED_INVOKE_CHANNELS = [
   'dbg:continue', 'dbg:step', 'dbg:stepOver', 'dbg:vars', 'dbg:regs', 'dbg:evaluate',
   'proj:new', 'proj:open', 'proj:save', 'proj:saveAs', 'proj:close',
   'bb:applyNetlist', 'bb:getNetlist',
-  'per:driveInput', 'per:captureChunk',
+  'per:driveInput', 'per:captureChunk', 'per:rotateKnob',
 ] as const;
 
 /** PRD §6.6 contract — main -> renderer one-way push channels. */
@@ -115,7 +115,7 @@ const project = {
   close: vi.fn(),
   loadNetlist: vi.fn(),
 };
-const peripherals = { applyNetlist: vi.fn(), driveInput: vi.fn(), feedCapture: vi.fn(), on: vi.fn() };
+const peripherals = { applyNetlist: vi.fn(), driveInput: vi.fn(), feedCapture: vi.fn(), driveRotate: vi.fn(), on: vi.fn() };
 const win = { webContents: { send: (channel: string, payload: unknown) => { state.sends.push({ channel, payload }); } } };
 
 /** Extract the callback handlers.ts registered for a stub service event. */
@@ -205,6 +205,61 @@ describe('preload ↔ handlers IPC contract (P1.1)', () => {
     qemu.getSpeed.mockReturnValueOnce(0.5);
     const getHandler = state.handles.get('sim:getSpeed');
     await expect(getHandler!(undefined)).resolves.toBe(0.5);
+  });
+
+  it('routes per:driveInput to PeripheralManager.driveInput (P3.4)', async () => {
+    const handler = state.handles.get('per:driveInput');
+    expect(handler).toBeDefined();
+    peripherals.driveInput.mockClear();
+    await handler!(undefined, { instanceId: 'btn1', pin: '1', level: 1 });
+    expect(peripherals.driveInput).toHaveBeenCalledWith('btn1', '1', 1);
+  });
+
+  it('rejects malformed per:driveInput payloads with [BB-203] (P3.4)', async () => {
+    const handler = state.handles.get('per:driveInput');
+    expect(handler).toBeDefined();
+    peripherals.driveInput.mockClear();
+    const valid = { instanceId: 'btn1', pin: '1', level: 1 };
+    const bad: unknown[] = [
+      { ...valid, instanceId: '' },
+      { ...valid, instanceId: 7 },
+      { ...valid, pin: '' },
+      { ...valid, pin: 1 },
+      { ...valid, level: 2 },
+      { ...valid, level: 'high' },
+      null,
+    ];
+    for (const payload of bad) {
+      await expect(handler!(undefined, payload)).rejects.toThrow('[BB-203]');
+    }
+    expect(peripherals.driveInput).not.toHaveBeenCalled();
+  });
+
+  it('routes per:rotateKnob to PeripheralManager.driveRotate with truncation (P3.4)', async () => {
+    const handler = state.handles.get('per:rotateKnob');
+    expect(handler).toBeDefined();
+    await handler!(undefined, { instanceId: 'knob1', delta: -2.7 });
+    expect(peripherals.driveRotate).toHaveBeenCalledWith('knob1', -2);
+  });
+
+  it('rejects malformed per:rotateKnob payloads with [BB-204] (P3.4)', async () => {
+    const handler = state.handles.get('per:rotateKnob');
+    expect(handler).toBeDefined();
+    peripherals.driveRotate.mockClear();
+    const valid = { instanceId: 'knob1', delta: 2 };
+    const bad: unknown[] = [
+      { ...valid, instanceId: '' },
+      { ...valid, instanceId: 7 },
+      { ...valid, delta: Number.NaN },
+      { ...valid, delta: Number.POSITIVE_INFINITY },
+      { ...valid, delta: 1000 }, // beyond the 256-detent anti-flood cap
+      { ...valid, delta: 'spin' },
+      null,
+    ];
+    for (const payload of bad) {
+      await expect(handler!(undefined, payload)).rejects.toThrow('[BB-204]');
+    }
+    expect(peripherals.driveRotate).not.toHaveBeenCalled();
   });
 
   it('routes per:captureChunk to PeripheralManager.feedCapture (P3.2)', async () => {
