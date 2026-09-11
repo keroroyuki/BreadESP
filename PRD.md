@@ -319,12 +319,16 @@ tx      := {"kind":"i2c"|"gpio","bus":0,"target":<7bit addr|pin>,
 反向通道（Bridge → 设备，P3.1 起追加，向后兼容）：同一 socket 上 Bridge 可回写长度前缀帧：
 
 ```
-payload := {"v":1,"in":[{"kind":"i2s-in","bus":0,"rate":16000,"bits":16,"channels":1,"data":[byte,...]}]}
+payload := {"v":1,"in":[<injection>,...]}
+i2s-in  := {"kind":"i2s-in","bus":0,"rate":16000,"bits":16,"channels":1,"data":[byte,...]}
+gpio-in := {"kind":"gpio-in","pin":4,"level":1}                    (P3.4 追加)
+i2c-out := {"kind":"i2c-out","bus":0,"target":68,"data":[byte,...]} (P3.4 追加)
 ```
 
-- 字段顺序（bus, rate, bits, channels, data）是协议的一部分（设备侧为有序扫描器，非完整 JSON 解析器）。
-- 设备将 PCM 排入对应 I2S 控制器的注入队列（每控制器上限 256KB，溢出丢最旧并一次性告警），RX DMA 影子按固件解码的采样率把样本写入 in-link 描述符缓冲（owner 清零 + length 回填 + eof，与真实 DMA 引擎一致）；队列枯竭时保持描述符 armed 而不以静音抢占，避免"收到数据才 re-arm"的固件死锁。
-- 畸形/超长（>4MB）反向帧仅禁用反向路径，正向事务流不受影响。
+- 各 kind 的字段顺序（i2s-in: bus, rate, bits, channels, data；gpio-in: pin, level；i2c-out: bus, target, data）是协议的一部分（设备侧为有序扫描器，非完整 JSON 解析器）。未知 kind/成员的注入对象被跳过；畸形/超长（>4MB）反向帧仅禁用反向路径，正向事务流不受影响。
+- `i2s-in`：设备将 PCM 排入对应 I2S 控制器的注入队列（每控制器上限 256KB，溢出丢最旧并一次性告警），RX DMA 影子按固件解码的采样率把样本写入 in-link 描述符缓冲（owner 清零 + length 回填 + eof，与真实 DMA 引擎一致）；队列枯竭时保持描述符 armed 而不以静音抢占，避免"收到数据才 re-arm"的固件死锁。
+- `gpio-in`（P3.4）：设备把注入电平按引脚合并进 GPIO_IN/GPIO_IN1 寄存器的影子读值（仅覆盖 Bridge 驱动过的引脚，其余位保留底层模型值；stock esp32.gpio 是 strap-only stub、无 qdev 输入线，GPIO 边沿中断未建模——输入固件以轮询方式读取）。
+- `i2c-out`（P3.4）：设备按 (bus, target) 维护读回复邮箱，每个帧原子替换该键的待回复字节（对齐传感器读出寄存器"最新值覆盖"语义）；I2C sniffer 的 recv 回调逐字节供应，邮箱空/耗尽回复 0xFF。回复无法在同一个同步 TRANS_START 内往返，固件侧应以重试读取收敛。
 
 ---
 

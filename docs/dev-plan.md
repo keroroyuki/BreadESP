@@ -55,7 +55,7 @@
 - **M0**（已达成 2026-08-31）：`blink.elf` 启动，UART 打印 `Hello`，GDB 断在 `app_main`。
 - **M1**（任务 1.1–1.10 已完成，Electron 应用级手动回归随收尾统一进行）：UI 拖拽 LED 连 GPIO2，OLED 显示固件绘制的文字，可断点单步。
 - **M2**（进行中，任务 2.1–2.3 已完成）：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
-- **M3**（未开始）：麦克风波形注入后固件能读到采样值。
+- **M3**（已达成 2026-09-11，任务 3.1–3.4 完成）：麦克风波形注入后固件能读到采样值；旋钮正交序列与 SHT30 读回复经真实 QEMU e2e 验证。
 - **M4**（未开始）：切换芯片型号后同一工程可在 ESP32/S3 跑通。
 - **M5**（未开始）：第三方包 `registerPeripheral()` 后 UI 自动出现新器件。
 
@@ -115,7 +115,7 @@
 | 3.1 | `mic` I2S 输入注入 | 固件读到采样 | 已完成 2026-09-05 |
 | 3.2 | 本地麦克风采集→注入 | 实时输入 | 已完成 2026-09-07 |
 | 3.3 | 波形生成器面板 | 正弦/方波/噪声 | 已完成 2026-09-07 |
-| 3.4 | 旋钮、温湿度传感器模型 | 扩展外设集 | |
+| 3.4 | 旋钮、温湿度传感器模型 | 扩展外设集 | 已完成 2026-09-11 |
 
 ### Phase 4 — 多芯片与工程化（M4）
 
@@ -388,7 +388,7 @@ Previously applyNetlist leaked old instances on re-apply.
 | `pnpm test` | 全仓测试 |
 | `pnpm fetch-qemu` | 下载 QEMU 二进制 |
 | `node scripts/build-qemu-device.mjs [--target linux-docker\|windows-msys2]` | 构建 breadesp-dbus 设备版 QEMU |
-| `node scripts/make-blink-elf.mjs` / `make-i2c-elf.mjs` / `make-uart-echo-elf.mjs` | 重新生成测试固件 |
+| `node scripts/make-blink-elf.mjs` / `make-i2c-elf.mjs` / `make-uart-echo-elf.mjs` / `make-knob-elf.mjs` / `make-sht-elf.mjs` | 重新生成测试固件 |
 | `pnpm dev` | 启动 Electron + Vite dev |
 | `pnpm build` | 构建所有包 |
 
@@ -619,6 +619,43 @@ Previously applyNetlist leaked old instances on re-apply.
 > `micConfigFromProps`/`waveformSample`/`MIC_LIMITS`（单一真相源，UI 永不提供模型会拒绝的
 > 配置）；采集进行中卡片提示"LIVE capture is overriding the synth waveform"。
 > QEMU 设备零改动。
+
+> P3.4 验证记录（2026-09-11）：`pnpm typecheck` 0 错误；全仓测试 Windows 448 通过 + 13 跳过
+> （门控 e2e），WSL shell 全量（含全部真实 QEMU e2e）168 通过 + 5 跳过（既有基线：
+> gdb-breakpoint×2/debug-panel×1 需 BREADESP_GDB_BIN，qemu-uart×2 门控于 Windows 版
+> QEMU manifest）。分四层验证——knob 模型 15 项单测（props 钳制回退、Gray 相位表、
+> 单 detent 四迁移逐针脚断言、CCW 逆序、混合方向净额合并、连击钳制 ±64 detents、
+> 未接线引脚一次性告警且不影响另一针、无 drivePin 通道一次性告警、dispose 停队列、
+> factory 元数据）；sht30 模型 21 项单测（props 校验、CRC-8 对 datasheet 0xBEEF→0x92
+>  worked example、25°C/50% 金标向量 [0x66,0x66,0x93,0x80,0x00,0xA2]、量程端点无溢出、
+> 六种测量命令字、状态寄存器 heater 位跟踪与软复位、异地址/读事务/异类/子字长过滤、
+> 周期模式一次性告警、无注入通道一次性告警、text 快照、格式化行）；路由/协议层
+> NetlistResolver 28 项（新增 resolveGpioInput 双向线序/未接线/非 GPIO 轨/重建）与
+> DBusChannel 14 项（gpio-in/i2c-out/i2s-in 三种反向帧精确字符串冻结字段顺序）；
+> PeripheralManager 25 项（driveRotate→gpio-in 注入序列、driveInput 按键路径注入、
+> [BB-205] 未接线一次性告警、rotate-less 实例静默丢弃、换网表停播中途旋转）；
+> IPC 契约 23 项（per:rotateKnob 注册对齐 + [BB-204] 校验、per:driveInput [BB-203]
+> 校验）；UI 层 sensorDraft 7 项（步进/缺省回退/非法 props 归一化/量程饱和/分数读数）。
+> 真实 QEMU e2e（knob-gpio/sht30-i2c，Docker 重建的 Linux breadesp QEMU）于 WSL
+> 验证通过：knob.elf 轮询 GPIO_IN 解码出 +2 detents 打印 `KNOB CW`、回零打印
+> `KNOB ZERO`（正交序列经 gpio-in 注入合并进 IN 影子读）；sht.elf 发 0x2C06 测量
+> 命令后重试读取，读到模型应答的 25°C/50%RH 六字节读出打印 `SHT OK`（i2c-out
+> 邮箱经 sniffer_recv 供应）；mic-i2s/mic-capture/spi-st7789/pwm-buzzer/i2s-speaker/
+> gpio-scope/sim-speed/netlist-routing/dbus-device e2e 对同一重建二进制全部回归通过。
+> 金标固件 `knob.elf`/`sht.elf` 由 `scripts/make-knob-elf.mjs`/`make-sht-elf.mjs`
+> 确定性生成（xtensa-elf.mjs 新增 add/sub 编码，对照 pinned 解码器表核对），
+> `--check` 模式可校验入库 fixture 无漂移。
+> 迭代抓出并已修复一个真实缺陷：applyNetlist 先建实例后换路由，knob 构造期的静止态
+> 同步驱动被解析进旧路由而丢弃——改为先在临时 resolver 建路由、实例构造引用之、
+> 全部成功才原子提交（单测冻结构造期注入断言）。设计要点：stock esp32.gpio 是
+> strap-only stub（无 qdev 输入线），gpio-in 注入只能在影子读路径合并 IN/IN1 读值，
+> GPIO 边沿中断未建模（输入固件以轮询读取）；esp32_i2c 的 READ 在 TRANS_START 内
+> 同步执行，读回复无法同传输往返，故设备侧为按 (bus,addr) 键控的原子替换邮箱 +
+> 固件重试收敛（金标固件重试上限 250 次）。反向通道泛化为 kind 判别三帧
+> （i2s-in/gpio-in/i2c-out），PRD §6.7 已同步追加；`PeripheralContext.drivePin` 与
+> `Peripheral.rotate` 为 §6.2 追加式可选成员（向后兼容），sendInject 按 kind 逐字段
+> 序列化（字段顺序即协议契约，杜绝 P3.1 丢 kind 事故类）。button 的 GPIO 注入 TODO
+> 随 driveInput 真接通透随之闭合（M1 清单"按键注入"项的设备侧路径自此存在）。
 
 ### M2 清单
 - [x] TFT 渲染 rgb565 彩图

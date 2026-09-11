@@ -19,9 +19,9 @@
 ## 2. DBus Forward Device（关键自定义件）
 
 QEMU-ESP32 默认外设模型不全。我们在 QEMU 源码中新增一个 device `breadesp-dbus`（P1.2 已落地）：
-- **I2C**：动态给每个 `esp32-i2c` 控制器挂一个通配从机（`breadesp-dbus.i2c-sniffer`），只 ACK 未被 QEMU 内建外设占用的地址，完整捕获 START/数据/STOP。
+- **I2C**：动态给每个 `esp32-i2c` 控制器挂一个通配从机（`breadesp-dbus.i2c-sniffer`），只 ACK 未被 QEMU 内建外设占用的地址，完整捕获 START/数据/STOP。读回复（P3.4）：sniffer 的 `recv` 回调从按 (bus, 地址) 键控的回复邮箱逐字节供应数据（邮箱由 `i2c-out` 反向帧原子替换，模拟传感器读出寄存器"最新值覆盖"语义）；邮箱空/耗尽回复 0xFF（SDA 空闲高），固件应重试至读到真实数据（回复往返无法在同一个同步 TRANS_START 内完成）。
 - **SPI**（P2.1）：给每个通用 `esp32.spi` 控制器总线挂一个 SSI 嗅探从机（`breadesp-dbus.spi-sniffer`，`SSI_CS_NONE` 极性故能看见每个字节），控制器硬件 CS 输出线接到嗅探器的 GPIO 输入：CS 拉低开帧（线号成为 `tx.target`，即 CS 索引 0–2），CS 释放时整帧字节作为一条 `spi` 写事务发出。flash/PSRAM 所在的总线不挂嗅探器。SSI 从机类必须实现 `realize` 回调，否则 QEMU 在 realize 阶段解引用空指针直接 SIGSEGV。
-- **GPIO**：对 DPORT(0x3ff44000) 与 APB(0x60004000) 双基地址的 GPIO 寄存器组做高优先级影子 MMIO，解码 OUT_W1TS/W1TC 写为引脚级事务并透传原始访问。
+- **GPIO**：对 DPORT(0x3ff44000) 与 APB(0x60004000) 双基地址的 GPIO 寄存器组做高优先级影子 MMIO，解码 OUT_W1TS/W1TC 写为引脚级事务并透传原始访问。输入注入（P3.4）：stock `esp32.gpio` 是只有 strap 寄存器的 stub、没有 qdev 输入线，故 `gpio-in` 反向帧驱动的输入电平在影子读路径合并进 GPIO_IN/IN1 寄存器读值（只覆盖 Bridge 驱动过的"已认领"引脚，其余位保留底层模型值）；GPIO 边沿中断未建模（stub 本就没有），固件以轮询读输入。
 - **PWM**（P2.3）：对 LEDC 寄存器组（双基地址同法）做只观影子，定时器/通道配置解码为 (频率, 占空比)，GPIO 矩阵 `FUNCn_OUT_SEL` 写把 LEDC 输出信号映射到引脚，每个引脚音调变化发一条 `pwm` 事务（QEMU 自带 LEDC 模型从不驱动引脚，无影子则固件音调不可见）。
 - **I2S**（P2.4）：stock 树把 esp32.i2s0/1 建模为 unimplemented-device，故对两个 legacy 寄存器组（0x3ff4f000/0x3ff6d000，各 0x1000，探测基地址存在即附着，兼作 esp32-only 守卫）做高优先级影子，观察 CONF/CLKM_CONF/SAMPLE_RATE_CONF/OUT_LINK。TX_START + OUT_LINK_START 后，虚拟时钟定时器（10ms tick）按解码出的 PCM 字节速率遍历 TX DMA 链表描述符（lldesc_t：dw0 的 length[23:12]、buf、next；`OUTLINK_ADDR` 是 20 位窗口字段，物理地址 = 0x3ff00000|field，而 buf/next 是完整 32 位指针——曾在此踩坑导致首版无声），经 `address_space_read` 读客户内存，描述符环（next 指回链内）自然循环——固件持续放音的标准手法；每 tick 汇成一条 `i2s` 事务（8 字节格式头 + 原始交错小端 PCM）。采样率公式：sck=160M/div、bck=sck/bck_div、ws=bck/(bits×channels)（APLL 为文档化缺口；非 DMA 的 FIFO_WR 直写路径未建模）。
 - **I2S RX 注入**（P3.1）：socket 变双向——Bridge 以同样的长度前缀帧回写 `{"v":1,"in":[{"kind":"i2s-in",...}]}`（字段顺序为协议一部分，设备侧为有序扫描器）。影子同时观察 IN_LINK 与 CONF/SAMPLE_RATE_CONF 的 RX 半边；RX_START + IN_LINK_START 后，同一 10ms tick 按固件解码的 RX 字节速率消费每控制器的注入队列（256KB 上限，溢出丢最旧并一次性告警），把样本经 `address_space_write` 写入 DMA owner 的描述符缓冲，再回写 dw0（owner 清零、length 回填、eof 置位——与真实 DMA 引擎一致），轮询式固件由此读到麦克风采样。队列枯竭时保持描述符 armed 而不以静音抢占（曾在此踩坑：零填充清空 owner 会与"收到数据才 re-arm"的固件互相等待死锁）。
@@ -182,6 +182,52 @@ netlist.json 持久化；采集进行中卡片提示 synth 正被覆盖。纯逻
 `wavegenDraft.ts`（draftFromProps/draftPatch/previewTrace/renderWavePreview），
 归一化与取值范围全部委托 mic 模型导出的 `micConfigFromProps`/`MIC_LIMITS`
 单一真相源——面板永远不可能产出模型会拒绝的配置。
+
+### 3.10 旋钮与温湿度传感器输入链（P3.4）
+
+P3.4 把反向通道从"仅 I2S PCM"泛化为三种注入（PRD §6.7），并落地两个输入外设：
+
+```
+旋钮 CW/CCW 按钮 → per:rotateKnob IPC（[BB-204] 边界校验）
+  → PeripheralManager.driveRotate → knob.rotate(delta) 排队
+  → 每 stepMs 播一个正交相位迁移 → ctx.drivePin('A'|'B', level)
+  → 管理器经 NetlistResolver.resolveGpioInput（连线反向索引）解析出 MCU GPIO 号
+  → gpio-in 反向帧 → 设备影子读路径合并进 GPIO_IN/IN1 → 轮询固件解码计数
+
+SHT30 命令写 → i2c 前向事务 → sht30.onTransaction 解析命令字
+  → 计算 6 字节读出（datasheet 反公式 + CRC-8）→ ctx.emitInput(i2c-out)
+  → 设备按 (bus,地址) 邮箱原子替换 → sniffer_recv 逐字节供应固件主机读
+```
+
+- **knob 模型**（`peripherals/src/knob.ts`）：一 detent = 4 相位迁移的 Gray 环
+  （CW 时 A 领先 B）；`rotate(delta)` 按净位移合并队列（正向 8 步排队中转 -4 步
+  净剩 +4——旋钮 physically 不会造访被取消的位置），单次调用钳制 ±64 detents、
+  队列上限 256 detents（防面板连击洪泛）；未接线引脚丢弃迁移并一次性告警
+  （[BB-205]）。SW 推压开关复用既有 `per:driveInput` 通道（该通道自 P3.4 起
+  真正接通注入——button 的 P1 TODO 随之闭合）。
+- **sht30 模型**（`peripherals/src/sht30.ts`）：默认地址 0x44（props 可改 0x45 等），
+  props `temperatureC`/`humidityRh` 钳制在 datasheet 量程；支持六种测量命令字
+  （时钟拉伸与否 × 三档重复度）、状态寄存器读（0xF32D，含 heater 位跟踪）、
+  软复位/加热器开关；周期测量模式未建模（一次性告警）。回复总在命令到达的
+  那条总线上；构造与每次测量命令都发 text 快照供画布节点显示。
+- **DBusChannel.sendInject 泛化**：按判别字段 `kind` 逐字段序列化三种帧——
+  字段顺序是协议契约（设备为有序扫描器），绝不由模型对象 spread 生成
+  （P3.1 丢 kind 事故的同类防线），单测以精确字符串冻结线格式。
+- **applyNetlist 时序修正**：实例构造期就可能 drivePin（knob 的静止态同步），
+  而旧实现先建实例后换路由——构造期驱动会丢进旧路由。现先在临时 resolver 上
+  建路由、实例创建引用临时 resolver，全部成功才原子提交（原子性语义不变）。
+- **UI**：palette 新增两项；画布 knob 节点 CCW/CW 按钮直连 `per:rotateKnob`；
+  sht30 节点显示 text 快照（Bridge 未应答时回退到 props 推导读数），
+  T±1°C / H±5%RH 四个小按钮经 `sensorDraft.adjustSht30`（归一化委托模型
+  `sht30ConfigFromProps`/`SHT30_LIMITS` 单一真相源）走既有
+  `updatePeripheralProps` → `bb:applyNetlist` 重建链生效，不引入新 IPC。
+- **金标固件**：`knob.elf`（`make-knob-elf.mjs`）轮询 GPIO_IN 用 16 项迁移表
+  解码正交计数（+8 打印 `KNOB CW`，归零打印 `KNOB ZERO`）；`sht.elf`
+  （`make-sht-elf.mjs`）发测量命令后以最多 250 次重试读 6 字节并逐字节比对
+  期望读出（重试是必要的：回复往返跨不过同步 TRANS_START）——匹配打印
+  `SHT OK`，耗尽打印 `SHT FAIL`。汇编器新增 add/sub 编码（对照 pinned
+  解码器表核对）。
+
 
 ## 4. 调试链路
 
