@@ -52,7 +52,24 @@
  *    writes (OUT / OUT_W1TS / OUT_W1TC and their bank-1 twins) are decoded
  *    into per-pin transactions. Every access is then dispatched to the
  *    original region, so existing behavior (e.g. GPIO_STRAP reads that select
- *    the boot mode) is preserved.
+ *    the boot mode) is preserved. Input injection (P3.4): the stock
+ *    esp32.gpio model is a strap-only stub with no qdev input lines, so
+ *    bridge-driven input levels arrive as {"kind":"gpio-in","pin":N,
+ *    "level":L} reverse frames and are overlaid onto reads of the GPIO_IN /
+ *    GPIO_IN1 registers (only pins the bridge has driven are owned; all other
+ *    bits keep the underlying model's value). Firmware polling GPIO_IN — or a
+ *    quadrature decoder fed by the knob peripheral — observes the injected
+ *    levels; GPIO edge interrupts are NOT modeled (the stub has none).
+ *
+ *  - I2C read replies (P3.4): the sniffer's recv callback no longer answers
+ *    0xFF unconditionally — a per-(bus, address) reply mailbox, fed by
+ *    {"kind":"i2c-out","bus":B,"target":A,"data":[..]} reverse frames, is
+ *    served byte-by-byte to firmware master reads. Each frame atomically
+ *    replaces the pending reply (a sensor's readout register holds the latest
+ *    measurement); a drained or never-armed mailbox yields 0xFF, so polling
+ *    firmware should retry until real data arrives (the reply round trip
+ *    across the socket cannot complete inside the synchronous TRANS_START
+ *    MMIO write that runs the command list).
  *
  * Wire protocol (PRD §6.7), written by the flush bottom half which batches
  * all transactions queued during one main-loop iteration into a single frame:
@@ -77,13 +94,18 @@
  *                 (bus = I2S controller 0/1; r = sample rate u32 LE;
  *                  pcm = raw interleaved little-endian samples)
  *
- * Reverse direction (Bridge -> device, P3.1), same length-prefix framing:
+ * Reverse direction (Bridge -> device, P3.1; extended P3.4), same
+ * length-prefix framing:
  *
- *   payload := {"v":1,"in":[{"kind":"i2s-in","bus":0,"rate":16000,
- *               "bits":16,"channels":1,"data":[<pcm byte>,...]}]}
+ *   payload := {"v":1,"in":[<injection>,...]}
+ *   i2s-in  := {"kind":"i2s-in","bus":0,"rate":16000,
+ *               "bits":16,"channels":1,"data":[<pcm byte>,...]}
+ *   gpio-in := {"kind":"gpio-in","pin":4,"level":1}          (P3.4)
+ *   i2c-out := {"kind":"i2c-out","bus":0,"target":68,
+ *               "data":[<reply byte>,...]}                   (P3.4)
  *
  *   The fields MUST appear in that order (the device uses a minimal ordered
- *   scanner, not a JSON parser). Unknown members/frames are ignored; a
+ *   scanner, not a JSON parser). Unknown kinds/members are skipped; a
  *   malformed or oversized frame disables only the reverse path.
  *
  * PWM forwarding (dev-plan task P2.3): QEMU's esp32.ledc model stores the
@@ -99,8 +121,9 @@
  * APB_CLK 80MHz (TICK_SEL=1; the Arduino/ESP-IDF default for ledc).
  *
  * TODO(PRD §4.2): ADC forwarding (M3, dev-plan tasks 3.x).
- * TODO(PRD §6.3): bridge-supplied I2C/SPI read data (reverse channel exists
- *                 for i2s-in since P3.1; i2c/spi read replies still open).
+ * TODO(PRD §6.3): bridge-supplied SPI read data (reverse channel exists for
+ *                 i2s-in since P3.1 and gpio-in/i2c-out since P3.4; spi read
+ *                 replies still open).
  * TODO(PRD §1.3): esp32s3/c3 GPIO banks use a different device (M4, task 4.1).
  *
  * Copyright (c) 2026 BreadESP contributors
@@ -153,6 +176,9 @@ DECLARE_INSTANCE_CHECKER(BreadespSpiSniffer, BREADESP_SPI_SNIFFER,
 #define ESP32_GPIO_OUT1_REG      0x10
 #define ESP32_GPIO_OUT1_W1TS_REG 0x14
 #define ESP32_GPIO_OUT1_W1TC_REG 0x18
+/* Input pad levels (P3.4 injection overlay): IN pins 0-31, IN1 pins 32-39. */
+#define ESP32_GPIO_IN_REG        0x3c
+#define ESP32_GPIO_IN1_REG       0x40
 
 /*
  * GPIO matrix output-signal select: FUNCn_OUT_SEL_CFG_REG = 0x530 + 4*n
@@ -308,6 +334,24 @@ struct BreadespI2sChan {
 /* Reverse channel (P3.1): frame cap and per-controller injection queue cap. */
 #define BREADESP_IN_FRAME_MAX   (4 * 1024 * 1024)
 #define BREADESP_INJ_QUEUE_MAX  (256 * 1024)
+/* I2C read replies (P3.4): per-(bus,addr) mailbox slots and reply size cap. */
+#define BREADESP_I2C_REPLY_SLOTS 16
+#define BREADESP_I2C_REPLY_MAX   256
+
+/*
+ * I2C read-reply mailbox slot (P3.4): the bridge's answer for one (bus, addr).
+ * A new i2c-out frame atomically replaces the pending reply (a sensor's
+ * readout register holds the latest measurement); sniffer_recv pops bytes in
+ * order and answers 0xFF once the mailbox drains.
+ */
+typedef struct {
+    bool used;
+    uint8_t bus;
+    uint8_t addr;
+    unsigned len;
+    unsigned pos;
+    uint8_t data[BREADESP_I2C_REPLY_MAX];
+} BreadespI2cReply;
 
 struct BreadespDbusState {
     DeviceState parent_obj;
@@ -338,6 +382,13 @@ struct BreadespDbusState {
     MemoryRegion *gpio_orig;
     unsigned gpio_nmr;
     uint32_t gpio_out[2]; /* output level banks (pins 0-31, 32-39) */
+    /* Bridge-driven input pad levels (P3.4): only "owned" pins (driven at
+     * least once) override the underlying model on GPIO_IN/IN1 reads. */
+    uint32_t gpio_in[2];
+    uint32_t gpio_in_owned[2];
+    /* I2C read-reply mailboxes (P3.4), served by the sniffers' recv path. */
+    BreadespI2cReply i2c_replies[BREADESP_I2C_REPLY_SLOTS];
+    bool i2c_reply_slots_warned;
 
     /* GPIO matrix: peripheral output signal selected per pin (0 = unset). */
     uint16_t gpio_out_sel[ESP32_GPIO_PIN_COUNT];
@@ -591,6 +642,73 @@ static void ledc_pwm_update(BreadespDbusState *s)
 }
 
 /* ------------------------------------------------------------------ */
+/* I2C read-reply mailbox (P3.4)                                       */
+
+/* Find the slot for (bus, addr), allocating a free one when missing. */
+static BreadespI2cReply *i2c_reply_slot(BreadespDbusState *s, uint8_t bus,
+                                        uint8_t addr, bool create)
+{
+    unsigned i, free_slot = BREADESP_I2C_REPLY_SLOTS;
+
+    for (i = 0; i < BREADESP_I2C_REPLY_SLOTS; i++) {
+        if (s->i2c_replies[i].used) {
+            if (s->i2c_replies[i].bus == bus && s->i2c_replies[i].addr == addr) {
+                return &s->i2c_replies[i];
+            }
+        } else if (free_slot == BREADESP_I2C_REPLY_SLOTS) {
+            free_slot = i;
+        }
+    }
+    if (!create) {
+        return NULL;
+    }
+    if (free_slot == BREADESP_I2C_REPLY_SLOTS) {
+        if (!s->i2c_reply_slots_warned) {
+            s->i2c_reply_slots_warned = true;
+            warn_report("breadesp-dbus: i2c-out reply mailbox slots exhausted; "
+                        "reply dropped");
+        }
+        return NULL;
+    }
+    memset(&s->i2c_replies[free_slot], 0, sizeof(s->i2c_replies[free_slot]));
+    s->i2c_replies[free_slot].used = true;
+    s->i2c_replies[free_slot].bus = bus;
+    s->i2c_replies[free_slot].addr = addr;
+    return &s->i2c_replies[free_slot];
+}
+
+/* Store a reply (atomic replace: the readout register holds the latest). */
+static void i2c_reply_store(BreadespDbusState *s, uint8_t bus, uint8_t addr,
+                            const uint8_t *data, size_t len)
+{
+    BreadespI2cReply *r;
+
+    if (len > BREADESP_I2C_REPLY_MAX) {
+        warn_report_once("breadesp-dbus: i2c-out reply exceeds %d bytes; "
+                         "dropped", BREADESP_I2C_REPLY_MAX);
+        return;
+    }
+    r = i2c_reply_slot(s, bus, addr, true);
+    if (!r) {
+        return;
+    }
+    memcpy(r->data, data, len);
+    r->len = (unsigned)len;
+    r->pos = 0;
+}
+
+/* Serve one byte of the pending reply; 0xFF once the mailbox has drained. */
+static uint8_t i2c_reply_pop(BreadespDbusState *s, uint8_t bus, uint8_t addr)
+{
+    BreadespI2cReply *r = i2c_reply_slot(s, bus, addr, false);
+
+    if (!r || r->pos >= r->len) {
+        return 0xff;
+    }
+    return r->data[r->pos++];
+}
+
+/* ------------------------------------------------------------------ */
 /* I2C sniffer slave                                                   */
 
 static void sniffer_flush_write(BreadespI2cSniffer *s)
@@ -684,8 +802,11 @@ static uint8_t sniffer_recv(I2CSlave *i2c)
     BreadespI2cSniffer *s = BREADESP_I2C_SNIFFER(i2c);
 
     s->read_cnt++;
-    /* TODO(PRD §6.3): return bridge-supplied data once the reverse
-     * channel exists (P1.3+). */
+    /* P3.4: serve the bridge-supplied read reply for this (bus, addr);
+     * a drained or never-armed mailbox answers 0xFF (SDA idle high). */
+    if (s->owner) {
+        return i2c_reply_pop(s->owner, s->bus_num, s->addr);
+    }
     return 0xff;
 }
 
@@ -914,6 +1035,24 @@ static uint64_t dbus_gpio_read(void *opaque, hwaddr addr, unsigned size)
         memory_region_dispatch_read(s->gpio_orig, addr, &val,
                                     size_memop(size) | MO_LE,
                                     MEMTXATTRS_UNSPECIFIED);
+    }
+    /*
+     * Input injection overlay (P3.4): the stock esp32.gpio model is a
+     * strap-only stub with no qdev input lines, so bridge-driven levels are
+     * merged into the GPIO_IN/IN1 read value here. Only owned pins (driven at
+     * least once) are overridden; every other bit keeps the model's value.
+     */
+    switch (addr) {
+    case ESP32_GPIO_IN_REG:
+        val = (val & ~s->gpio_in_owned[0])
+              | ((uint64_t)s->gpio_in[0] & s->gpio_in_owned[0]);
+        break;
+    case ESP32_GPIO_IN1_REG:
+        val = (val & ~s->gpio_in_owned[1])
+              | ((uint64_t)s->gpio_in[1] & s->gpio_in_owned[1]);
+        break;
+    default:
+        break;
     }
     return val;
 }
@@ -1628,6 +1767,47 @@ static bool json_uint(const char *cur, const char *end, const char *key,
 }
 
 /*
+ * Parse a byte list ("\"data\":[<u8>,...]") whose key is searched within
+ * [cur, obj_end), appending the bytes to `out` (capped at `max`; beyond it is
+ * a hard parse error). Returns a cursor past the closing ']', or NULL on
+ * malformed input.
+ */
+static const char *json_byte_list(const char *cur, const char *obj_end,
+                                  GByteArray *out, unsigned max)
+{
+    const char *p = json_field(cur, obj_end, "\"data\":[");
+
+    if (!p) {
+        return NULL;
+    }
+    /* Byte list until ']': values are 0..255, comma separated. */
+    for (;;) {
+        char *stop;
+        unsigned long v;
+
+        while (p < obj_end && (*p == ' ' || *p == ',')) {
+            p++;
+        }
+        if (p >= obj_end || *p == ']') {
+            break;
+        }
+        v = strtoul(p, &stop, 10);
+        if (stop == p || stop > obj_end || v > 255 || out->len > max) {
+            return NULL;
+        }
+        {
+            guint8 b = (guint8)v;
+            g_byte_array_append(out, &b, 1);
+        }
+        p = stop;
+    }
+    if (p >= obj_end || *p != ']') {
+        return NULL;
+    }
+    return p + 1;
+}
+
+/*
  * Parse one {"kind":"i2s-in",...} object at cur (bounded to its closing
  * brace) and queue the PCM. Returns a cursor past the object, or NULL on a
  * hard parse error. Field order (bus, rate, bits, channels, data) is part of
@@ -1637,7 +1817,6 @@ static const char *dbus_parse_i2s_in(BreadespDbusState *s, const char *cur,
                                      const char *end)
 {
     const char *obj_end = memchr(cur, '}', end - cur);
-    const char *p, *data_end;
     unsigned long bus, rate, bits, channels;
     BreadespI2sChan *c;
     GByteArray *pcm;
@@ -1664,41 +1843,83 @@ static const char *dbus_parse_i2s_in(BreadespDbusState *s, const char *cur,
                          "a register shadow dropped");
         return obj_end + 1;
     }
-    p = json_field(cur, obj_end, "\"data\":[");
-    if (!p) {
-        return NULL;
-    }
-    /* Byte list until ']': values are 0..255, comma separated. */
     pcm = g_byte_array_new();
-    for (;;) {
-        char *stop;
-        unsigned long v;
-
-        while (p < obj_end && (*p == ' ' || *p == ',')) {
-            p++;
-        }
-        if (p >= obj_end || *p == ']') {
-            break;
-        }
-        v = strtoul(p, &stop, 10);
-        if (stop == p || stop > obj_end || v > 255
-            || pcm->len > BREADESP_INJ_QUEUE_MAX) {
-            g_byte_array_free(pcm, TRUE);
-            return NULL;
-        }
-        {
-            guint8 b = (guint8)v;
-            g_byte_array_append(pcm, &b, 1);
-        }
-        p = stop;
-    }
-    data_end = p;
-    if (data_end >= obj_end || *data_end != ']') {
+    if (!json_byte_list(cur, obj_end, pcm, BREADESP_INJ_QUEUE_MAX)) {
         g_byte_array_free(pcm, TRUE);
         return NULL;
     }
     i2s_inj_append(c, pcm->data, pcm->len);
     g_byte_array_free(pcm, TRUE);
+    return obj_end + 1;
+}
+
+/*
+ * Parse one {"kind":"gpio-in","pin":N,"level":L} object at cur (P3.4) and
+ * update the injected input pad level overlaid onto GPIO_IN/IN1 reads.
+ * Field order (pin, level) is part of the protocol contract.
+ */
+static const char *dbus_parse_gpio_in(BreadespDbusState *s, const char *cur,
+                                      const char *end)
+{
+    const char *obj_end = memchr(cur, '}', end - cur);
+    unsigned long pin, level;
+    unsigned bank, bit;
+
+    if (!obj_end) {
+        return NULL;
+    }
+    if (!json_uint(cur, obj_end, "\"pin\":", &pin)
+        || !json_uint(cur, obj_end, "\"level\":", &level)) {
+        return NULL;
+    }
+    if (pin >= ESP32_GPIO_PIN_COUNT || level > 1) {
+        warn_report_once("breadesp-dbus: gpio-in injection with invalid "
+                         "pin/level dropped");
+        return obj_end + 1;
+    }
+    bank = pin / 32;
+    bit = pin % 32;
+    if (level) {
+        s->gpio_in[bank] |= (uint32_t)1 << bit;
+    } else {
+        s->gpio_in[bank] &= ~((uint32_t)1 << bit);
+    }
+    s->gpio_in_owned[bank] |= (uint32_t)1 << bit;
+    return obj_end + 1;
+}
+
+/*
+ * Parse one {"kind":"i2c-out","bus":B,"target":A,"data":[..]} object at cur
+ * (P3.4) and store the reply in the (bus, addr) mailbox the I2C sniffers'
+ * recv path serves. Field order (bus, target, data) is part of the protocol
+ * contract.
+ */
+static const char *dbus_parse_i2c_out(BreadespDbusState *s, const char *cur,
+                                      const char *end)
+{
+    const char *obj_end = memchr(cur, '}', end - cur);
+    unsigned long bus, addr;
+    GByteArray *reply;
+
+    if (!obj_end) {
+        return NULL;
+    }
+    if (!json_uint(cur, obj_end, "\"bus\":", &bus)
+        || !json_uint(cur, obj_end, "\"target\":", &addr)) {
+        return NULL;
+    }
+    if (bus > 1 || addr > 0x7f) {
+        warn_report_once("breadesp-dbus: i2c-out reply with invalid "
+                         "bus/target dropped");
+        return obj_end + 1;
+    }
+    reply = g_byte_array_new();
+    if (!json_byte_list(cur, obj_end, reply, BREADESP_I2C_REPLY_MAX)) {
+        g_byte_array_free(reply, TRUE);
+        return NULL;
+    }
+    i2c_reply_store(s, (uint8_t)bus, (uint8_t)addr, reply->data, reply->len);
+    g_byte_array_free(reply, TRUE);
     return obj_end + 1;
 }
 
@@ -1726,14 +1947,24 @@ static void dbus_in_drain(BreadespDbusState *s)
         cur = (const char *)s->in_buf->data + 4;
         end = cur + len;
         while (cur < end) {
-            const char *kind = g_strstr_len(cur, end - cur,
-                                            "\"kind\":\"i2s-in\"");
+            /* Find the next injection object; dispatch on its kind. Unknown
+             * kinds are skipped (forward compat with newer bridges). */
+            const char *kind = g_strstr_len(cur, end - cur, "\"kind\":\"");
             if (!kind) {
                 break; /* no (further) injections in this frame */
             }
-            cur = dbus_parse_i2s_in(s, kind, end);
+            if (g_str_has_prefix(kind, "\"kind\":\"i2s-in\"")) {
+                cur = dbus_parse_i2s_in(s, kind, end);
+            } else if (g_str_has_prefix(kind, "\"kind\":\"gpio-in\"")) {
+                cur = dbus_parse_gpio_in(s, kind, end);
+            } else if (g_str_has_prefix(kind, "\"kind\":\"i2c-out\"")) {
+                cur = dbus_parse_i2c_out(s, kind, end);
+            } else {
+                cur = kind + strlen("\"kind\":\"");
+                continue;
+            }
             if (!cur) {
-                warn_report("breadesp-dbus: malformed i2s-in injection; "
+                warn_report("breadesp-dbus: malformed reverse injection; "
                             "rest of frame dropped");
                 break;
             }
@@ -1934,6 +2165,12 @@ static void breadesp_dbus_reset_hold(Object *obj, ResetType type)
 
     memset(s->gpio_out, 0, sizeof(s->gpio_out));
     memset(s->gpio_out_sel, 0, sizeof(s->gpio_out_sel));
+    /* P3.4: injected input levels and read replies die with the VM reset;
+     * the bridge re-drives them when the peripheral models re-apply. */
+    memset(s->gpio_in, 0, sizeof(s->gpio_in));
+    memset(s->gpio_in_owned, 0, sizeof(s->gpio_in_owned));
+    memset(s->i2c_replies, 0, sizeof(s->i2c_replies));
+    s->i2c_reply_slots_warned = false;
     memset(s->ledc_timer_conf, 0, sizeof(s->ledc_timer_conf));
     memset(s->ledc_ch_conf0, 0, sizeof(s->ledc_ch_conf0));
     memset(s->ledc_ch_duty, 0, sizeof(s->ledc_ch_duty));
