@@ -99,6 +99,8 @@ interface BridgeApi {
   per: {
     onSnapshot: (cb: (s: unknown) => void) => () => void;
     driveInput: (p: { instanceId: string; pin: string; level: 0 | 1 }) => Promise<void>;
+    /** Rotary knob gesture (P3.4, PRD §F-BB-3): signed detent steps (positive = clockwise). */
+    rotateKnob: (p: { instanceId: string; delta: number }) => Promise<void>;
     /** Local mic capture (P3.2, PRD §F-PER-7): host-mic PCM chunk for one instance. */
     captureChunk: (p: { instanceId: string; rate: number; samples: number[] }) => Promise<void>;
   };

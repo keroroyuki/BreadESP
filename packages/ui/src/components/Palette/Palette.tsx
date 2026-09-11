@@ -1,5 +1,5 @@
 // PRD: §F-BB-2 — Peripheral palette. Drag to place on the breadboard.
-// MVP set per PRD §8: led, button, ssd1306; buzzer lands with P2.3, speaker with P2.4, mic with P3.1.
+// MVP set per PRD §8: led, button, ssd1306; buzzer lands with P2.3, speaker with P2.4, mic with P3.1, knob + sht30 with P3.4.
 const PALETTE: { kind: string; label: string }[] = [
   { kind: 'led', label: 'LED' },
   { kind: 'button', label: 'Push Button' },
@@ -8,6 +8,8 @@ const PALETTE: { kind: string; label: string }[] = [
   { kind: 'speaker', label: 'Speaker (I2S)' },
   { kind: 'oscilloscope', label: 'Oscilloscope' },
   { kind: 'mic', label: 'Microphone (I2S)' },
+  { kind: 'knob', label: 'Rotary Knob' },
+  { kind: 'sht30', label: 'SHT30 Temp/Hum' },
 ];
 
 export function Palette() {

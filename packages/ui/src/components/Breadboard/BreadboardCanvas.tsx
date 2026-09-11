@@ -14,6 +14,8 @@ import { useSimulationStore } from '../../store/simulationStore';
 import { useCaptureStore } from '../../store/captureStore';
 import { bridge } from '../../ipc/bridge';
 import { wirePath } from './Wire';
+import { adjustSht30 } from './sensorDraft';
+import { sht30ConfigFromProps, sht30FormatReading } from '@breadesp/peripherals';
 import {
   MCU_GPIO_PINS,
   MCU_NODE,
@@ -48,6 +50,7 @@ export function BreadboardCanvas() {
   const removePeripheral = useProjectStore((s) => s.removePeripheral);
   const addWire = useProjectStore((s) => s.addWire);
   const removeWire = useProjectStore((s) => s.removeWire);
+  const updatePeripheralProps = useProjectStore((s) => s.updatePeripheralProps);
   const snapshots = useSimulationStore((s) => s.snapshots);
   // P3.2: which mic instances are capturing host audio (drives REC/LIVE toggle).
   const capturing = useCaptureStore((s) => s.capturing);
@@ -454,6 +457,71 @@ export function BreadboardCanvas() {
                     />
                   </Group>
                 )}
+                {item.kind === 'knob' && (
+                  // Input peripheral (P3.4, PRD §F-BB-3): the side buttons
+                  // rotate the encoder one detent per click; the model plays
+                  // the quadrature sequence onto the wired GPIOs.
+                  <Group>
+                    <Circle
+                      x={NODE_W / 2}
+                      y={34}
+                      radius={12}
+                      fill="#cbd5e1"
+                      stroke="#334155"
+                      listening={false}
+                    />
+                    {([[-1, 'CCW', 14], [1, 'CW', NODE_W - 48]] as const).map(([dir, label, x]) => (
+                      <Group
+                        key={label}
+                        onClick={(e) => {
+                          e.cancelBubble = true;
+                          void bridge.per.rotateKnob({ instanceId: item.instanceId, delta: dir }).catch(() => {});
+                        }}
+                        onMouseEnter={hoverCursor('pointer')}
+                        onMouseLeave={hoverCursor('default')}
+                      >
+                        <Rect x={x} y={26} width={34} height={16} fill="#e2e8f0" cornerRadius={4} stroke="#64748b" />
+                        <Text x={x} y={30} width={34} align="center" text={label} fontSize={8} fill="#334155" listening={false} />
+                      </Group>
+                    ))}
+                  </Group>
+                )}
+                {item.kind === 'sht30' && (() => {
+                  // Input peripheral (P3.4, PRD §F-BB-3): the node shows the
+                  // model's text snapshot (falling back to the props-derived
+                  // reading before the Bridge answers); the +/- buttons edit
+                  // netlist props, rebuilt in place by bb:applyNetlist.
+                  const props = netlist.peripherals.find((p) => p.instanceId === item.instanceId)?.props;
+                  const text = snap?.type === 'text'
+                    ? (snap.payload as { text: string }).text
+                    : sht30FormatReading(sht30ConfigFromProps(props));
+                  const buttons: [string, 'temperatureC' | 'humidityRh', 1 | -1, number][] = [
+                    ['T-', 'temperatureC', -1, 8],
+                    ['T+', 'temperatureC', 1, 42],
+                    ['H-', 'humidityRh', -1, 76],
+                    ['H+', 'humidityRh', 1, 110],
+                  ];
+                  return (
+                    <Group>
+                      <Rect x={14} y={22} width={NODE_W - 28} height={20} fill="#f0f9ff" cornerRadius={3} stroke="#0284c7" listening={false} />
+                      <Text x={14} y={27} width={NODE_W - 28} align="center" text={text} fontSize={10} fill="#0c4a6e" listening={false} />
+                      {buttons.map(([label, field, dir, x]) => (
+                        <Group
+                          key={label}
+                          onClick={(e) => {
+                            e.cancelBubble = true;
+                            updatePeripheralProps(item.instanceId, adjustSht30(props, field, dir));
+                          }}
+                          onMouseEnter={hoverCursor('pointer')}
+                          onMouseLeave={hoverCursor('default')}
+                        >
+                          <Rect x={x} y={46} width={30} height={14} fill="#e2e8f0" cornerRadius={3} stroke="#64748b" />
+                          <Text x={x} y={49} width={30} align="center" text={label} fontSize={8} fill="#334155" listening={false} />
+                        </Group>
+                      ))}
+                    </Group>
+                  );
+                })()}
                 {item.kind === 'ssd1306' && (
                   // Live pixels render in ScreenView; canvas preview is a TODO(PRD §F-PER-3).
                   <Group listening={false}>
