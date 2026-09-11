@@ -8,6 +8,8 @@ import { buzzerFactory } from './buzzer';
 import { speakerFactory } from './speaker';
 import { oscilloscopeFactory } from './oscilloscope';
 import { micFactory } from './mic';
+import { knobFactory } from './knob';
+import { sht30Factory } from './sht30';
 
 const factories = new Map<string, PeripheralFactory>();
 
@@ -28,6 +30,6 @@ export function listPeripherals(): PeripheralFactory[] {
 
 /** Register all built-in peripherals. Called once at Bridge startup. */
 export function registerBuiltins(): void {
-  // PRD §8 MVP set: led, button, ssd1306; st7789 P2.1, buzzer P2.3, speaker P2.4, oscilloscope P2.5, mic P3.1.
-  for (const f of [ledFactory, buttonFactory, ssd1306Factory, st7789Factory, buzzerFactory, speakerFactory, oscilloscopeFactory, micFactory]) registerPeripheral(f);
+  // PRD §8 MVP set: led, button, ssd1306; st7789 P2.1, buzzer P2.3, speaker P2.4, oscilloscope P2.5, mic P3.1, knob + sht30 P3.4.
+  for (const f of [ledFactory, buttonFactory, ssd1306Factory, st7789Factory, buzzerFactory, speakerFactory, oscilloscopeFactory, micFactory, knobFactory, sht30Factory]) registerPeripheral(f);
 }

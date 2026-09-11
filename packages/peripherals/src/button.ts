@@ -8,15 +8,17 @@ class ButtonPeripheral implements Peripheral {
 
   constructor(instanceId: string, _ctx: PeripheralContext) {
     this.instanceId = instanceId;
-    // TODO(PRD §F-PER-2): consume ctx (log/onTick) when GPIO input injection lands in P1.
+    // GPIO input injection (P3.4): PeripheralManager.driveInput resolves the
+    // wired MCU GPIO and injects the level over the DBus reverse channel, so
+    // this model keeps no state (momentary switch, level driven by the UI).
   }
 
   onTransaction(): void {
     // Buttons are input-only; nothing to consume from MCU.
   }
 
-  // driveInput is invoked by the UI click handler through the Bridge.
-  // Actual GPIO injection happens in PeripheralManager (it routes driveInput -> MCU input).
+  // driveInput is invoked by the UI click handler through the Bridge;
+  // the manager performs the actual gpio-in injection (P3.4).
 }
 
 export const buttonFactory: PeripheralFactory = {
