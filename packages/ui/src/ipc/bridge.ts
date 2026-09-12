@@ -89,7 +89,8 @@ interface BridgeApi {
     onExit: (cb: (code: number) => void) => () => void;
   };
   proj: {
-    new: (p: { dir: string }) => Promise<void>;
+    /** P4.2 (PRD §F-PROJ-2): optional chip/template picks; resolves to the created ProjectData. */
+    new: (p: { dir: string; chip?: ChipKind; template?: string }) => Promise<ProjectData>;
     open: (p: { dir: string }) => Promise<ProjectData>;
     save: (p: { netlist: Netlist; layout: LayoutFile }) => Promise<void>;
     saveAs: (p: { dir: string; netlist: Netlist; layout: LayoutFile }) => Promise<void>;

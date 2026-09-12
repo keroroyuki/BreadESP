@@ -1,17 +1,20 @@
 // PRD: §F-PROJ-2, §F-BB-6 — Project lifecycle toolbar (new/open/save/saveAs/close).
 // The dir field is a plain path input for MVP (native directory picker is a
 // TODO(PRD §F-PROJ-2)); every action is a `proj:*` IPC round-trip and errors
-// surface as short English messages.
+// surface as short English messages. "New" opens the project wizard
+// (dev-plan task P4.2: chip + template picks) instead of creating directly.
 import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { bridge } from '../../ipc/bridge';
 import { toLayoutFile, toNetlistFile, useProjectStore } from '../../store/projectStore';
+import { ProjectWizard } from '../ProjectWizard/ProjectWizard';
 
 export function ProjectToolbar() {
   const dir = useProjectStore((s) => s.dir);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   // Keep the input in sync with the store after open/new/save-as.
   useEffect(() => {
@@ -37,12 +40,17 @@ export function ProjectToolbar() {
     return false;
   };
 
+  // P4.2: "New" no longer creates directly — the wizard collects chip +
+  // template and performs the proj:new round-trip itself, hydrating the store
+  // from the returned ProjectData.
   const onNew = (): void => {
-    if (!requireTarget('New')) return;
-    run('New', async () => {
-      await bridge.proj.new({ dir: target });
-      useProjectStore.getState().resetProject(target);
-    });
+    setMsg(null);
+    setWizardOpen(true);
+  };
+
+  const onWizardClose = (created: boolean): void => {
+    setWizardOpen(false);
+    if (created) setMsg('New ok');
   };
 
   const onOpen = (): void => {
@@ -95,6 +103,7 @@ export function ProjectToolbar() {
       <button style={btn} disabled={busy} onClick={onSaveAs}>Save as</button>
       <button style={btn} disabled={busy || dir === null} onClick={onClose}>Close</button>
       <span style={msgStyle}>{msg ?? (dir !== null ? `project: ${dir}` : 'no project open')}</span>
+      {wizardOpen && <ProjectWizard initialDir={input.trim()} onClose={onWizardClose} />}
     </div>
   );
 }
