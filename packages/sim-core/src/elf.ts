@@ -5,7 +5,7 @@ import type { ChipKind } from '@breadesp/netlist';
 
 /** e_machine values for the supported chip families. */
 export const EM_XTENSA = 94; // 0x5e — ESP32 / ESP32-S3 (EM_XTENSA per Linux/FreeBSD elf.h)
-export const EM_RISCV = 243; // 0xf3 — ESP32-C3
+export const EM_RISCV = 243; // 0xf3 — ESP32-C3 / ESP32-C6
 
 export interface ElfHeader {
   /** 1 = ELFCLASS32, 2 = ELFCLASS64. */
@@ -52,6 +52,7 @@ export function expectedElfMachine(chip: ChipKind): number {
     case 'esp32s3':
       return EM_XTENSA;
     case 'esp32c3':
+    case 'esp32c6':
       return EM_RISCV;
   }
 }

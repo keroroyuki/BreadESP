@@ -1,6 +1,6 @@
 // PRD: §6.6 — IPC handler registration. Bridges renderer calls to Bridge services.
 import { ipcMain, type BrowserWindow } from 'electron';
-import type { LayoutFile, Netlist } from '@breadesp/netlist';
+import type { ChipKind, LayoutFile, Netlist } from '@breadesp/netlist';
 import type { ProjectManager } from '../project/ProjectManager.js';
 import type { QemuRunner } from '../qemu/QemuRunner.js';
 import type { GdbBridge } from '../debugger/GdbBridge.js';
@@ -18,7 +18,7 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   const { project, qemu, gdb, peripherals } = deps;
 
   // sim:*
-  ipcMain.handle('sim:load', async (_e, p: { elfPath: string; chip: 'esp32' | 'esp32s3' | 'esp32c3'; qemuBin: string; gdbPort?: number; dbus?: { socket?: string; host?: string; port?: number } }) => {
+  ipcMain.handle('sim:load', async (_e, p: { elfPath: string; chip: ChipKind; qemuBin: string; gdbPort?: number; dbus?: { socket?: string; host?: string; port?: number } }) => {
     // Architecture gate before spawn (dev-plan task P0.6, PRD §9).
     await project.validateFirmware(p.elfPath, p.chip);
     return qemu.load({ firmwareElf: p.elfPath, chip: p.chip, qemuBin: p.qemuBin, gdbPort: p.gdbPort, dbus: p.dbus });
@@ -47,7 +47,7 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   ipcMain.handle('sim:sendUart', async (_e, p: { data: string }) => qemu.writeStdin(p.data));
 
   // fw:*
-  ipcMain.handle('fw:load', async (_e, p: { elfPath: string; chip: 'esp32' | 'esp32s3' | 'esp32c3' }) => {
+  ipcMain.handle('fw:load', async (_e, p: { elfPath: string; chip: ChipKind }) => {
     // Architecture gate before spawn (dev-plan task P0.6, PRD §9).
     await project.validateFirmware(p.elfPath, p.chip);
     return qemu.load({ firmwareElf: p.elfPath, chip: p.chip, qemuBin: process.env.BREADESP_QEMU_BIN! });

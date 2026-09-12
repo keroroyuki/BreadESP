@@ -1,7 +1,7 @@
 // PRD: §6.5 — Netlist schema types (single source of truth for wiring persistence).
 // Layout (visual positions) is intentionally NOT part of the netlist; it lives in layout.json.
 
-export type ChipKind = 'esp32' | 'esp32s3' | 'esp32c3'; // MVP: 'esp32' (PRD §8)
+export type ChipKind = 'esp32' | 'esp32s3' | 'esp32c3' | 'esp32c6'; // MVP: 'esp32' (PRD §8)
 
 export interface PeripheralInstance {
   /** Global unique instance id. */

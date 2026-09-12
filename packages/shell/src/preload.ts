@@ -1,7 +1,7 @@
 // PRD: §6.6 — Secure preload bridge. Exposes a typed API to the renderer.
 // All IPC parameters/returns are JSON-serializable (PRD §6.6).
 import { contextBridge, ipcRenderer } from 'electron';
-import type { LayoutFile, Netlist } from '@breadesp/netlist';
+import type { ChipKind, LayoutFile, Netlist } from '@breadesp/netlist';
 import type { ProjectData } from './project/ProjectManager.js';
 
 /** DBus forward channel — mirrors QemuDbusChannel in sim-core (PRD §6.7). */
@@ -14,7 +14,7 @@ export interface SimDbusChannel {
 /** Payload of `sim:load` — mirrors the handler in ipc/handlers.ts (PRD §6.6). */
 export interface SimLoadInput {
   elfPath: string;
-  chip: 'esp32' | 'esp32s3' | 'esp32c3';
+  chip: ChipKind;
   qemuBin: string;
   gdbPort?: number;
   dbus?: SimDbusChannel;

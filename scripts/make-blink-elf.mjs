@@ -1,10 +1,12 @@
-// PRD: §9 — Golden firmware builder: packages/sim-core/fixtures/blink.elf (dev-plan task P0.3).
-// Deterministically assembles a tiny Xtensa LX6 program for the ESP32 and packs it into an
-// ELF32 LSB executable. Used as the golden fixture by QEMU integration tests (PRD §9 可测性).
+// PRD: §9 — Golden firmware builder: packages/sim-core/fixtures/blink.elf (dev-plan task P0.3)
+// and fixtures/s3-blink.elf (dev-plan task P4.1, ESP32-S3 machine mapping).
+// Deterministically assembles a tiny Xtensa LX6/LX7 program for the selected chip and
+// packs it into an ELF32 LSB executable. Used as the golden fixture by QEMU integration
+// tests (PRD §9 可测性).
 //
 // Firmware behavior (M0 acceptance groundwork, dev-plan §2.1):
 //   1. enables GPIO2 as an output,
-//   2. prints "Hello ESP32\r\n" to UART0 (byte writes to the FIFO register),
+//   2. prints the chip's hello banner to UART0 (byte writes to the FIFO register),
 //   3. toggles GPIO2 via OUT_W1TS/OUT_W1TC with a busy delay, forever (blink),
 //   4. mirrors the LED level into the global `led_state` (P1.9 debug fixture).
 //
@@ -14,11 +16,17 @@
 // have real data against this firmware. No .debug_line: the fixture is
 // hand-assembled, symbol breakpoints suffice.
 //
+// Chip memory maps (per ESP-IDF soc headers; S3 addresses additionally verified by
+// booting the fixture under real `qemu-system-xtensa -machine esp32s3`): the Xtensa
+// instruction encodings are identical for LX6 (esp32) and LX7 (esp32s3), so only the
+// peripheral base addresses and the initial IRAM load address differ per chip.
+//
 // Encoder tables and the ELF writer live in scripts/lib/xtensa-elf.mjs (shared with
 // make-i2c-elf.mjs, dev-plan task P1.2). No cross-toolchain is required.
 //
-// Usage: node scripts/make-blink-elf.mjs [--check]
-//   default: (re)write the fixture. --check: verify the committed fixture is up to date.
+// Usage: node scripts/make-blink-elf.mjs [--chip esp32|esp32s3] [--check]
+//   default: (re)write the fixture for the selected chip (default esp32).
+//   --check: verify the committed fixture is up to date.
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -27,27 +35,54 @@ import { Program, buildElf, elfSanity } from './lib/xtensa-elf.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
-const FIXTURE = join(REPO_ROOT, 'packages', 'sim-core', 'fixtures', 'blink.elf');
+const FIXTURE_DIR = join(REPO_ROOT, 'packages', 'sim-core', 'fixtures');
 const log = (msg) => console.log(`[make-blink-elf] ${msg}`);
 
-// --- ESP32 memory-mapped registers used by the firmware (per ESP-IDF soc headers) ---
-const IRAM_BASE = 0x40080000; // ESP32 IRAM; the single PT_LOAD segment is mapped here
-const UART0_FIFO = 0x3ff40000; // UART0 + UART_FIFO_REG (offset 0x0): byte writes transmit
-const GPIO_OUT_W1TS = 0x3ff44008; // GPIO_OUT_W1TS_REG: atomically set output bits
-const GPIO_OUT_W1TC = 0x3ff4400c; // GPIO_OUT_W1TC_REG: atomically clear output bits
-const GPIO_EN_W1TS = 0x3ff44024; // GPIO_ENABLE_W1TS_REG: atomically enable output driver
+// --- Per-chip memory map (ESP-IDF soc headers; P4.1 for the esp32s3 row) ---
+const CHIPS = {
+  esp32: {
+    IRAM_BASE: 0x40080000,      // ESP32 IRAM; the single PT_LOAD segment is mapped here
+    UART0_FIFO: 0x3ff40000,     // UART0 + UART_FIFO_REG (offset 0x0): byte writes transmit
+    GPIO_OUT_W1TS: 0x3ff44008,  // GPIO_OUT_W1TS_REG: atomically set output bits
+    GPIO_OUT_W1TC: 0x3ff4400c,  // GPIO_OUT_W1TC_REG: atomically clear output bits
+    GPIO_EN_W1TS: 0x3ff44024,   // GPIO_ENABLE_W1TS_REG: atomically enable output driver
+    MSG: 'Hello ESP32\r\n',
+    FIXTURE: 'blink.elf',
+    CU_NAME: 'blink.c',
+  },
+  esp32s3: {
+    IRAM_BASE: 0x40370000,      // ESP32-S3 SRAM0 (IRAM); boot entry region
+    UART0_FIFO: 0x60000000,     // UART0 FIFO (S3 peripheral block)
+    GPIO_OUT_W1TS: 0x60004008,  // GPIO_OUT_W1TS_REG (S3 GPIO block, same offsets as ESP32)
+    GPIO_OUT_W1TC: 0x6000400c,  // GPIO_OUT_W1TC_REG
+    GPIO_EN_W1TS: 0x60004024,   // GPIO_ENABLE_W1TS_REG
+    MSG: 'Hello ESP32-S3\r\n',
+    FIXTURE: 's3-blink.elf',
+    CU_NAME: 'blink-s3.c',
+  },
+};
+
+const chipArgIdx = process.argv.indexOf('--chip');
+const chipName = chipArgIdx !== -1 ? process.argv[chipArgIdx + 1] : 'esp32';
+const CHIP = CHIPS[chipName];
+if (CHIP === undefined) {
+  console.error(`[make-blink-elf] unknown chip "${chipName}". Supported: ${Object.keys(CHIPS).join(', ')}.`);
+  process.exit(1);
+}
+const FIXTURE = join(FIXTURE_DIR, CHIP.FIXTURE);
+
 const GPIO2_MASK = 1 << 2; // LED pin of the blink acceptance scenario (PRD §1.4)
-const MSG = Buffer.from('Hello ESP32\r\n', 'ascii'); // printed once per blink cycle
+const MSG = Buffer.from(CHIP.MSG, 'ascii');
 const DELAY_ITER = 0x02ffffff; // busy-loop iterations per blink half-period
 const LED_STATE_INIT = 0xa5; // recognizable initial value (165) for debug-panel e2e
 
 // --- Firmware program ----------------------------------------------------------------------
-const prog = new Program(IRAM_BASE);
+const prog = new Program(CHIP.IRAM_BASE);
 const L = {
-  uart: prog.literal('L_uart', UART0_FIFO),
-  enW1ts: prog.literal('L_en_w1ts', GPIO_EN_W1TS),
-  outW1ts: prog.literal('L_out_w1ts', GPIO_OUT_W1TS),
-  outW1tc: prog.literal('L_out_w1tc', GPIO_OUT_W1TC),
+  uart: prog.literal('L_uart', CHIP.UART0_FIFO),
+  enW1ts: prog.literal('L_en_w1ts', CHIP.GPIO_EN_W1TS),
+  outW1ts: prog.literal('L_out_w1ts', CHIP.GPIO_OUT_W1TS),
+  outW1tc: prog.literal('L_out_w1tc', CHIP.GPIO_OUT_W1TC),
   // L_msg is the 5th literal: 4 words precede it, so the string (after all words)
   // lands at IRAM_BASE + 28. Resolved via callback for robustness.
   msg: prog.literal('L_msg', (A) => A('S_msg')),
@@ -67,7 +102,7 @@ prog.insn('s32i', 's32i  a9, a10, 0      ; GPIO2 -> output driver on', { at_: 9,
 prog.label('app_main');
 prog.label('main_loop');
 prog.insn('l32r', 'l32r  a10, L_msg      ; msg_cursor = message', { at_: 10, lit: L.msg });
-prog.insn('movi', 'movi  a11, 13         ; remaining = 13 chars', { at_: 11, imm: MSG.length });
+prog.insn('movi', 'movi  a11, ' + MSG.length + '         ; remaining = ' + MSG.length + ' chars', { at_: 11, imm: MSG.length });
 prog.label('next_char');
 prog.insn('l8ui', 'l8ui  a12, a10, 0     ; load char', { at_: 12, as_: 10, off: 0 });
 prog.insn('s8i', 's8i   a12, a8, 0       ; UART0 TX', { at_: 12, as_: 8, off: 0 });
@@ -108,7 +143,7 @@ prog.assemble();
 // globals with memory locations and the referenced base types.
 const appMain = prog.addressOf('app_main');
 const appMainEnd = prog.addressOf('app_main_end');
-const CU_NAME = 'blink.c';
+const CU_NAME = CHIP.CU_NAME;
 const DWARF_VARS = [
   { name: 'msg_cursor', reg: 10, type: 'unsigned int' }, // a10: print cursor
   { name: 'remaining', reg: 11, type: 'int' },           // a11: chars left to print
@@ -192,8 +227,8 @@ function buildDwarf({ lowPc, highPc, vars, globals }) {
 
 DWARF_GLOBALS[0].addr = prog.addressOf('D_led_state');
 const { abbrev, info } = buildDwarf({
-  lowPc: IRAM_BASE,
-  highPc: IRAM_BASE + prog.image.length,
+  lowPc: CHIP.IRAM_BASE,
+  highPc: CHIP.IRAM_BASE + prog.image.length,
   vars: DWARF_VARS,
   globals: DWARF_GLOBALS,
 });
@@ -204,7 +239,7 @@ const symbols = [
   { name: 'led_state_written', value: prog.addressOf('led_state_written'), size: 0 },
   { name: 'led_state', value: prog.addressOf('D_led_state'), size: 4, type: 'object' },
 ];
-const elf = buildElf(IRAM_BASE, prog.image, entry, symbols, [
+const elf = buildElf(CHIP.IRAM_BASE, prog.image, entry, symbols, [
   { name: '.debug_info', data: info },
   { name: '.debug_abbrev', data: abbrev },
 ]);
@@ -228,7 +263,7 @@ function dwarfSanity(debugInfo, vars, globals) {
 }
 
 const report = () => {
-  log(`image ${prog.image.length} bytes, ELF ${elf.length} bytes, sha256 ${sha256}`);
+  log(`chip ${chipName}: image ${prog.image.length} bytes, ELF ${elf.length} bytes, sha256 ${sha256}`);
   for (const s of symbols) log(`symbol ${s.name} = 0x${s.value.toString(16)} (size ${s.size})`);
   log(`DWARF: ${DWARF_VARS.length} locals, ${DWARF_GLOBALS.length} global, .debug_info ${info.length} bytes`);
   log('disassembly:');

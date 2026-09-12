@@ -2,7 +2,7 @@
 // AI Agent: when editing types.ts, edit schema.ts in the same change to keep them in sync.
 import { z } from 'zod';
 
-export const chipKindSchema = z.enum(['esp32', 'esp32s3', 'esp32c3']);
+export const chipKindSchema = z.enum(['esp32', 'esp32s3', 'esp32c3', 'esp32c6']);
 
 export const peripheralInstanceSchema = z.object({
   instanceId: z.string().min(1),

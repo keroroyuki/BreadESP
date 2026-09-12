@@ -1,6 +1,8 @@
 // PRD: §4, §5 — Construct the QEMU-ESP32 command line for a given firmware + netlist.
-// AI Agent: this runs qemu-system-xtensa (espressif/qemu). Binary path resolved at runtime,
-// never checked into the repo (PRD §10.6).
+// AI Agent: the binary is a per-family system emulator from espressif/qemu, resolved at
+// runtime, never checked into the repo (PRD §10.6). Xtensa chips (esp32/s3) run
+// qemu-system-xtensa; RISC-V chips (c3/c6) run qemu-system-riscv32 — see
+// qemuSystemForChip(). The caller passes the matching binary via `qemuBin`.
 import type { ChipKind } from '@breadesp/netlist';
 
 /** DBus forward channel (PRD §4.2): the custom device connects out to the Bridge. */
@@ -74,10 +76,32 @@ export function buildQemuArgs(input: QemuArgsInput): string[] {
   return argv;
 }
 
+/** QEMU system emulator that runs a chip family (PRD §5: espressif/qemu). */
+export type QemuSystem = 'qemu-system-xtensa' | 'qemu-system-riscv32';
+
+/** Machine name of each chip on its emulator (verified against espressif/qemu -machine help). */
 function chipToMachine(chip: ChipKind): string {
   switch (chip) {
     case 'esp32': return 'esp32';
     case 'esp32s3': return 'esp32s3';
     case 'esp32c3': return 'esp32c3';
+    case 'esp32c6': return 'esp32c6';
+  }
+}
+
+/**
+ * System emulator binary name for a chip (dev-plan task P4.1): esp32/s3 are
+ * Xtensa LX6/LX7 and live in qemu-system-xtensa; esp32c3/esp32c6 are RISC-V
+ * and live in qemu-system-riscv32. Passing the wrong-family binary fails in
+ * QEMU with "machine ... not found" — resolve the binary by this mapping.
+ */
+export function qemuSystemForChip(chip: ChipKind): QemuSystem {
+  switch (chip) {
+    case 'esp32':
+    case 'esp32s3':
+      return 'qemu-system-xtensa';
+    case 'esp32c3':
+    case 'esp32c6':
+      return 'qemu-system-riscv32';
   }
 }

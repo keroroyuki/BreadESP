@@ -1,6 +1,6 @@
 // PRD: §6.6 — Thin typed wrapper around window.breadesp (exposed by preload.ts).
 // Renderer never touches Node directly.
-import type { LayoutFile, Netlist } from '@breadesp/netlist';
+import type { ChipKind, LayoutFile, Netlist } from '@breadesp/netlist';
 
 /** DBus forward channel — mirrors SimDbusChannel in shell/src/preload.ts (PRD §6.7). */
 interface SimDbusChannel {
@@ -21,7 +21,7 @@ interface ProjectData {
 /** Payload of `sim:load` — mirrors shell/src/preload.ts (PRD §6.6). */
 interface SimLoadInput {
   elfPath: string;
-  chip: 'esp32' | 'esp32s3' | 'esp32c3';
+  chip: ChipKind;
   qemuBin: string;
   gdbPort?: number;
   dbus?: SimDbusChannel;

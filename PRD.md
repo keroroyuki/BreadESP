@@ -271,7 +271,9 @@ export interface RenderSnapshot {
 ```ts
 export interface Netlist {
   version: 1;
-  chip: 'esp32' | 'esp32s3' | 'esp32c3';  // MVP: 'esp32'
+  // P4 起支持多芯片：esp32/esp32s3 走 qemu-system-xtensa（Xtensa），
+  // esp32c3/esp32c6 走 qemu-system-riscv32（RISC-V）。
+  chip: 'esp32' | 'esp32s3' | 'esp32c3' | 'esp32c6';  // MVP: 'esp32'
   peripherals: PeripheralInstance[];
   wires: Wire[];
 }
