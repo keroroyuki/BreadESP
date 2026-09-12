@@ -58,6 +58,7 @@ describe('expectedElfMachine', () => {
     expect(expectedElfMachine('esp32')).toBe(EM_XTENSA);
     expect(expectedElfMachine('esp32s3')).toBe(EM_XTENSA);
     expect(expectedElfMachine('esp32c3')).toBe(EM_RISCV);
+    expect(expectedElfMachine('esp32c6')).toBe(EM_RISCV);
   });
 });
 
@@ -67,10 +68,17 @@ describe('validateElf', () => {
     expect(validateElf(blink, 'esp32s3').ok).toBe(true);
   });
 
-  it('rejects the golden Xtensa ELF for esp32c3 (RISC-V target)', () => {
-    const { ok, issues } = validateElf(blink, 'esp32c3');
-    expect(ok).toBe(false);
-    expect(issues.some((i) => i.message.includes('does not match esp32c3'))).toBe(true);
+  it('accepts a RISC-V image for esp32c3 and esp32c6 (dev-plan P4.1)', () => {
+    expect(validateElf(elfHeader({ machine: EM_RISCV }), 'esp32c3').ok).toBe(true);
+    expect(validateElf(elfHeader({ machine: EM_RISCV }), 'esp32c6').ok).toBe(true);
+  });
+
+  it('rejects the golden Xtensa ELF for esp32c3 and esp32c6 (RISC-V targets)', () => {
+    for (const chip of ['esp32c3', 'esp32c6'] as const) {
+      const { ok, issues } = validateElf(blink, chip);
+      expect(ok).toBe(false);
+      expect(issues.some((i) => i.message.includes(`does not match ${chip}`))).toBe(true);
+    }
   });
 
   it('rejects a non-target e_machine with the expected machine in the message', () => {

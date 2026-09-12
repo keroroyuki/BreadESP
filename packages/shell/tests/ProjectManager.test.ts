@@ -52,6 +52,17 @@ describe('ProjectManager.validateFirmware (P0.6)', () => {
     );
   });
 
+  it('accepts a RISC-V ELF for esp32c3/esp32c6 and rejects Xtensa for esp32c6 (P4.1)', async () => {
+    const riscv = join(tmp, 'riscv.elf');
+    await writeFile(riscv, elfHeader(243)); // EM_RISCV (0xf3)
+    const pm = new ProjectManager();
+    await expect(pm.validateFirmware(riscv, 'esp32c3')).resolves.toBeUndefined();
+    await expect(pm.validateFirmware(riscv, 'esp32c6')).resolves.toBeUndefined();
+    await expect(pm.validateFirmware(BLINK_ELF, 'esp32c6')).rejects.toThrow(
+      /\[BB-101\].*does not match esp32c6 \(expected 0xf3\)/,
+    );
+  });
+
   it('rejects a non-ELF file', async () => {
     const notElf = join(tmp, 'fake.elf');
     await writeFile(notElf, 'not an elf at all');

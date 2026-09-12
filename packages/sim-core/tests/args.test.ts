@@ -1,6 +1,6 @@
 // PRD: §4.2 — QEMU command line construction (boot path, control channels, sandbox).
 import { describe, expect, it } from 'vitest';
-import { buildQemuArgs } from '../src/args.js';
+import { buildQemuArgs, qemuSystemForChip } from '../src/args.js';
 
 const BASE = {
   qemuBin: '/opt/qemu/qemu-system-xtensa',
@@ -18,10 +18,25 @@ describe('buildQemuArgs', () => {
     expect(argv).not.toContain('-drive');
   });
 
-  it('maps chip to machine type', () => {
-    expect(buildQemuArgs({ ...BASE, chip: 'esp32' })).toContain('esp32');
-    expect(buildQemuArgs({ ...BASE, chip: 'esp32s3' })).toContain('esp32s3');
-    expect(buildQemuArgs({ ...BASE, chip: 'esp32c3' })).toContain('esp32c3');
+  it('maps every supported chip to its QEMU machine name (dev-plan P4.1)', () => {
+    // Assert the exact -machine <name> pair, not a bare substring.
+    const machineOf = (chip: string) => {
+      const argv = buildQemuArgs({ ...BASE, chip } as typeof BASE);
+      return argv[argv.indexOf('-machine') + 1];
+    };
+    expect(machineOf('esp32')).toBe('esp32');
+    expect(machineOf('esp32s3')).toBe('esp32s3');
+    expect(machineOf('esp32c3')).toBe('esp32c3');
+    expect(machineOf('esp32c6')).toBe('esp32c6');
+  });
+
+  it('maps each chip family to its QEMU system emulator', () => {
+    // Xtensa chips run qemu-system-xtensa; RISC-V chips need qemu-system-riscv32
+    // ("machine not found" on the wrong family — dev-plan P4.1).
+    expect(qemuSystemForChip('esp32')).toBe('qemu-system-xtensa');
+    expect(qemuSystemForChip('esp32s3')).toBe('qemu-system-xtensa');
+    expect(qemuSystemForChip('esp32c3')).toBe('qemu-system-riscv32');
+    expect(qemuSystemForChip('esp32c6')).toBe('qemu-system-riscv32');
   });
 
   it('exposes UART0 on stdio and disables networking by default', () => {

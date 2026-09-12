@@ -19,6 +19,13 @@ describe('validateNetlist', () => {
     expect(res.issues).toEqual([]);
   });
 
+  it('accepts every schema chip kind incl. esp32c6 (dev-plan P4.1)', () => {
+    for (const chip of ['esp32', 'esp32s3', 'esp32c3', 'esp32c6'] as const) {
+      const res = validateNetlist({ ...validNetlist, chip });
+      expect(res.ok).toBe(true);
+    }
+  });
+
   it('rejects a duplicate peripheral instanceId', () => {
     const res = validateNetlist({
       ...validNetlist,
