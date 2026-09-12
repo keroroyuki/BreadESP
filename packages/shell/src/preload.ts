@@ -93,7 +93,12 @@ const api = {
   },
   // proj:*
   proj: {
-    new: (p: { dir: string }) => ipcRenderer.invoke('proj:new', p),
+    // P4.2 (PRD §F-PROJ-2): optional chip/template picks from the new-project
+    // wizard; returns the freshly created, Bridge-validated ProjectData.
+    // IPC boundary: invoke is untyped over the wire; the main side validates
+    // the project before returning it, so this is safe.
+    new: (p: { dir: string; chip?: ChipKind; template?: string }) =>
+      ipcRenderer.invoke('proj:new', p) as Promise<ProjectData>,
     // IPC boundary: invoke is untyped over the wire; the main side validates
     // the whole project before returning it (openProject), so this is safe.
     open: (p: { dir: string }) => ipcRenderer.invoke('proj:open', p) as Promise<ProjectData>,

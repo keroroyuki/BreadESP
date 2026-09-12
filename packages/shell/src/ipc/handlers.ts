@@ -1,5 +1,6 @@
 // PRD: §6.6 — IPC handler registration. Bridges renderer calls to Bridge services.
 import { ipcMain, type BrowserWindow } from 'electron';
+import { chipKindSchema } from '@breadesp/netlist';
 import type { ChipKind, LayoutFile, Netlist } from '@breadesp/netlist';
 import type { ProjectManager } from '../project/ProjectManager.js';
 import type { QemuRunner } from '../qemu/QemuRunner.js';
@@ -85,7 +86,19 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   ipcMain.handle('dbg:evaluate', async (_e, p: { expr: string }) => gdb.evaluate(p.expr));
 
   // proj:*
-  ipcMain.handle('proj:new', async (_e, p: { dir: string }) => project.newProject(p.dir));
+  // P4.2 (PRD §F-PROJ-2): new takes the wizard's chip/template picks; the
+  // payload is renderer-controlled, so validate at this boundary. Unknown
+  // templates/chips are rejected deeper by ProjectManager with [BB-125].
+  ipcMain.handle('proj:new', async (_e, p: { dir: string; chip?: ChipKind; template?: string }) => {
+    if (
+      typeof p?.dir !== 'string' || p.dir.length === 0 ||
+      (p.chip !== undefined && !chipKindSchema.safeParse(p.chip).success) ||
+      (p.template !== undefined && (typeof p.template !== 'string' || p.template.length === 0))
+    ) {
+      throw new Error('[BB-126] invalid proj:new payload (dir/chip/template)');
+    }
+    return project.newProject(p.dir, { chip: p.chip, template: p.template });
+  });
   ipcMain.handle('proj:open', async (_e, p: { dir: string }) => project.openProject(p.dir));
   // IPC boundary: payloads arrive as plain JSON data; saveProject re-validates
   // both halves before anything is written (PRD §6.6).

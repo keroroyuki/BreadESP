@@ -2,7 +2,7 @@
 // Layout is stored separately from the netlist (PRD §6.5, §F-BB-4).
 import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { validateLayout, validateNetlist } from '@breadesp/netlist';
+import { buildTemplateProject, chipKindSchema, validateLayout, validateNetlist } from '@breadesp/netlist';
 import type { ChipKind, LayoutFile, Netlist } from '@breadesp/netlist';
 import { validateElf } from '@breadesp/sim-core';
 
@@ -54,14 +54,37 @@ async function readJson(file: string, code: string): Promise<unknown> {
   }
 }
 
+/** Options for `newProject` — the wizard's chip/template picks (dev-plan P4.2). */
+export interface NewProjectOptions {
+  /** Target chip; defaults to 'esp32' (MVP chip, PRD §8). */
+  chip?: ChipKind;
+  /** Project template id (@breadesp/netlist templates); defaults to 'empty'. */
+  template?: string;
+}
+
 export class ProjectManager {
   private dir: string | null = null;
 
   /**
-   * Create a skeleton project. Refuses to clobber an existing project
-   * (new/save-as must target a fresh directory).
+   * Create a project from a template (dev-plan task P4.2). Refuses to clobber
+   * an existing project (new/save-as must target a fresh directory). The
+   * template/chip are validated before anything touches disk, then the two
+   * persistence halves are written and the project is returned fully
+   * validated (same shape as openProject).
    */
-  async newProject(dir: string): Promise<void> {
+  async newProject(dir: string, options?: NewProjectOptions): Promise<ProjectData> {
+    const chip: ChipKind = options?.chip ?? 'esp32';
+    const templateId = options?.template ?? 'empty';
+    if (!chipKindSchema.safeParse(chip).success) {
+      throw new Error(`[BB-125] unknown chip "${String(chip)}" (expected esp32/esp32s3/esp32c3/esp32c6)`);
+    }
+    let built: { netlist: Netlist; layout: LayoutFile };
+    try {
+      built = buildTemplateProject(templateId, chip);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`[BB-125] ${reason}`);
+    }
     if (await pathExists(join(dir, META_FILE))) {
       throw new Error(`[BB-124] project already exists at ${dir}; pick a new directory`);
     }
@@ -69,8 +92,9 @@ export class ProjectManager {
     await mkdir(dir, { recursive: true });
     const now = Date.now();
     await writeFile(join(dir, META_FILE), JSON.stringify({ version: 1, createdAt: now, updatedAt: now }, null, 2));
-    await writeFile(join(dir, NETLIST_FILE), JSON.stringify(defaultNetlist(), null, 2));
-    await writeFile(join(dir, LAYOUT_FILE), JSON.stringify(defaultLayout(), null, 2));
+    await writeFile(join(dir, NETLIST_FILE), JSON.stringify(built.netlist, null, 2));
+    await writeFile(join(dir, LAYOUT_FILE), JSON.stringify(built.layout, null, 2));
+    return this.openProject(dir);
   }
 
   /** Open a project and return its full validated state; a failed open keeps the previous state. */
@@ -171,12 +195,4 @@ export class ProjectManager {
     if (!ok) throw new Error(`[BB-123] invalid layout in ${file}: ${issues.map((i) => i.message).join('; ')}`);
     return data as LayoutFile;
   }
-}
-
-function defaultNetlist(): Netlist {
-  return { version: 1, chip: 'esp32', peripherals: [], wires: [] };
-}
-
-function defaultLayout(): LayoutFile {
-  return { version: 1, items: [] };
 }
