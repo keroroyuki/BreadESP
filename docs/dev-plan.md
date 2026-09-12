@@ -56,7 +56,7 @@
 - **M1**（任务 1.1–1.10 已完成，Electron 应用级手动回归随收尾统一进行）：UI 拖拽 LED 连 GPIO2，OLED 显示固件绘制的文字，可断点单步。
 - **M2**（进行中，任务 2.1–2.3 已完成）：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
 - **M3**（已达成 2026-09-11，任务 3.1–3.4 完成）：麦克风波形注入后固件能读到采样值；旋钮正交序列与 SHT30 读回复经真实 QEMU e2e 验证。
-- **M4**（未开始）：切换芯片型号后同一工程可在 ESP32/S3 跑通。
+- **M4**（进行中，任务 4.1 已完成）：切换芯片型号后同一工程可在 ESP32/S3 跑通（S3 已真实 QEMU 验证；C3/C6 的 machine/仿真器映射与门控就绪，等待 riscv32 版 QEMU 二进制接入后做真实启动验证）。
 - **M5**（未开始）：第三方包 `registerPeripheral()` 后 UI 自动出现新器件。
 
 ---
@@ -119,13 +119,13 @@
 
 ### Phase 4 — 多芯片与工程化（M4）
 
-| # | 任务 | 产物 |
-|---|---|---|
-| 4.1 | sim-core 支持 S3/C3/C6 machine 映射 | 多芯片 |
-| 4.2 | 工程向导（选芯片/选模板） | 新建流程 |
-| 4.3 | PlatformIO/IDF 工程关联（自动发现 build/*.elf） | 联动 |
-| 4.4 | 条件断点 / watchpoint | 调试增强 |
-| 4.5 | DAP 适配器（接入 VS Code） | 跨工具调试 |
+| # | 任务 | 产物 | 状态 |
+|---|---|---|---|
+| 4.1 | sim-core 支持 S3/C3/C6 machine 映射 | 多芯片 | 已完成 2026-09-12 |
+| 4.2 | 工程向导（选芯片/选模板） | 新建流程 | |
+| 4.3 | PlatformIO/IDF 工程关联（自动发现 build/*.elf） | 联动 | |
+| 4.4 | 条件断点 / watchpoint | 调试增强 | |
+| 4.5 | DAP 适配器（接入 VS Code） | 跨工具调试 | |
 
 ### Phase 5 — 生态与扩展（M5）
 
@@ -388,7 +388,7 @@ Previously applyNetlist leaked old instances on re-apply.
 | `pnpm test` | 全仓测试 |
 | `pnpm fetch-qemu` | 下载 QEMU 二进制 |
 | `node scripts/build-qemu-device.mjs [--target linux-docker\|windows-msys2]` | 构建 breadesp-dbus 设备版 QEMU |
-| `node scripts/make-blink-elf.mjs` / `make-i2c-elf.mjs` / `make-uart-echo-elf.mjs` / `make-knob-elf.mjs` / `make-sht-elf.mjs` | 重新生成测试固件 |
+| `node scripts/make-blink-elf.mjs [--chip esp32\|esp32s3]` / `make-i2c-elf.mjs` / `make-uart-echo-elf.mjs` / `make-knob-elf.mjs` / `make-sht-elf.mjs` | 重新生成测试固件 |
 | `pnpm dev` | 启动 Electron + Vite dev |
 | `pnpm build` | 构建所有包 |
 
@@ -656,6 +656,28 @@ Previously applyNetlist leaked old instances on re-apply.
 > `Peripheral.rotate` 为 §6.2 追加式可选成员（向后兼容），sendInject 按 kind 逐字段
 > 序列化（字段顺序即协议契约，杜绝 P3.1 丢 kind 事故类）。button 的 GPIO 注入 TODO
 > 随 driveInput 真接通透随之闭合（M1 清单"按键注入"项的设备侧路径自此存在）。
+
+> P4.1 验证记录（2026-09-12）：`pnpm typecheck` 0 错误；全仓测试 Windows 464 通过 + 13 跳过
+> （门控 e2e 11 项 breadesp 设备版 + 2 项 GDB 环境门控；较 P3.4 基线的 qemu-uart 两例
+> 本次随本地 QEMU manifest 就绪转为真实执行）。分四层验证——
+> sim-core args/elf 22 项单测（-machine 精确对值断言 esp32/esp32s3/esp32c3/esp32c6、
+> qemuSystemForChip 族映射 xtensa|riscv32、EM_RISCV 对 c3/c6 双双接受、Xtensa 金标
+> 对 c3/c6 拒绝且错误消息点名 chip）；netlist schema 10 项（四种 chip 全部过
+> validateNetlist）；shell ProjectManager 20 项（[BB-101] 对 c6 的接受/拒绝路径）；
+> 真实 QEMU e2e（s3-machine.e2e.test.ts）3 项——blink.elf 经同一 QemuRunner 路径
+> 在 `-machine esp32` 打印 `Hello ESP32\r\n`、s3-blink.elf 在 `-machine esp32s3`
+> 打印 `Hello ESP32-S3\r\n`、Xtensa 二进制被要求跑 esp32c3 machine 时 QEMU 立即
+> 退出且 runner status='error'（F-SIM-4 不挂起）。金标固件 `s3-blink.elf` 由
+> `scripts/make-blink-elf.mjs --chip esp32s3` 确定性生成（LX6/LX7 编码相同，
+> 仅 UART/GPIO/IRAM 基址随芯片分表；S3 基址经真实 QEMU 启动验证），`--check`
+> 模式校验 blink.elf 与 s3-blink.elf 双 fixture 无漂移。
+> 设计要点：espressif/qemu 按 CPU 族分发两个系统仿真器——esp32/esp32s3（Xtensa
+> LX6/LX7）在 qemu-system-xtensa，esp32c3/esp32c6（RISC-V）需 qemu-system-riscv32
+> （本任务验证当日 GitHub 不可达未能拉取，留待接入后做 C3/C6 真实启动 e2e）；
+> `qemuSystemForChip()` 导出族映射供二进制解析使用，错误族组合在 QEMU 侧以
+> "no machine found" 立即失败（e2e 第 3 例冻结该行为）。ChipKind 扩展 esp32c6
+> 为 §6.5 契约扩展，PRD 与代码同一 commit 提交；shell/ui 的 chip 类型收敛到
+> `@breadesp/netlist` 的 ChipKind（消灭三处手写联合漂移点）。
 
 ### M2 清单
 - [x] TFT 渲染 rgb565 彩图
