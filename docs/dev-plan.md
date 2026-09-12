@@ -56,7 +56,7 @@
 - **M1**（任务 1.1–1.10 已完成，Electron 应用级手动回归随收尾统一进行）：UI 拖拽 LED 连 GPIO2，OLED 显示固件绘制的文字，可断点单步。
 - **M2**（进行中，任务 2.1–2.3 已完成）：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
 - **M3**（已达成 2026-09-11，任务 3.1–3.4 完成）：麦克风波形注入后固件能读到采样值；旋钮正交序列与 SHT30 读回复经真实 QEMU e2e 验证。
-- **M4**（进行中，任务 4.1 已完成）：切换芯片型号后同一工程可在 ESP32/S3 跑通（S3 已真实 QEMU 验证；C3/C6 的 machine/仿真器映射与门控就绪，等待 riscv32 版 QEMU 二进制接入后做真实启动验证）。
+- **M4**（进行中，任务 4.1–4.2 已完成）：切换芯片型号后同一工程可在 ESP32/S3 跑通（S3 已真实 QEMU 验证；C3/C6 的 machine/仿真器映射与门控就绪，等待 riscv32 版 QEMU 二进制接入后做真实启动验证）；新建工程向导支持选芯片/选模板。
 - **M5**（未开始）：第三方包 `registerPeripheral()` 后 UI 自动出现新器件。
 
 ---
@@ -122,7 +122,7 @@
 | # | 任务 | 产物 | 状态 |
 |---|---|---|---|
 | 4.1 | sim-core 支持 S3/C3/C6 machine 映射 | 多芯片 | 已完成 2026-09-12 |
-| 4.2 | 工程向导（选芯片/选模板） | 新建流程 | |
+| 4.2 | 工程向导（选芯片/选模板） | 新建流程 | 已完成 2026-09-12 |
 | 4.3 | PlatformIO/IDF 工程关联（自动发现 build/*.elf） | 联动 | |
 | 4.4 | 条件断点 / watchpoint | 调试增强 | |
 | 4.5 | DAP 适配器（接入 VS Code） | 跨工具调试 | |
@@ -678,6 +678,28 @@ Previously applyNetlist leaked old instances on re-apply.
 > "no machine found" 立即失败（e2e 第 3 例冻结该行为）。ChipKind 扩展 esp32c6
 > 为 §6.5 契约扩展，PRD 与代码同一 commit 提交；shell/ui 的 chip 类型收敛到
 > `@breadesp/netlist` 的 ChipKind（消灭三处手写联合漂移点）。
+
+> P4.2 验证记录（2026-09-12）：`pnpm typecheck` 0 错误；全仓测试 Windows 488 通过
+> + 13 跳过（门控 e2e，同 P4.1 基线；较 P4.1 净增 24 项）。分三层验证——
+> netlist 模板层 9 项单测（注册表顺序与元数据非空、每个模板 × 每个支持的芯片
+> 产物均过 validateNetlist/validateLayout 且两半引用同一实例集、blink-led 全芯片
+> 连线 mcu GPIO2→led-1.A、oled-ssd1306 按芯片 I2C0 默认引脚表 esp32=21/22,
+> s3/c3=8/9, c6=6/7、未知模板与不支持芯片拒绝、listTemplates 防御性拷贝、
+> templatesForChip 过滤保序）；shell 层 ProjectManager 6 项（模板+芯片落盘并返回
+> 校验后的 ProjectData、返回与磁盘零漂移、OLED 模板 c6 引脚、无选项保持
+> esp32/empty 旧行为、未知模板/越界芯片 [BB-125] 均先验证不落盘、带选项仍
+> [BB-124] 拒绝覆盖）与 IPC 契约 3 项（proj:new 携带 chip/template 透传并返回
+> ProjectData、无选项旧调用兼容、7 种畸形负载 [BB-126] 拒绝且未触达
+> ProjectManager）；UI 层 wizardDraft 6 项（默认 esp32/empty、模板列表随芯片
+> 过滤、patch 合并且跨芯片保留受支持模板、失去支持时回退 'empty'、空目录阻断
+> Create、全部芯片×模板组合可通过校验）。真实 QEMU e2e 不适用（本任务不触碰
+> 固件加载链路）；模板产出的网表形状（led/ssd1306 + GPIO/I2C 连线）正是
+> netlist-routing/dbus-device e2e 已在真实 breadesp QEMU 上验证过的同一形状。
+> 设计要点：模板注册表落在 `@breadesp/netlist`（与 types/schema 同包同源），
+> shell 写盘与 UI 向导共用一处真相；`proj:new` 负载为 §6.6 追加式可选扩展
+> （chip?/template? 缺省保持旧行为），`newProject` 返回值由 void 升级为校验后
+> ProjectData（向后兼容，UI 直接水合，打开与新建走同一 loadProject 路径）；
+> ProjectToolbar 的 New 改为打开 ProjectWizard 模态（目录预填自工具栏输入）。
 
 ### M2 清单
 - [x] TFT 渲染 rgb565 彩图
