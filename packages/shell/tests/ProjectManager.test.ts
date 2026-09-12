@@ -243,3 +243,73 @@ describe('ProjectManager project lifecycle (P1.8)', () => {
     expect(await reopened.loadNetlist()).toEqual(NETLIST);
   });
 });
+
+describe('ProjectManager new-project wizard options (P4.2)', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'breadesp-p42-'));
+  afterAll(async () => { await rm(tmp, { recursive: true, force: true }); });
+
+  it('creates from a template + chip and returns the validated ProjectData', async () => {
+    const dir = join(tmp, 'blink-s3');
+    const pm = new ProjectManager();
+    const data = await pm.newProject(dir, { chip: 'esp32s3', template: 'blink-led' });
+    expect(data.dir).toBe(dir);
+    expect(data.netlist).toEqual({
+      version: 1,
+      chip: 'esp32s3',
+      peripherals: [{ instanceId: 'led-1', kind: 'led' }],
+      wires: [{ id: 'wire-1', from: { instanceId: 'mcu', pin: 'GPIO2' }, to: { instanceId: 'led-1', pin: 'A' } }],
+    });
+    expect(data.layout).toEqual({
+      version: 1,
+      items: [{ instanceId: 'led-1', x: 120, y: 60, kind: 'led' }],
+    });
+    expect(data.firmwareElf).toBeNull();
+    // What was returned is what landed on disk (no in-memory/disk drift).
+    const onDisk = JSON.parse(await readFile(join(dir, 'netlist.json'), 'utf8'));
+    expect(onDisk).toEqual(data.netlist);
+  });
+
+  it('wires the OLED template to the chip-specific default I2C0 pins', async () => {
+    const dir = join(tmp, 'oled-c6');
+    const pm = new ProjectManager();
+    const data = await pm.newProject(dir, { chip: 'esp32c6', template: 'oled-ssd1306' });
+    const pins = data.netlist.wires.map((w) => `${w.from.pin}->${w.to.pin}`).sort();
+    expect(pins).toEqual(['GPIO6->SDA', 'GPIO7->SCL']);
+  });
+
+  it('defaults to esp32 + empty when no options are given', async () => {
+    const dir = join(tmp, 'defaults');
+    const pm = new ProjectManager();
+    const data = await pm.newProject(dir);
+    expect(data.netlist).toEqual({ version: 1, chip: 'esp32', peripherals: [], wires: [] });
+    expect(data.layout).toEqual({ version: 1, items: [] });
+  });
+
+  it('rejects an unknown template with [BB-125] and writes nothing', async () => {
+    const dir = join(tmp, 'bad-template');
+    const pm = new ProjectManager();
+    await expect(pm.newProject(dir, { template: 'nope' })).rejects.toThrow(
+      '[BB-125] unknown project template: nope',
+    );
+    // Validation happens before any disk write: no directory was created.
+    await expect(readFile(join(dir, 'meta.json'), 'utf8')).rejects.toThrow();
+  });
+
+  it('rejects an out-of-contract chip with [BB-125] and writes nothing', async () => {
+    const dir = join(tmp, 'bad-chip');
+    const pm = new ProjectManager();
+    await expect(pm.newProject(dir, { chip: 'esp32h2' as Netlist['chip'] })).rejects.toThrow(
+      /\[BB-125\] unknown chip "esp32h2"/,
+    );
+    await expect(readFile(join(dir, 'meta.json'), 'utf8')).rejects.toThrow();
+  });
+
+  it('still refuses to clobber an existing project when options are given', async () => {
+    const dir = join(tmp, 'clobber-with-options');
+    const pm = new ProjectManager();
+    await pm.newProject(dir, { chip: 'esp32s3', template: 'blink-led' });
+    await expect(pm.newProject(dir, { chip: 'esp32c3', template: 'empty' })).rejects.toThrow(
+      /\[BB-124\] project already exists at/,
+    );
+  });
+});

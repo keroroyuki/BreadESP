@@ -319,6 +319,41 @@ describe('preload ↔ handlers IPC contract (P1.1)', () => {
     expect(project.saveProject).toHaveBeenCalledWith(netlist, layout);
   });
 
+  it('routes proj:new with the wizard chip/template picks and returns ProjectData (P4.2)', async () => {
+    const data = { dir: '/tmp/w', meta: { version: 1, createdAt: 1, updatedAt: 2 }, netlist: {}, layout: {}, firmwareElf: null };
+    project.newProject.mockReturnValueOnce(data);
+    const handler = state.handles.get('proj:new');
+    expect(handler).toBeDefined();
+    await expect(handler!(undefined, { dir: '/tmp/w', chip: 'esp32s3', template: 'blink-led' })).resolves.toBe(data);
+    expect(project.newProject).toHaveBeenCalledWith('/tmp/w', { chip: 'esp32s3', template: 'blink-led' });
+  });
+
+  it('routes proj:new without options (legacy callers keep working)', async () => {
+    project.newProject.mockClear();
+    const handler = state.handles.get('proj:new');
+    await handler!(undefined, { dir: '/tmp/plain' });
+    expect(project.newProject).toHaveBeenCalledWith('/tmp/plain', { chip: undefined, template: undefined });
+  });
+
+  it('rejects malformed proj:new payloads with [BB-126] (P4.2)', async () => {
+    const handler = state.handles.get('proj:new');
+    expect(handler).toBeDefined();
+    project.newProject.mockClear();
+    const bad: unknown[] = [
+      { dir: '' },
+      { dir: 42 },
+      { dir: '/tmp/x', chip: 'esp32h2' }, // out-of-contract chip string
+      { dir: '/tmp/x', chip: 7 },
+      { dir: '/tmp/x', template: '' },
+      { dir: '/tmp/x', template: 5 },
+      null,
+    ];
+    for (const payload of bad) {
+      await expect(handler!(undefined, payload)).rejects.toThrow('[BB-126]');
+    }
+    expect(project.newProject).not.toHaveBeenCalled();
+  });
+
   it('forwards GDB stops on dbg:stopped with the payload intact', () => {
     const info = { reason: 'breakpoint-hit', frame: { addr: '0x40080024', func: 'app_main' } };
     listenerFor(gdb, 'stopped')(info);
