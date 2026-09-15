@@ -56,7 +56,7 @@
 - **M1**（任务 1.1–1.10 已完成，Electron 应用级手动回归随收尾统一进行）：UI 拖拽 LED 连 GPIO2，OLED 显示固件绘制的文字，可断点单步。
 - **M2**（进行中，任务 2.1–2.3 已完成）：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
 - **M3**（已达成 2026-09-11，任务 3.1–3.4 完成）：麦克风波形注入后固件能读到采样值；旋钮正交序列与 SHT30 读回复经真实 QEMU e2e 验证。
-- **M4**（进行中，任务 4.1–4.3 已完成）：切换芯片型号后同一工程可在 ESP32/S3 跑通（S3 已真实 QEMU 验证；C3/C6 的 machine/仿真器映射与门控就绪，等待 riscv32 版 QEMU 二进制接入后做真实启动验证）；新建工程向导支持选芯片/选模板；PlatformIO/IDF 工程目录可关联并自动发现 build/*.elf 导入为 firmware.elf。
+- **M4**（进行中，任务 4.1–4.4 已完成）：切换芯片型号后同一工程可在 ESP32/S3 跑通（S3 已真实 QEMU 验证；C3/C6 的 machine/仿真器映射与门控就绪，等待 riscv32 版 QEMU 二进制接入后做真实启动验证）；新建工程向导支持选芯片/选模板；PlatformIO/IDF 工程目录可关联并自动发现 build/*.elf 导入为 firmware.elf；条件断点/watchpoint 已接入调试面板（GDB/MI 线格式经扩展 mock 冻结，真实 GDB e2e 维持 BREADESP_GDB_BIN 门控）。
 - **M5**（未开始）：第三方包 `registerPeripheral()` 后 UI 自动出现新器件。
 
 ---
@@ -124,7 +124,7 @@
 | 4.1 | sim-core 支持 S3/C3/C6 machine 映射 | 多芯片 | 已完成 2026-09-12 |
 | 4.2 | 工程向导（选芯片/选模板） | 新建流程 | 已完成 2026-09-12 |
 | 4.3 | PlatformIO/IDF 工程关联（自动发现 build/*.elf） | 联动 | 已完成 2026-09-13 |
-| 4.4 | 条件断点 / watchpoint | 调试增强 | |
+| 4.4 | 条件断点 / watchpoint | 调试增强 | 已完成 2026-09-15 |
 | 4.5 | DAP 适配器（接入 VS Code） | 跨工具调试 | |
 
 ### Phase 5 — 生态与扩展（M5）
@@ -732,6 +732,29 @@ Previously applyNetlist leaked old instances on re-apply.
 > typecheck 拦截后补导出。自我审查补回一处覆盖缺口：saveProject 重写 meta 时
 > external 关联的保留回归测试。
 
+> P4.4 验证记录（2026-09-15）：`pnpm typecheck` 0 错误；全仓测试 Windows 555
+> 通过 + 13 跳过（门控 e2e，同 P4.3 基线；较 P4.3 净增 12 项）。分三层验证——
+> GdbBridge 19 项 mock GDB/MI 集成测试（新增 4 项：-break-insert -c 条件插入且
+> -break-list 回读 cond、-break-condition 设/清条件含 [BB-113] 未知编号错误路径、
+> write/read/access 三种 -break-watch 插入并以 watchpoint 行回读、watchpoint 与
+> breakpoint 共用 -break-delete 移除、多词表达式 MI 引号线格式冻结）；mock-gdb
+> 扩展为真实 GDB 线形状（-break-insert 可选 -c 解析、-break-watch 按模式返回
+> wpt/hw-rwpt/hw-awpt 结果键、-break-list watchpoint 行以 what 携带表达式、
+> -break-condition 设/清）；IPC 契约 35 项（新增 4：dbg:setConditionalBreakpoint/
+> dbg:setWatchpoint/dbg:conditionBreakpoint 路由与 mode 缺省 write、8 种畸形负载
+> [BB-131] 拒绝且未触达 GDB）；debuggerStore 15 项（新增 4：条件断点/watchpoint
+> 动作转发负载并回读列表、条件清空往返、bridge 错误面不污染断点状态）。
+> UI 层 Inspector 新增条件输入（If）与 Watchpoints 区（表达式 + write/read/
+> access 模式），断点列表内联渲染 watch/if (…)。
+> 真实 QEMU e2e 不适用（本任务不触碰 QEMU 设备与固件加载链路）；GDB/MI 方言
+> 变更经扩展 mock 按真实线形状冻结，既有 GDB 门控 e2e（gdb-breakpoint/
+> debug-panel，需 BREADESP_GDB_BIN + 真实 QEMU）在工具链在场时复验共享会话
+> 路径（最近一次 P1.9 于 WSL 真实 xtensa-esp32-elf-gdb 验证通过）。
+> 设计要点：watchpoint 停机沿用既有 dbg:stopped 推送（reason 为
+> watchpoint-trigger 等三态），零新增推送通道；BreakpointRow 的 kind/cond 为
+> 追加式扩展（§6.6 兼容，旧消费者忽略新字段）；-break-condition 的表达式为
+> 行尾参数（GDB 语义），空串即清条件。
+
 ### M2 清单
 - [x] TFT 渲染 rgb565 彩图
 - [x] 蜂鸣器按 PWM 频率发声
@@ -747,7 +770,7 @@ Previously applyNetlist leaked old instances on re-apply.
 ### M4 清单
 - [ ] 同一工程可在 ESP32 与 ESP32-S3 跑通
 - [x] PlatformIO 工程 `build/*.elf` 自动被发现
-- [ ] 条件断点/watchpoint 可用
+- [x] 条件断点/watchpoint 可用
 - [ ] DAP 接入 VS Code 可调试
 
 ### M5 清单
