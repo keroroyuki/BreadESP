@@ -56,7 +56,7 @@
 - **M1**（任务 1.1–1.10 已完成，Electron 应用级手动回归随收尾统一进行）：UI 拖拽 LED 连 GPIO2，OLED 显示固件绘制的文字，可断点单步。
 - **M2**（进行中，任务 2.1–2.3 已完成）：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
 - **M3**（已达成 2026-09-11，任务 3.1–3.4 完成）：麦克风波形注入后固件能读到采样值；旋钮正交序列与 SHT30 读回复经真实 QEMU e2e 验证。
-- **M4**（进行中，任务 4.1–4.2 已完成）：切换芯片型号后同一工程可在 ESP32/S3 跑通（S3 已真实 QEMU 验证；C3/C6 的 machine/仿真器映射与门控就绪，等待 riscv32 版 QEMU 二进制接入后做真实启动验证）；新建工程向导支持选芯片/选模板。
+- **M4**（进行中，任务 4.1–4.3 已完成）：切换芯片型号后同一工程可在 ESP32/S3 跑通（S3 已真实 QEMU 验证；C3/C6 的 machine/仿真器映射与门控就绪，等待 riscv32 版 QEMU 二进制接入后做真实启动验证）；新建工程向导支持选芯片/选模板；PlatformIO/IDF 工程目录可关联并自动发现 build/*.elf 导入为 firmware.elf。
 - **M5**（未开始）：第三方包 `registerPeripheral()` 后 UI 自动出现新器件。
 
 ---
@@ -123,7 +123,7 @@
 |---|---|---|---|
 | 4.1 | sim-core 支持 S3/C3/C6 machine 映射 | 多芯片 | 已完成 2026-09-12 |
 | 4.2 | 工程向导（选芯片/选模板） | 新建流程 | 已完成 2026-09-12 |
-| 4.3 | PlatformIO/IDF 工程关联（自动发现 build/*.elf） | 联动 | |
+| 4.3 | PlatformIO/IDF 工程关联（自动发现 build/*.elf） | 联动 | 已完成 2026-09-13 |
 | 4.4 | 条件断点 / watchpoint | 调试增强 | |
 | 4.5 | DAP 适配器（接入 VS Code） | 跨工具调试 | |
 
@@ -701,6 +701,37 @@ Previously applyNetlist leaked old instances on re-apply.
 > ProjectData（向后兼容，UI 直接水合，打开与新建走同一 loadProject 路径）；
 > ProjectToolbar 的 New 改为打开 ProjectWizard 模态（目录预填自工具栏输入）。
 
+> P4.3 验证记录（2026-09-13）：`pnpm typecheck` 0 错误；全仓测试 Windows 543 通过
+> + 13 跳过（门控 e2e，同 P4.2 基线；较 P4.2 净增 55 项）。分四层验证——
+> ExternalProject 扫描层 18 项单测（platformio.ini env 解析含注释/CRLF/去重/
+> 裸 [env]→env 目录、检测矩阵：pio.ini 优先于 IDF 双标志、裸 CMake 无 IDF 信号拒绝、
+> sdkconfig 或 project.cmake include 两路识别；扫描：声明 env 与磁盘 env 目录取并集、
+> mtime 新→旧排序 + 路径 tiebreak、非 .elf/嵌套目录/缺失 build 根过滤、未构建工程
+> 空候选）；ProjectManager 15 项新增（41 总：link 持久化 meta.external 且重开保留、
+> archOk 按工程芯片族标注（52 字节头封端读取）、[BB-127] 拒绝且 meta 零写、
+> [BB-124]/[BB-128] 状态错误、链接目录消失 [BB-128]、缺省取最新与显式路径两种导入、
+> 非候选路径 [BB-129]、空构建 [BB-129]、错架构 [BB-101] 且不留 firmware.elf、
+> 幂等 unlink、畸形 external [BB-121]、saveProject 重写 meta 保留关联）；
+> IPC 契约 5 项新增（31 总：四通道注册对齐、路由透传、8 种畸形负载 [BB-130]
+> 拒绝且未触达 ProjectManager）；external-firmware.integration 3 例经真实
+> preload→handlers→ProjectManager 链路（双向 JSON 边界）——PlatformIO 双 env
+> 关联→重构建后 rescan 发现新 ELF→显式选旧 env 导入→重开持久化→unlink 后
+> scan 转 [BB-128]；ESP-IDF build/*.elf 缺省最新导入；[BB-127]/[BB-129]
+> 跨边界传播。UI 层 14 项新增（143 总：externalDraft 11 项标签/格式化/
+> 导入挑选/汇总行 + projectStore 3 项 external/firmwareElf 水合与复位）。
+> 真实 QEMU e2e 不适用（本任务不触碰仿真链路）；导入产物 firmware.elf 复用
+> sim:load 的 [BB-101] 架构门控（该路径已被 qemu-uart/s3-machine e2e 在真实
+> QEMU 上验证）。PRD §F-PROJ-3 与 §6.6 proj:* 通道列表已同步（追加式扩展）。
+> 设计要点：关联只记 {kind, dir} 于 meta.json（工程可移植，外部工程路径是
+> 宿主本地状态）；扫描模块纯读盘零写入；导入的显式路径必须是当前扫描候选
+> 之一（杜绝经此通道复制任意文件）；archOk 仅是提示，真正的门控仍是导入时的
+> validateFirmware。
+> 迭代暴露并已修复两个开发期问题：① 测试夹具 bug——makePioProject 在创建
+> 根目录前写 platformio.ini 致 7 例 ENOENT（修 helper 顺序，非产品代码）；
+> ② UI 类型缝——externalDraft 引用了 bridge.ts 未导出的 ExternalProjectKind，
+> typecheck 拦截后补导出。自我审查补回一处覆盖缺口：saveProject 重写 meta 时
+> external 关联的保留回归测试。
+
 ### M2 清单
 - [x] TFT 渲染 rgb565 彩图
 - [x] 蜂鸣器按 PWM 频率发声
@@ -715,7 +746,7 @@ Previously applyNetlist leaked old instances on re-apply.
 
 ### M4 清单
 - [ ] 同一工程可在 ESP32 与 ESP32-S3 跑通
-- [ ] PlatformIO 工程 `build/*.elf` 自动被发现
+- [x] PlatformIO 工程 `build/*.elf` 自动被发现
 - [ ] 条件断点/watchpoint 可用
 - [ ] DAP 接入 VS Code 可调试
 
