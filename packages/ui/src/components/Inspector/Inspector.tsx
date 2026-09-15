@@ -8,7 +8,10 @@ import { useDebuggerStore } from '../../store/debuggerStore';
 export function Inspector() {
   const dbg = useDebuggerStore();
   const [at, setAt] = useState('app_main');
+  const [cond, setCond] = useState('');
   const [watchExpr, setWatchExpr] = useState('');
+  const [wpExpr, setWpExpr] = useState('');
+  const [wpMode, setWpMode] = useState<'write' | 'read' | 'access'>('write');
 
   const canRun = dbg.phase === 'attached';
   return (
@@ -43,12 +46,60 @@ export function Inspector() {
         <button disabled={dbg.phase === 'detached'} onClick={() => dbg.addBreakpoint(at)}>Set</button>
         {dbg.breakpoints.length > 0 && <button onClick={() => dbg.clearBreakpoints()}>Clear</button>}
       </div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+        <input
+          value={cond}
+          placeholder="condition (e.g. remaining == 0)"
+          onChange={(e) => setCond(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && dbg.phase !== 'detached' && cond.trim() !== '') {
+              void dbg.addConditionalBreakpoint(at, cond); setCond('');
+            }
+          }}
+          style={input}
+        />
+        <button
+          disabled={dbg.phase === 'detached' || cond.trim() === ''}
+          onClick={() => { void dbg.addConditionalBreakpoint(at, cond); setCond(''); }}
+        >
+          If
+        </button>
+      </div>
       {dbg.breakpoints.map((bp) => (
         <div key={bp.id} style={{ display: 'flex', gap: 4, marginBottom: 2 }}>
-          <span style={muted}>#{bp.id} {bp.location ?? ''} {bp.address ?? ''}</span>
+          <span style={muted}>
+            #{bp.id} {bp.kind === 'watchpoint' ? 'watch' : 'bp'} {bp.location ?? ''} {bp.address ?? ''}
+            {bp.cond !== null ? ` if (${bp.cond})` : ''}
+          </span>
           <button style={delBtn} onClick={() => dbg.removeBreakpoint(bp.id)}>x</button>
         </div>
       ))}
+
+      <label style={label}>Watchpoints</label>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+        <input
+          value={wpExpr}
+          placeholder="led_state"
+          onChange={(e) => setWpExpr(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && dbg.phase !== 'detached' && wpExpr.trim() !== '') {
+              void dbg.addWatchpoint(wpExpr, wpMode); setWpExpr('');
+            }
+          }}
+          style={input}
+        />
+        <select value={wpMode} onChange={(e) => setWpMode(e.target.value as 'write' | 'read' | 'access')}>
+          <option value="write">write</option>
+          <option value="read">read</option>
+          <option value="access">access</option>
+        </select>
+        <button
+          disabled={dbg.phase === 'detached' || wpExpr.trim() === ''}
+          onClick={() => { void dbg.addWatchpoint(wpExpr, wpMode); setWpExpr(''); }}
+        >
+          Add
+        </button>
+      </div>
 
       <label style={label}>Watch (globals/expressions)</label>
       <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>

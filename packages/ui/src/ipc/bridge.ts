@@ -54,13 +54,20 @@ interface SimLoadInput {
   dbus?: SimDbusChannel;
 }
 
-/** One row of the debug panel's breakpoint list — mirrors shell GdbBridge (PRD §F-DBG-1). */
+/** One row of the debug panel's breakpoint list — mirrors shell GdbBridge (PRD §F-DBG-1, P4.4). */
 export interface BreakpointRow {
   id: number;
+  /** 'breakpoint' — code location; 'watchpoint' — hardware data watch (F-DBG-4). */
+  kind: 'breakpoint' | 'watchpoint';
   address: string | null;
   location: string | null;
   enabled: boolean;
+  /** Condition expression; null when none (F-DBG-4). */
+  cond: string | null;
 }
+
+/** Watchpoint trigger mode (F-DBG-4) — mirrors shell GdbBridge. */
+export type WatchMode = 'write' | 'read' | 'access';
 
 /** One frame variable — mirrors shell GdbBridge (PRD §F-DBG-3 局部变量). */
 export interface VarInfo {
@@ -102,6 +109,12 @@ interface BridgeApi {
     disconnect: () => Promise<void>;
     status: () => Promise<{ connected: boolean }>;
     setBreakpoint: (p: { at: string }) => Promise<{ id: number; address: string; enabled: boolean }>;
+    /** P4.4 (F-DBG-4): breakpoint gated on a condition expression. */
+    setConditionalBreakpoint: (p: { at: string; condition: string }) => Promise<{ id: number; address: string; enabled: boolean }>;
+    /** P4.4 (F-DBG-4): hardware watchpoint on an expression. */
+    setWatchpoint: (p: { expr: string; mode?: WatchMode }) => Promise<{ id: number; address: string; enabled: boolean }>;
+    /** P4.4 (F-DBG-4): set/clear (empty string) the condition of an existing breakpoint. */
+    conditionBreakpoint: (p: { id: number; condition: string }) => Promise<void>;
     removeBreakpoint: (p: { id: number }) => Promise<void>;
     clearBreakpoints: () => Promise<void>;
     listBreakpoints: () => Promise<BreakpointRow[]>;

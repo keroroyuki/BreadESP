@@ -5,7 +5,7 @@
 // onStop/onRunning/onExit by App, which own the subscriptions.
 import { create } from 'zustand';
 import { bridge } from '../ipc/bridge';
-import type { BreakpointRow, StoppedInfo, VarInfo } from '../ipc/bridge';
+import type { BreakpointRow, StoppedInfo, VarInfo, WatchMode } from '../ipc/bridge';
 
 /** 'detached' — no GDB attached; 'attached' — connected and stopped; 'running' — target resumed. */
 export type DbgPhase = 'detached' | 'attached' | 'running';
@@ -29,6 +29,12 @@ interface DebuggerState {
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   addBreakpoint: (at: string) => Promise<void>;
+  /** P4.4 (F-DBG-4): breakpoint gated on a condition expression. */
+  addConditionalBreakpoint: (at: string, condition: string) => Promise<void>;
+  /** P4.4 (F-DBG-4): hardware watchpoint; stops when `expr` is read/written per mode. */
+  addWatchpoint: (expr: string, mode: WatchMode) => Promise<void>;
+  /** P4.4 (F-DBG-4): set/clear (empty string) the condition of an existing breakpoint. */
+  setBreakpointCondition: (id: number, condition: string) => Promise<void>;
   removeBreakpoint: (id: number) => Promise<void>;
   clearBreakpoints: () => Promise<void>;
   run: () => Promise<void>;
@@ -78,6 +84,21 @@ export const useDebuggerStore = create<DebuggerState>((set, get) => ({
 
   addBreakpoint: (at) => guarded(set, async () => {
     await bridge.dbg.setBreakpoint({ at });
+    set({ breakpoints: await bridge.dbg.listBreakpoints() });
+  }),
+
+  addConditionalBreakpoint: (at, condition) => guarded(set, async () => {
+    await bridge.dbg.setConditionalBreakpoint({ at, condition });
+    set({ breakpoints: await bridge.dbg.listBreakpoints() });
+  }),
+
+  addWatchpoint: (expr, mode) => guarded(set, async () => {
+    await bridge.dbg.setWatchpoint({ expr, mode });
+    set({ breakpoints: await bridge.dbg.listBreakpoints() });
+  }),
+
+  setBreakpointCondition: (id, condition) => guarded(set, async () => {
+    await bridge.dbg.conditionBreakpoint({ id, condition });
     set({ breakpoints: await bridge.dbg.listBreakpoints() });
   }),
 
