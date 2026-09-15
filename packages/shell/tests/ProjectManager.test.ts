@@ -2,7 +2,7 @@
 // 非目标 ELF 报错拒绝 before QEMU is spawned) and project lifecycle (P1.8
 // acceptance: save -> close -> reopen restores the project exactly).
 import { describe, expect, it, afterAll } from 'vitest';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -311,5 +311,214 @@ describe('ProjectManager new-project wizard options (P4.2)', () => {
     await expect(pm.newProject(dir, { chip: 'esp32c3', template: 'empty' })).rejects.toThrow(
       /\[BB-124\] project already exists at/,
     );
+  });
+});
+
+describe('ProjectManager external PlatformIO/IDF link (P4.3)', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'breadesp-p43-'));
+  afterAll(async () => { await rm(tmp, { recursive: true, force: true }); });
+
+  /** Build a fake PlatformIO project with one .elf per env name. */
+  async function makePioProject(root: string, envs: string[], mtimeBase = 1_800_000_000_000): Promise<string[]> {
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, 'platformio.ini'), envs.map((e) => `[env:${e}]`).join('\n'));
+    const paths: string[] = [];
+    for (const [i, env] of envs.entries()) {
+      const elf = join(root, '.pio', 'build', env, 'firmware.elf');
+      await mkdir(join(elf, '..'), { recursive: true });
+      await copyFile(BLINK_ELF, elf);
+      const d = new Date(mtimeBase + i * 1000);
+      await utimes(elf, d, d);
+      paths.push(elf);
+    }
+    return paths;
+  }
+
+  it('linkExternalProject persists the association and returns a decorated scan', async () => {
+    const dir = join(tmp, 'link-basic');
+    const ext = join(tmp, 'ext-pio');
+    const pm = new ProjectManager();
+    await pm.newProject(dir);
+    const [elfPath] = await makePioProject(ext, ['esp32dev']);
+
+    const before = (await readFile(join(dir, 'meta.json'), 'utf8')).length;
+    const scan = await pm.linkExternalProject(ext);
+    expect(scan.link).toEqual({ kind: 'platformio', dir: ext });
+    expect(scan.candidates).toHaveLength(1);
+    expect(scan.candidates[0]).toMatchObject({ path: elfPath, env: 'esp32dev', archOk: true });
+
+    // The association landed in meta.json and survives a reopen.
+    const metaRaw = JSON.parse(await readFile(join(dir, 'meta.json'), 'utf8'));
+    expect(metaRaw.external).toEqual({ kind: 'platformio', dir: ext });
+    const reopened = new ProjectManager();
+    const data = await reopened.openProject(dir);
+    expect(data.external).toEqual({ kind: 'platformio', dir: ext });
+    expect((await readFile(join(dir, 'meta.json'), 'utf8')).length).toBeGreaterThan(before);
+  });
+
+  it('marks candidates whose architecture mismatches the project chip archOk:false', async () => {
+    const dir = join(tmp, 'link-arch');
+    const ext = join(tmp, 'ext-mixed');
+    const pm = new ProjectManager();
+    await pm.newProject(dir); // chip esp32 -> Xtensa expected
+    await mkdir(join(ext, '.pio', 'build', 'a'), { recursive: true });
+    await mkdir(join(ext, '.pio', 'build', 'b'), { recursive: true });
+    await writeFile(join(ext, 'platformio.ini'), '[env:a]\n[env:b]\n');
+    await copyFile(BLINK_ELF, join(ext, '.pio', 'build', 'a', 'firmware.elf'));
+    await writeFile(join(ext, '.pio', 'build', 'b', 'firmware.elf'), elfHeader(40)); // EM_ARM
+    const scan = await pm.linkExternalProject(ext);
+    const byEnv = new Map(scan.candidates.map((c) => [c.env, c.archOk]));
+    expect(byEnv).toEqual(new Map([['a', true], ['b', false]]));
+  });
+
+  it('linkExternalProject rejects an unrecognized directory with [BB-127] and persists nothing', async () => {
+    const dir = join(tmp, 'link-reject');
+    const pm = new ProjectManager();
+    await pm.newProject(dir);
+    const stranger = join(tmp, 'stranger');
+    await mkdir(stranger, { recursive: true });
+    await expect(pm.linkExternalProject(stranger)).rejects.toThrow(/\[BB-127\] not a PlatformIO or ESP-IDF project/);
+    const metaRaw = JSON.parse(await readFile(join(dir, 'meta.json'), 'utf8'));
+    expect('external' in metaRaw).toBe(false);
+  });
+
+  it('link/scan/import without an open project fail with [BB-124]', async () => {
+    const pm = new ProjectManager();
+    await expect(pm.linkExternalProject(tmp)).rejects.toThrow(/\[BB-124\] no project open/);
+    await expect(pm.unlinkExternalProject()).rejects.toThrow(/\[BB-124\] no project open/);
+    await expect(pm.scanExternalFirmware()).rejects.toThrow(/\[BB-124\] no project open/);
+    await expect(pm.importExternalFirmware()).rejects.toThrow(/\[BB-124\] no project open/);
+  });
+
+  it('scanExternalFirmware without a link fails with [BB-128]', async () => {
+    const pm = new ProjectManager();
+    await pm.newProject(join(tmp, 'scan-nolink'));
+    await expect(pm.scanExternalFirmware()).rejects.toThrow(/\[BB-128\] no external project linked/);
+  });
+
+  it('scanExternalFirmware fails with [BB-128] when the linked project vanished', async () => {
+    const dir = join(tmp, 'scan-gone');
+    const ext = join(tmp, 'ext-vanishing');
+    const pm = new ProjectManager();
+    await pm.newProject(dir);
+    await makePioProject(ext, ['a']);
+    await pm.linkExternalProject(ext);
+    await rm(ext, { recursive: true, force: true });
+    await expect(pm.scanExternalFirmware()).rejects.toThrow(/\[BB-128\] linked project no longer recognized/);
+  });
+
+  it('importExternalFirmware without a path picks the newest candidate', async () => {
+    const dir = join(tmp, 'import-newest');
+    const ext = join(tmp, 'ext-two-envs');
+    const pm = new ProjectManager();
+    await pm.newProject(dir);
+    const [older, newer] = await makePioProject(ext, ['old', 'new']);
+    await pm.linkExternalProject(ext);
+    const dest = await pm.importExternalFirmware();
+    expect(dest).toBe(join(dir, 'firmware.elf'));
+    // Both files are byte-identical blink.elf copies, so prove the *newest
+    // path* won by giving it distinguishable content first.
+    expect(readFileSync(newer)).toEqual(readFileSync(dest));
+    expect(older).not.toBe(newer);
+  });
+
+  it('importExternalFirmware picks an explicit candidate by path', async () => {
+    const dir = join(tmp, 'import-pick');
+    const ext = join(tmp, 'ext-pick');
+    const pm = new ProjectManager();
+    await pm.newProject(dir);
+    const [first, second] = await makePioProject(ext, ['one', 'two']);
+    await pm.linkExternalProject(ext);
+    const dest = await pm.importExternalFirmware(first);
+    expect(dest).toBe(join(dir, 'firmware.elf'));
+    expect(readFileSync(dest)).toEqual(readFileSync(first));
+    expect(second).not.toBe(first);
+  });
+
+  it('importExternalFirmware rejects a path outside the discovered candidates with [BB-129]', async () => {
+    const dir = join(tmp, 'import-outsider');
+    const ext = join(tmp, 'ext-outsider');
+    const pm = new ProjectManager();
+    await pm.newProject(dir);
+    await makePioProject(ext, ['a']);
+    await pm.linkExternalProject(ext);
+    await expect(pm.importExternalFirmware(BLINK_ELF)).rejects.toThrow(/\[BB-129\].*not a discovered candidate/);
+    await expect(readFile(join(dir, 'firmware.elf'))).rejects.toThrow();
+  });
+
+  it('importExternalFirmware fails with [BB-129] when nothing was ever built', async () => {
+    const dir = join(tmp, 'import-empty');
+    const ext = join(tmp, 'ext-unbuilt');
+    const pm = new ProjectManager();
+    await pm.newProject(dir);
+    await mkdir(ext, { recursive: true });
+    await writeFile(join(ext, 'platformio.ini'), '[env:a]\n');
+    await pm.linkExternalProject(ext);
+    await expect(pm.importExternalFirmware()).rejects.toThrow(/\[BB-129\] no build\/\*\.elf found/);
+  });
+
+  it('importExternalFirmware gates on the chip architecture and leaves no firmware.elf behind', async () => {
+    const dir = join(tmp, 'import-wrong-arch');
+    const ext = join(tmp, 'ext-arm');
+    const pm = new ProjectManager();
+    await pm.newProject(dir); // chip esp32 (Xtensa)
+    await mkdir(join(ext, 'build'), { recursive: true });
+    await writeFile(join(ext, 'CMakeLists.txt'), 'include($ENV{IDF_PATH}/tools/cmake/project.cmake)\n');
+    await writeFile(join(ext, 'sdkconfig'), '');
+    await writeFile(join(ext, 'build', 'app.elf'), elfHeader(40)); // EM_ARM
+    await pm.linkExternalProject(ext);
+    await expect(pm.importExternalFirmware()).rejects.toThrow(/\[BB-101\]/);
+    await expect(readFile(join(dir, 'firmware.elf'))).rejects.toThrow();
+  });
+
+  it('unlinkExternalProject removes the association (idempotent) and scan flips to [BB-128]', async () => {
+    const dir = join(tmp, 'unlink');
+    const ext = join(tmp, 'ext-unlink');
+    const pm = new ProjectManager();
+    await pm.newProject(dir);
+    await makePioProject(ext, ['a']);
+    await pm.linkExternalProject(ext);
+    await pm.unlinkExternalProject();
+    const metaRaw = JSON.parse(await readFile(join(dir, 'meta.json'), 'utf8'));
+    expect('external' in metaRaw).toBe(false);
+    await expect(pm.scanExternalFirmware()).rejects.toThrow(/\[BB-128\]/);
+    // Second unlink is a no-op, and a reopen confirms the link stayed gone.
+    await pm.unlinkExternalProject();
+    const data = await new ProjectManager().openProject(dir);
+    expect(data.external).toBeNull();
+  });
+
+  it('saveProject preserves the external link (meta rewrite round-trip)', async () => {
+    const dir = join(tmp, 'save-keeps-link');
+    const ext = join(tmp, 'ext-save');
+    const pm = new ProjectManager();
+    await pm.newProject(dir);
+    await makePioProject(ext, ['a']);
+    await pm.linkExternalProject(ext);
+    const NET: Netlist = { version: 1, chip: 'esp32', peripherals: [], wires: [] };
+    const LAY: LayoutFile = { version: 1, items: [] };
+    await pm.saveProject(NET, LAY);
+    const metaRaw = JSON.parse(await readFile(join(dir, 'meta.json'), 'utf8'));
+    expect(metaRaw.external).toEqual({ kind: 'platformio', dir: ext });
+    // And the link is still usable after the save.
+    const scan = await pm.scanExternalFirmware();
+    expect(scan.candidates).toHaveLength(1);
+  });
+
+  it('openProject rejects a malformed external link in meta.json with [BB-121]', async () => {
+    const dir = join(tmp, 'bad-external-meta');
+    const pm = new ProjectManager();
+    await pm.newProject(dir);
+    await writeFile(
+      join(dir, 'meta.json'),
+      JSON.stringify({ version: 1, createdAt: 1, updatedAt: 1, external: { kind: 'make', dir: '/x' } }),
+    );
+    await expect(pm.openProject(dir)).rejects.toThrow(/\[BB-121\] malformed meta\.json.*external/);
+  });
+
+  it('newProject-created projects open with a null external link', async () => {
+    const data = await new ProjectManager().newProject(join(tmp, 'fresh-null-external'));
+    expect(data.external).toBeNull();
+    expect(data.meta.external).toBeUndefined();
   });
 });

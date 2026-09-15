@@ -8,8 +8,8 @@ import { toLayoutFile, toNetlistFile, useProjectStore } from '../src/store/proje
 const emptyNetlist = (): Netlist => ({ version: 1, chip: 'esp32', peripherals: [], wires: [] });
 
 const reset = (): void => {
-  useProjectStore.getState().setNetlist(emptyNetlist());
-  useProjectStore.getState().setLayout([]);
+  // Full reset incl. P4.3 external-firmware state so tests never leak it.
+  useProjectStore.getState().resetProject(null);
 };
 
 describe('projectStore', () => {
@@ -240,5 +240,47 @@ describe('project load/reset (P1.8)', () => {
     expect(useProjectStore.getState().netlist.peripherals).toEqual([]);
     expect(useProjectStore.getState().netlist.wires).toEqual([]);
     expect(useProjectStore.getState().layout).toEqual([]);
+  });
+});
+
+describe('projectStore external firmware state (P4.3, PRD §F-PROJ-3)', () => {
+  beforeEach(reset);
+
+  const LINK = { kind: 'platformio' as const, dir: '/tmp/pio-app' };
+
+  it('loadProject hydrates the external link and firmware path when present', () => {
+    useProjectStore.getState().loadProject({
+      dir: '/tmp/demo',
+      netlist: emptyNetlist(),
+      layout: { version: 1, items: [] },
+      external: LINK,
+      firmwareElf: '/tmp/demo/firmware.elf',
+    });
+    expect(useProjectStore.getState().external).toEqual(LINK);
+    expect(useProjectStore.getState().firmwareElf).toBe('/tmp/demo/firmware.elf');
+  });
+
+  it('loadProject defaults both to null for pre-P4.3 projects (backward compatible)', () => {
+    useProjectStore.getState().setExternal(LINK);
+    useProjectStore.getState().setFirmwareElf('/tmp/old/firmware.elf');
+    useProjectStore.getState().loadProject({
+      dir: '/tmp/demo',
+      netlist: emptyNetlist(),
+      layout: { version: 1, items: [] },
+    });
+    expect(useProjectStore.getState().external).toBeNull();
+    expect(useProjectStore.getState().firmwareElf).toBeNull();
+  });
+
+  it('setExternal/setFirmwareElf track the panel actions; resetProject clears them', () => {
+    useProjectStore.getState().setExternal(LINK);
+    useProjectStore.getState().setFirmwareElf('/tmp/demo/firmware.elf');
+    expect(useProjectStore.getState().external).toEqual(LINK);
+    useProjectStore.getState().setExternal(null);
+    expect(useProjectStore.getState().external).toBeNull();
+    useProjectStore.getState().setExternal(LINK);
+    useProjectStore.getState().resetProject(null);
+    expect(useProjectStore.getState().external).toBeNull();
+    expect(useProjectStore.getState().firmwareElf).toBeNull();
   });
 });

@@ -56,6 +56,7 @@ const EXPECTED_INVOKE_CHANNELS = [
   'dbg:setBreakpoint', 'dbg:removeBreakpoint', 'dbg:clearBreakpoints', 'dbg:listBreakpoints',
   'dbg:continue', 'dbg:step', 'dbg:stepOver', 'dbg:vars', 'dbg:regs', 'dbg:evaluate',
   'proj:new', 'proj:open', 'proj:save', 'proj:saveAs', 'proj:close',
+  'proj:linkExternal', 'proj:unlinkExternal', 'proj:scanExternal', 'proj:importExternal',
   'bb:applyNetlist', 'bb:getNetlist',
   'per:driveInput', 'per:captureChunk', 'per:rotateKnob',
 ] as const;
@@ -114,6 +115,10 @@ const project = {
   importFirmware: vi.fn(),
   close: vi.fn(),
   loadNetlist: vi.fn(),
+  linkExternalProject: vi.fn(),
+  unlinkExternalProject: vi.fn(),
+  scanExternalFirmware: vi.fn(),
+  importExternalFirmware: vi.fn(),
 };
 const peripherals = { applyNetlist: vi.fn(), driveInput: vi.fn(), feedCapture: vi.fn(), driveRotate: vi.fn(), on: vi.fn() };
 const win = { webContents: { send: (channel: string, payload: unknown) => { state.sends.push({ channel, payload }); } } };
@@ -352,6 +357,60 @@ describe('preload ↔ handlers IPC contract (P1.1)', () => {
       await expect(handler!(undefined, payload)).rejects.toThrow('[BB-126]');
     }
     expect(project.newProject).not.toHaveBeenCalled();
+  });
+
+  it('routes proj:linkExternal to ProjectManager and returns its scan (P4.3)', async () => {
+    const scan = { link: { kind: 'platformio', dir: '/tmp/pio' }, candidates: [] };
+    project.linkExternalProject.mockReturnValueOnce(scan);
+    const handler = state.handles.get('proj:linkExternal');
+    expect(handler).toBeDefined();
+    await expect(handler!(undefined, { dir: '/tmp/pio' })).resolves.toBe(scan);
+    expect(project.linkExternalProject).toHaveBeenCalledWith('/tmp/pio');
+  });
+
+  it('rejects malformed proj:linkExternal payloads with [BB-130] (P4.3)', async () => {
+    const handler = state.handles.get('proj:linkExternal');
+    expect(handler).toBeDefined();
+    project.linkExternalProject.mockClear();
+    const bad: unknown[] = [{ dir: '' }, { dir: 42 }, {}, null];
+    for (const payload of bad) {
+      await expect(handler!(undefined, payload)).rejects.toThrow('[BB-130]');
+    }
+    expect(project.linkExternalProject).not.toHaveBeenCalled();
+  });
+
+  it('routes proj:unlinkExternal and proj:scanExternal without payloads (P4.3)', async () => {
+    const scan = { link: { kind: 'esp-idf', dir: '/tmp/idf' }, candidates: [{ path: '/tmp/idf/build/app.elf' }] };
+    project.scanExternalFirmware.mockReturnValueOnce(scan);
+    await expect(state.handles.get('proj:unlinkExternal')!(undefined)).resolves.toBeUndefined();
+    expect(project.unlinkExternalProject).toHaveBeenCalledTimes(1);
+    await expect(state.handles.get('proj:scanExternal')!(undefined)).resolves.toBe(scan);
+    expect(project.scanExternalFirmware).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes proj:importExternal with and without an elfPath (P4.3)', async () => {
+    const handler = state.handles.get('proj:importExternal');
+    expect(handler).toBeDefined();
+    project.importExternalFirmware.mockResolvedValue('/tmp/p/firmware.elf');
+    await expect(handler!(undefined, { elfPath: '/tmp/pio/build/a/firmware.elf' })).resolves.toBe('/tmp/p/firmware.elf');
+    expect(project.importExternalFirmware).toHaveBeenCalledWith('/tmp/pio/build/a/firmware.elf');
+    // No payload at all (bare invoke) picks the newest candidate.
+    await expect(handler!(undefined)).resolves.toBe('/tmp/p/firmware.elf');
+    expect(project.importExternalFirmware).toHaveBeenCalledWith(undefined);
+    // An explicit empty options object is also accepted.
+    await expect(handler!(undefined, {})).resolves.toBe('/tmp/p/firmware.elf');
+    expect(project.importExternalFirmware).toHaveBeenCalledWith(undefined);
+  });
+
+  it('rejects malformed proj:importExternal payloads with [BB-130] (P4.3)', async () => {
+    const handler = state.handles.get('proj:importExternal');
+    expect(handler).toBeDefined();
+    project.importExternalFirmware.mockClear();
+    const bad: unknown[] = [{ elfPath: '' }, { elfPath: 42 }, [], 'x'];
+    for (const payload of bad) {
+      await expect(handler!(undefined, payload)).rejects.toThrow('[BB-130]');
+    }
+    expect(project.importExternalFirmware).not.toHaveBeenCalled();
   });
 
   it('forwards GDB stops on dbg:stopped with the payload intact', () => {
