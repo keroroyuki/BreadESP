@@ -188,4 +188,51 @@ describe('GdbBridge (mock GDB/MI subprocess)', () => {
     await bridge.stop();
     expect(bridge.isConnected()).toBe(false);
   }, 10000);
+
+  // --- P4.4 surface: conditional breakpoints / watchpoints (F-DBG-4) ---
+
+  it('setConditionalBreakpoint inserts with -c and lists the condition back (P4.4)', async () => {
+    const bridge = await startBridge('ok');
+    const bp = await bridge.setConditionalBreakpoint('app_main', 'remaining == 0');
+    expect(bp).toEqual({ id: 1, address: '0x40080024', enabled: true });
+    const rows = await bridge.listBreakpoints();
+    expect(rows[0]).toMatchObject({ id: 1, kind: 'breakpoint', location: 'app_main', cond: 'remaining == 0' });
+  }, 10000);
+
+  it('conditionBreakpoint sets and clears conditions on existing breakpoints (P4.4)', async () => {
+    const bridge = await startBridge('ok');
+    await bridge.setBreakpoint('app_main');
+    await bridge.conditionBreakpoint(1, 'remaining == 0');
+    expect((await bridge.listBreakpoints())[0].cond).toBe('remaining == 0');
+    await bridge.conditionBreakpoint(1, '');
+    expect((await bridge.listBreakpoints())[0].cond).toBeNull();
+    await expect(bridge.conditionBreakpoint(99, 'x')).rejects.toThrow(/\[BB-113\].*No breakpoint number 99/);
+  }, 10000);
+
+  it('setWatchpoint inserts write/read/access watches and lists them as watchpoint rows (P4.4)', async () => {
+    const bridge = await startBridge('ok');
+    const w = await bridge.setWatchpoint('led_state'); // write (default)
+    expect(w.id).toBe(1);
+    const r = await bridge.setWatchpoint('remaining', 'read');
+    expect(r.id).toBe(2);
+    const a = await bridge.setWatchpoint('msg_cursor', 'access');
+    expect(a.id).toBe(3);
+    const rows = await bridge.listBreakpoints();
+    expect(rows.map((x) => [x.kind, x.location, x.address])).toEqual([
+      ['watchpoint', 'led_state', null],
+      ['watchpoint', 'remaining', null],
+      ['watchpoint', 'msg_cursor', null],
+    ]);
+    await bridge.removeBreakpoint(1); // watchpoints share the -break-delete path
+    expect((await bridge.listBreakpoints()).map((x) => x.id)).toEqual([2, 3]);
+  }, 10000);
+
+  it('quotes multi-word watchpoint expressions on the MI wire (P4.4)', async () => {
+    const bridge = await startBridge('ok');
+    const w = await bridge.setWatchpoint('*(unsigned int*)0x3ff44004', 'access');
+    expect(w.id).toBe(1);
+    const rows = await bridge.listBreakpoints();
+    // The mock echoes back whatever location it parsed; quoting must survive.
+    expect(rows[0].location).toBe('*(unsigned int*)0x3ff44004');
+  }, 10000);
 });

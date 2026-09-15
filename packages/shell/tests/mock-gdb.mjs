@@ -56,10 +56,41 @@ rl.on('line', (line) => {
   if (cmd.startsWith('-break-insert')) {
     if (scenario === 'error') { error(token, 'Function \\"app_main\\" not defined.'); return; }
     if (scenario === 'hang') return;
+    // P4.4: `-break-insert [-c "cond"] loc` — pull out an optional condition.
+    const condMatch = /^-break-insert\s+-c\s+("(?:[^"\\]|\\.)*"|"\S*"|\S+)\s*/.exec(cmd);
+    let rest = cmd.replace(/^-break-insert\s+/, '');
+    let cond = null;
+    if (condMatch) {
+      cond = condMatch[1].replace(/^"|"$/g, '').replace(/\\"/g, '"');
+      rest = cmd.slice(condMatch[0].length);
+    }
+    const location = rest.replace(/^"|"$/g, '');
     bpCount += 1;
-    const location = cmd.replace(/^-break-insert\s*/, '').replace(/^"|"$/g, '');
-    breakpoints.push({ number: bpCount, location });
-    done(token, `bkpt={number="${bpCount}",type="breakpoint",disp="keep",enabled="y",addr="0x40080024",func="app_main",file="blink.S",line="10",thread-groups=["i1"],times="0"}`);
+    breakpoints.push({ number: bpCount, location, cond });
+    const condField = cond !== null ? `,cond="${cond}"` : '';
+    done(token, `bkpt={number="${bpCount}",type="breakpoint",disp="keep",enabled="y",addr="0x40080024",func="app_main",file="blink.S",line="10",thread-groups=["i1"],times="0"${condField}}`);
+    return;
+  }
+  // P4.4 (PRD §F-DBG-4): `-break-watch [-r|-a] expr` — result key and row type
+  // vary with the mode, mirroring real GDB's wire shapes.
+  if (cmd.startsWith('-break-watch')) {
+    const readFlag = /\s-r(\s|$)/.test(cmd);
+    const accessFlag = /\s-a(\s|$)/.test(cmd);
+    const expr = cmd.replace(/^-break-watch\s+(-[ra]\s+)?/, '').replace(/^"|"$/g, '');
+    bpCount += 1;
+    const type = readFlag ? 'read watchpoint' : accessFlag ? 'acc watchpoint' : 'hw watchpoint';
+    breakpoints.push({ number: bpCount, location: expr, watch: type });
+    const key = readFlag ? 'hw-rwpt' : accessFlag ? 'hw-awpt' : 'wpt';
+    done(token, `${key}={number="${bpCount}",exp="${expr}"}`);
+    return;
+  }
+  // P4.4 (PRD §F-DBG-4): `-break-condition <id> <expr>` (no expr = clear).
+  if (cmd.startsWith('-break-condition')) {
+    const [, idStr, expr] = /^-break-condition\s+(\d+)\s*(.*)$/.exec(cmd) ?? [];
+    const bp = breakpoints.find((b) => b.number === Number(idStr));
+    if (!bp) { error(token, `No breakpoint number ${idStr}.`); return; }
+    bp.cond = expr && expr.length > 0 ? expr.replace(/^"|"$/g, '') : null;
+    done(token);
     return;
   }
   if (cmd.startsWith('-break-delete')) {
@@ -75,8 +106,15 @@ rl.on('line', (line) => {
   if (cmd.startsWith('-break-list')) {
     // Wire shape matches real GDB (verified against esp-gdb 16.3): body is
     // nested INSIDE BreakpointTable and elements are `bkpt={...}` results.
+    // Watchpoints share the table with `what=` carrying the expression.
     const body = breakpoints
-      .map((b) => `bkpt={number="${b.number}",type="breakpoint",disp="keep",enabled="y",addr="0x40080024",func="app_main",file="blink.S",fullname="/repo/blink.S",line="10",thread-groups=["i1"],times="0",original-location="${b.location}"}`)
+      .map((b) => {
+        if (b.watch) {
+          return `bkpt={number="${b.number}",type="${b.watch}",disp="keep",enabled="y",what="${b.location}",thread-groups=["i1"],times="0"}`;
+        }
+        const condField = b.cond !== null && b.cond !== undefined ? `,cond="${b.cond}"` : '';
+        return `bkpt={number="${b.number}",type="breakpoint",disp="keep",enabled="y",addr="0x40080024",func="app_main",file="blink.S",fullname="/repo/blink.S",line="10",thread-groups=["i1"],times="0",original-location="${b.location}"${condField}}`;
+      })
       .join(',');
     done(token, `BreakpointTable={nr_rows="${breakpoints.length}",nr_cols="6",body=[${body}]}`);
     return;

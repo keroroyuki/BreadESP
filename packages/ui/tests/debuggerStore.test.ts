@@ -9,6 +9,9 @@ const dbgApi = vi.hoisted(() => ({
   disconnect: vi.fn(),
   status: vi.fn(),
   setBreakpoint: vi.fn(),
+  setConditionalBreakpoint: vi.fn(),
+  setWatchpoint: vi.fn(),
+  conditionBreakpoint: vi.fn(),
   removeBreakpoint: vi.fn(),
   clearBreakpoints: vi.fn(),
   listBreakpoints: vi.fn(),
@@ -35,7 +38,7 @@ const reset = () => {
   dbgApi.removeBreakpoint.mockResolvedValue(undefined);
   dbgApi.clearBreakpoints.mockResolvedValue(undefined);
   dbgApi.listBreakpoints.mockResolvedValue([
-    { id: 1, address: '0x40080024', location: 'app_main', enabled: true },
+    { id: 1, kind: 'breakpoint', address: '0x40080024', location: 'app_main', enabled: true, cond: null },
   ]);
   dbgApi.continue.mockResolvedValue(undefined);
   dbgApi.step.mockResolvedValue(undefined);
@@ -60,7 +63,7 @@ describe('debuggerStore (P1.9)', () => {
     await useDebuggerStore.getState().connect();
     const st = useDebuggerStore.getState();
     expect(st.phase).toBe('attached');
-    expect(st.breakpoints).toEqual([{ id: 1, address: '0x40080024', location: 'app_main', enabled: true }]);
+    expect(st.breakpoints).toEqual([{ id: 1, kind: 'breakpoint', address: '0x40080024', location: 'app_main', enabled: true, cond: null }]);
     expect(st.vars).toEqual([{ name: 'msg_cursor', scope: 'local', value: '165' }]);
     expect(st.regs).toEqual({ pc: '0x40080024' });
   });
@@ -98,10 +101,10 @@ describe('debuggerStore (P1.9)', () => {
 
   it('addBreakpoint/removeBreakpoint re-read the breakpoint list after each edit', async () => {
     await useDebuggerStore.getState().connect();
-    dbgApi.listBreakpoints.mockResolvedValueOnce([{ id: 7, address: '0x1', location: 'app_main', enabled: true }]);
+    dbgApi.listBreakpoints.mockResolvedValueOnce([{ id: 7, kind: 'breakpoint', address: '0x1', location: 'app_main', enabled: true, cond: null }]);
     await useDebuggerStore.getState().addBreakpoint('app_main');
     expect(dbgApi.setBreakpoint).toHaveBeenCalledWith({ at: 'app_main' });
-    expect(useDebuggerStore.getState().breakpoints).toEqual([{ id: 7, address: '0x1', location: 'app_main', enabled: true }]);
+    expect(useDebuggerStore.getState().breakpoints).toEqual([{ id: 7, kind: 'breakpoint', address: '0x1', location: 'app_main', enabled: true, cond: null }]);
 
     dbgApi.listBreakpoints.mockResolvedValueOnce([]);
     await useDebuggerStore.getState().removeBreakpoint(7);
@@ -114,6 +117,46 @@ describe('debuggerStore (P1.9)', () => {
     await useDebuggerStore.getState().clearBreakpoints();
     expect(dbgApi.clearBreakpoints).toHaveBeenCalledTimes(1);
     expect(useDebuggerStore.getState().breakpoints).toEqual([]);
+  });
+
+  // --- P4.4 (PRD §F-DBG-4): conditional breakpoints / watchpoints ---
+
+  it('addConditionalBreakpoint() sends at+condition and re-reads the list (P4.4)', async () => {
+    await useDebuggerStore.getState().connect();
+    dbgApi.listBreakpoints.mockResolvedValueOnce([
+      { id: 4, kind: 'breakpoint', address: '0x40080024', location: 'app_main', enabled: true, cond: 'remaining == 0' },
+    ]);
+    await useDebuggerStore.getState().addConditionalBreakpoint('app_main', 'remaining == 0');
+    expect(dbgApi.setConditionalBreakpoint).toHaveBeenCalledWith({ at: 'app_main', condition: 'remaining == 0' });
+    expect(useDebuggerStore.getState().breakpoints[0].cond).toBe('remaining == 0');
+  });
+
+  it('addWatchpoint() forwards the mode and surfaces watchpoint rows (P4.4)', async () => {
+    await useDebuggerStore.getState().connect();
+    dbgApi.listBreakpoints.mockResolvedValueOnce([
+      { id: 5, kind: 'watchpoint', address: null, location: 'led_state', enabled: true, cond: null },
+    ]);
+    await useDebuggerStore.getState().addWatchpoint('led_state', 'read');
+    expect(dbgApi.setWatchpoint).toHaveBeenCalledWith({ expr: 'led_state', mode: 'read' });
+    expect(useDebuggerStore.getState().breakpoints[0].kind).toBe('watchpoint');
+  });
+
+  it('setBreakpointCondition() updates and can clear a condition (P4.4)', async () => {
+    await useDebuggerStore.getState().connect();
+    dbgApi.listBreakpoints.mockResolvedValueOnce([
+      { id: 1, kind: 'breakpoint', address: '0x40080024', location: 'app_main', enabled: true, cond: null },
+    ]);
+    await useDebuggerStore.getState().setBreakpointCondition(1, '');
+    expect(dbgApi.conditionBreakpoint).toHaveBeenCalledWith({ id: 1, condition: '' });
+    expect(useDebuggerStore.getState().breakpoints[0].cond).toBeNull();
+  });
+
+  it('P4.4 actions surface bridge errors without corrupting state (P4.4)', async () => {
+    await useDebuggerStore.getState().connect();
+    dbgApi.setWatchpoint.mockRejectedValueOnce(new Error('[BB-113] GDB error: Could not find minimal symbol for led_state'));
+    await useDebuggerStore.getState().addWatchpoint('led_state', 'write');
+    expect(useDebuggerStore.getState().error).toMatch(/\[BB-113\]/);
+    expect(useDebuggerStore.getState().breakpoints).toEqual([{ id: 1, kind: 'breakpoint', address: '0x40080024', location: 'app_main', enabled: true, cond: null }]);
   });
 
   it('addWatch() evaluates immediately; duplicate and empty exprs are ignored', async () => {

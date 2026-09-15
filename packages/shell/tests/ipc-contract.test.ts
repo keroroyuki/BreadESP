@@ -53,7 +53,8 @@ const EXPECTED_INVOKE_CHANNELS = [
   'sim:setSpeed', 'sim:getSpeed',
   'fw:load', 'fw:listSymbols',
   'dbg:connect', 'dbg:disconnect', 'dbg:status',
-  'dbg:setBreakpoint', 'dbg:removeBreakpoint', 'dbg:clearBreakpoints', 'dbg:listBreakpoints',
+  'dbg:setBreakpoint', 'dbg:setConditionalBreakpoint', 'dbg:setWatchpoint', 'dbg:conditionBreakpoint',
+  'dbg:removeBreakpoint', 'dbg:clearBreakpoints', 'dbg:listBreakpoints',
   'dbg:continue', 'dbg:step', 'dbg:stepOver', 'dbg:vars', 'dbg:regs', 'dbg:evaluate',
   'proj:new', 'proj:open', 'proj:save', 'proj:saveAs', 'proj:close',
   'proj:linkExternal', 'proj:unlinkExternal', 'proj:scanExternal', 'proj:importExternal',
@@ -96,6 +97,9 @@ const gdb = {
   stop: vi.fn().mockResolvedValue(undefined),
   isConnected: vi.fn().mockReturnValue(false),
   setBreakpoint: vi.fn(),
+  setConditionalBreakpoint: vi.fn(),
+  setWatchpoint: vi.fn(),
+  conditionBreakpoint: vi.fn(),
   removeBreakpoint: vi.fn(),
   clearBreakpoints: vi.fn(),
   listBreakpoints: vi.fn().mockResolvedValue([]),
@@ -453,5 +457,55 @@ describe('preload ↔ handlers IPC contract (P1.1)', () => {
     gdb.isConnected.mockReturnValueOnce(true);
     await expect(handler!(undefined)).resolves.toBeUndefined();
     expect(gdb.step).toHaveBeenCalledTimes(1);
+  });
+
+  // --- P4.4 (PRD §F-DBG-4): conditional breakpoint / watchpoint channels ---
+
+  it('routes dbg:setConditionalBreakpoint to GdbBridge (P4.4)', async () => {
+    const handler = state.handles.get('dbg:setConditionalBreakpoint');
+    expect(handler).toBeDefined();
+    await handler!(undefined, { at: 'app_main', condition: 'remaining == 0' });
+    expect(gdb.setConditionalBreakpoint).toHaveBeenCalledWith('app_main', 'remaining == 0');
+  });
+
+  it('routes dbg:setWatchpoint with an optional mode, defaulting to write (P4.4)', async () => {
+    const handler = state.handles.get('dbg:setWatchpoint');
+    expect(handler).toBeDefined();
+    await handler!(undefined, { expr: 'led_state' });
+    await handler!(undefined, { expr: 'led_state', mode: 'read' });
+    expect(gdb.setWatchpoint).toHaveBeenNthCalledWith(1, 'led_state', 'write');
+    expect(gdb.setWatchpoint).toHaveBeenNthCalledWith(2, 'led_state', 'read');
+  });
+
+  it('routes dbg:conditionBreakpoint to GdbBridge (P4.4)', async () => {
+    const handler = state.handles.get('dbg:conditionBreakpoint');
+    expect(handler).toBeDefined();
+    await handler!(undefined, { id: 3, condition: '' });
+    expect(gdb.conditionBreakpoint).toHaveBeenCalledWith(3, '');
+  });
+
+  it('rejects malformed P4.4 debug payloads with [BB-131] before reaching GDB (P4.4)', async () => {
+    // Earlier routing tests already touched these spies; only a clean slate
+    // proves the validation layer rejects before the GDB call.
+    gdb.setConditionalBreakpoint.mockClear();
+    gdb.setWatchpoint.mockClear();
+    gdb.conditionBreakpoint.mockClear();
+    const bad: [string, unknown][] = [
+      ['dbg:setConditionalBreakpoint', { at: '', condition: 'x == 1' }],
+      ['dbg:setConditionalBreakpoint', { at: 'app_main', condition: '' }],
+      ['dbg:setConditionalBreakpoint', { at: 7, condition: 'x' }],
+      ['dbg:setWatchpoint', { expr: '' }],
+      ['dbg:setWatchpoint', { expr: 'x', mode: 'destroy' }],
+      ['dbg:setWatchpoint', null],
+      ['dbg:conditionBreakpoint', { id: NaN, condition: 'x' }],
+      ['dbg:conditionBreakpoint', { id: 1, condition: 3 }],
+    ];
+    for (const [channel, payload] of bad) {
+      const handler = state.handles.get(channel);
+      await expect(handler!(undefined, payload)).rejects.toThrow('[BB-131]');
+    }
+    expect(gdb.setConditionalBreakpoint).not.toHaveBeenCalled();
+    expect(gdb.setWatchpoint).not.toHaveBeenCalled();
+    expect(gdb.conditionBreakpoint).not.toHaveBeenCalled();
   });
 });
