@@ -14,13 +14,22 @@ import { parseMiLine, type MiRecord, type MiTuple, type MiValue } from './MiPars
 
 export interface BreakpointInfo { id: number; address: string; enabled: boolean; }
 
-/** One row of the debug panel's breakpoints list (PRD §F-DBG-1). */
+/** 'breakpoint' — code location; 'watchpoint' — hardware data watch. */
+export type BreakpointKind = 'breakpoint' | 'watchpoint';
+
+/** Watchpoint trigger mode (PRD §F-DBG-4): write (default), read or access. */
+export type WatchMode = 'write' | 'read' | 'access';
+
+/** One row of the debug panel's breakpoints list (PRD §F-DBG-1, P4.4 F-DBG-4). */
 export interface BreakpointRow {
   id: number;
+  kind: BreakpointKind;
   address: string | null;
-  /** Original location as entered, e.g. "app_main" or "*0x40080048". */
+  /** Original location as entered, e.g. "app_main" or "*0x40080048"; the watched expression for watchpoints. */
   location: string | null;
   enabled: boolean;
+  /** Condition expression (conditional breakpoints, PRD §F-DBG-4); null when none. */
+  cond: string | null;
 }
 
 /** One frame variable of the current stop (PRD §F-DBG-3: 局部变量). */
@@ -124,21 +133,45 @@ export class GdbBridge extends EventEmitter {
 
   /** Insert a breakpoint at a symbol, `file:line` or `*ADDR` location (PRD §F-DBG-1). */
   async setBreakpoint(at: string): Promise<BreakpointInfo> {
-    const location = /\s/.test(at) ? `"${at.replace(/"/g, '\\"')}"` : at;
-    const rec = await this.send(`-break-insert ${location}`);
-    const bkpt = asRecord(rec.payload?.bkpt);
-    const id = Number(bkpt.number);
-    if (!Number.isFinite(id)) {
-      throw new Error(`[BB-113] -break-insert returned no breakpoint number: ${JSON.stringify(rec.payload ?? {})}`);
-    }
-    return {
-      id,
-      address: miString(bkpt.addr),
-      enabled: miString(bkpt.enabled) !== 'n',
-    };
+    const rec = await this.send(`-break-insert ${quoteMiArg(at)}`);
+    return parseBkpt(rec, '-break-insert');
   }
 
-  /** Delete one breakpoint by its GDB number (PRD §F-DBG-1). */
+  /**
+   * Insert a breakpoint whose stop is gated on a condition expression
+   * (PRD §F-DBG-4 conditional breakpoints) via `-break-insert -c "cond" loc`.
+   */
+  async setConditionalBreakpoint(at: string, condition: string): Promise<BreakpointInfo> {
+    const location = quoteMiArg(at);
+    const cond = quoteMiArg(condition);
+    const rec = await this.send(`-break-insert -c ${cond} ${location}`);
+    return parseBkpt(rec, '-break-insert');
+  }
+
+  /** Set or clear (empty string) the condition of an existing breakpoint (PRD §F-DBG-4). */
+  async conditionBreakpoint(id: number, condition: string): Promise<void> {
+    await this.send(`-break-condition ${id} ${condition}`.trim());
+  }
+
+  /**
+   * Insert a hardware watchpoint on an expression (PRD §F-DBG-4) via
+   * `-break-watch [-r|-a] expr`. The stop lands as a `stopped` event with
+   * reason 'read-watchpoint-trigger' / 'watchpoint-trigger' /
+   * 'access-watchpoint-trigger' depending on the mode.
+   */
+  async setWatchpoint(expr: string, mode: WatchMode = 'write'): Promise<BreakpointInfo> {
+    const flag = mode === 'read' ? '-r ' : mode === 'access' ? '-a ' : '';
+    const rec = await this.send(`-break-watch ${flag}${quoteMiArg(expr)}`);
+    // Result key varies with the mode: wpt / hw-rwpt / hw-awpt.
+    const bkpt = asRecord(rec.payload?.wpt ?? rec.payload?.['hw-rwpt'] ?? rec.payload?.['hw-awpt']);
+    const id = Number(bkpt.number);
+    if (!Number.isFinite(id)) {
+      throw new Error(`[BB-113] -break-watch returned no watchpoint number: ${JSON.stringify(rec.payload ?? {})}`);
+    }
+    return { id, address: '', enabled: true };
+  }
+
+  /** Delete one breakpoint by its GDB number (PRD §F-DBG-1); also removes watchpoints. */
   async removeBreakpoint(id: number): Promise<void> {
     await this.send(`-break-delete ${id}`);
   }
@@ -209,7 +242,7 @@ export class GdbBridge extends EventEmitter {
     return miString(rec.payload?.value);
   }
 
-  /** Current breakpoints from `-break-list` (PRD §F-DBG-1). */
+  /** Current breakpoints and watchpoints from `-break-list` (PRD §F-DBG-1, P4.4). */
   async listBreakpoints(): Promise<BreakpointRow[]> {
     const rec = await this.send('-break-list');
     // MI shape: ^done,BreakpointTable={nr_rows="1",...,body=[bkpt={...}]} —
@@ -218,11 +251,16 @@ export class GdbBridge extends EventEmitter {
     const body = asList(table.body);
     return body.map((entry) => {
       const bkpt = asRecord(asRecord(entry).bkpt);
+      const type = miString(bkpt.type);
+      // Watchpoint rows carry the expression in `what` and usually no addr.
+      const what = bkpt.what !== undefined ? miString(bkpt.what) : null;
       return {
         id: Number(bkpt.number),
-        address: bkpt.addr !== undefined ? miString(bkpt.addr) : null,
-        location: bkpt['original-location'] !== undefined ? miString(bkpt['original-location']) : null,
+        kind: type === 'breakpoint' ? 'breakpoint' : 'watchpoint',
+        address: bkpt.addr !== undefined && what === null ? miString(bkpt.addr) : null,
+        location: bkpt['original-location'] !== undefined ? miString(bkpt['original-location']) : what,
         enabled: miString(bkpt.enabled) !== 'n',
+        cond: bkpt.cond !== undefined ? miString(bkpt.cond) || null : null,
       };
     });
   }
@@ -369,6 +407,25 @@ function assertReadable(path: string, message: string): void {
   } catch {
     throw new Error(`${message}: ${path}`);
   }
+}
+
+/** Quote one MI argument; quoting is only needed when whitespace/embedded quotes appear. */
+function quoteMiArg(arg: string): string {
+  return /\s/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg;
+}
+
+/** Narrow a `-break-insert` result record into BreakpointInfo. */
+function parseBkpt(rec: MiRecord, cmd: string): BreakpointInfo {
+  const bkpt = asRecord(rec.payload?.bkpt);
+  const id = Number(bkpt.number);
+  if (!Number.isFinite(id)) {
+    throw new Error(`[BB-113] ${cmd} returned no breakpoint number: ${JSON.stringify(rec.payload ?? {})}`);
+  }
+  return {
+    id,
+    address: miString(bkpt.addr),
+    enabled: miString(bkpt.enabled) !== 'n',
+  };
 }
 
 /** Narrow an MI value to a tuple, tolerating absent/malformed payloads. */

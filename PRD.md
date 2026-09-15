@@ -296,7 +296,7 @@ export interface Wire {
 AI 生成 IPC 处理时 MUST 遵循命名前缀：
 - `sim:*` 仿真控制（start/pause/step/reset/status）
 - `fw:*` 固件加载（load/listSymbols）
-- `dbg:*` 调试（setBreakpoint/continue/step/vars/regs）
+- `dbg:*` 调试（setBreakpoint/continue/step/vars/regs；P4.4 起追加 setConditionalBreakpoint/setWatchpoint/conditionBreakpoint）
 - `proj:*` 工程（new/open/save/saveAs/close；P4.3 起追加 linkExternal/unlinkExternal/scanExternal/importExternal）
 - `bb:*` 面包板（applyNetlist/getNetlist）
 - `per:*` 外设运行时（snapshot 事件由 Bridge→UI 单向推）

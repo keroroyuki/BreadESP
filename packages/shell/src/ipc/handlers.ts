@@ -75,6 +75,30 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   ipcMain.handle('dbg:disconnect', async () => gdb.stop());
   ipcMain.handle('dbg:status', async () => ({ connected: gdb.isConnected() }));
   ipcMain.handle('dbg:setBreakpoint', async (_e, p: { at: string }) => gdb.setBreakpoint(p.at));
+  // P4.4 (PRD §F-DBG-4): conditional breakpoints and watchpoints. Payloads are
+  // renderer-controlled, so validate at this boundary; deeper failures come
+  // back from GDB as [BB-113].
+  ipcMain.handle('dbg:setConditionalBreakpoint', async (_e, p: { at: string; condition: string }) => {
+    if (typeof p?.at !== 'string' || p.at.length === 0 || typeof p?.condition !== 'string' || p.condition.length === 0) {
+      throw new Error('[BB-131] invalid dbg:setConditionalBreakpoint payload (at/condition)');
+    }
+    return gdb.setConditionalBreakpoint(p.at, p.condition);
+  });
+  ipcMain.handle('dbg:setWatchpoint', async (_e, p: { expr: string; mode?: 'write' | 'read' | 'access' }) => {
+    if (
+      typeof p?.expr !== 'string' || p.expr.length === 0 ||
+      (p?.mode !== undefined && p.mode !== 'write' && p.mode !== 'read' && p.mode !== 'access')
+    ) {
+      throw new Error('[BB-131] invalid dbg:setWatchpoint payload (expr/mode)');
+    }
+    return gdb.setWatchpoint(p.expr, p.mode ?? 'write');
+  });
+  ipcMain.handle('dbg:conditionBreakpoint', async (_e, p: { id: number; condition: string }) => {
+    if (!Number.isFinite(p?.id) || typeof p?.condition !== 'string') {
+      throw new Error('[BB-131] invalid dbg:conditionBreakpoint payload (id/condition)');
+    }
+    return gdb.conditionBreakpoint(p.id, p.condition);
+  });
   ipcMain.handle('dbg:removeBreakpoint', async (_e, p: { id: number }) => gdb.removeBreakpoint(p.id));
   ipcMain.handle('dbg:clearBreakpoints', async () => gdb.clearBreakpoints());
   ipcMain.handle('dbg:listBreakpoints', async () => gdb.listBreakpoints());

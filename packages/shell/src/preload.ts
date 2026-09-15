@@ -67,6 +67,10 @@ const api = {
     disconnect: () => ipcRenderer.invoke('dbg:disconnect'),
     status: () => ipcRenderer.invoke('dbg:status'),
     setBreakpoint: (p: unknown) => ipcRenderer.invoke('dbg:setBreakpoint', p),
+    // P4.4 (PRD §F-DBG-4): conditional breakpoints and hardware watchpoints.
+    setConditionalBreakpoint: (p: unknown) => ipcRenderer.invoke('dbg:setConditionalBreakpoint', p),
+    setWatchpoint: (p: unknown) => ipcRenderer.invoke('dbg:setWatchpoint', p),
+    conditionBreakpoint: (p: unknown) => ipcRenderer.invoke('dbg:conditionBreakpoint', p),
     removeBreakpoint: (p: unknown) => ipcRenderer.invoke('dbg:removeBreakpoint', p),
     clearBreakpoints: () => ipcRenderer.invoke('dbg:clearBreakpoints'),
     listBreakpoints: () => ipcRenderer.invoke('dbg:listBreakpoints'),
