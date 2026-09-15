@@ -3,6 +3,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ChipKind, LayoutFile, Netlist } from '@breadesp/netlist';
 import type { ProjectData } from './project/ProjectManager.js';
+import type { ExternalScanResult } from './project/ExternalProject.js';
 
 /** DBus forward channel — mirrors QemuDbusChannel in sim-core (PRD §6.7). */
 export interface SimDbusChannel {
@@ -105,6 +106,14 @@ const api = {
     save: (p: { netlist: Netlist; layout: LayoutFile }) => ipcRenderer.invoke('proj:save', p),
     saveAs: (p: { dir: string; netlist: Netlist; layout: LayoutFile }) => ipcRenderer.invoke('proj:saveAs', p),
     close: () => ipcRenderer.invoke('proj:close'),
+    // P4.3 (PRD §F-PROJ-3): external PlatformIO/ESP-IDF association. Returns
+    // are plain JSON data produced by ProjectManager (paths/mtimes/sizes).
+    // IPC boundary: invoke is untyped over the wire; the main side validates
+    // and constructs these shapes, so the casts are safe.
+    linkExternal: (p: { dir: string }) => ipcRenderer.invoke('proj:linkExternal', p) as Promise<ExternalScanResult>,
+    unlinkExternal: () => ipcRenderer.invoke('proj:unlinkExternal') as Promise<void>,
+    scanExternal: () => ipcRenderer.invoke('proj:scanExternal') as Promise<ExternalScanResult>,
+    importExternal: (p?: { elfPath?: string }) => ipcRenderer.invoke('proj:importExternal', p) as Promise<string>,
   },
   // bb:*
   bb: {

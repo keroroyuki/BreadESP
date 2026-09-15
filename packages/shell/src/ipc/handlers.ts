@@ -109,6 +109,27 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
     await project.saveProject(p.netlist, p.layout);
   });
   ipcMain.handle('proj:close', async () => project.close());
+  // P4.3 (PRD §F-PROJ-3): external PlatformIO/ESP-IDF project association.
+  // Payloads are renderer-controlled, so validate at this boundary; deeper
+  // failures are coded [BB-127..129] by ProjectManager.
+  ipcMain.handle('proj:linkExternal', async (_e, p: { dir: string }) => {
+    if (typeof p?.dir !== 'string' || p.dir.length === 0) {
+      throw new Error('[BB-130] invalid proj:linkExternal payload (dir)');
+    }
+    return project.linkExternalProject(p.dir);
+  });
+  ipcMain.handle('proj:unlinkExternal', async () => project.unlinkExternalProject());
+  ipcMain.handle('proj:scanExternal', async () => project.scanExternalFirmware());
+  ipcMain.handle('proj:importExternal', async (_e, p?: { elfPath?: string }) => {
+    if (
+      p !== undefined && p !== null &&
+      (typeof p !== 'object' || Array.isArray(p) ||
+        (p.elfPath !== undefined && (typeof p.elfPath !== 'string' || p.elfPath.length === 0)))
+    ) {
+      throw new Error('[BB-130] invalid proj:importExternal payload (elfPath)');
+    }
+    return project.importExternalFirmware(p?.elfPath);
+  });
   // TODO(PRD §F-PROJ-1): expose project.importFirmware once the firmware-picking UI lands.
 
   // bb:*

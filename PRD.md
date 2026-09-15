@@ -106,7 +106,7 @@
 ### 3.7 工程（F-PROJ）
 - F-PROJ-1 MUST 工程结构：`firmware.elf`、`netlist.json`、`layout.json`、`meta.json`。
 - F-PROJ-2 MUST 支持新建/打开/另存为。
-- F-PROJ-3 MAY 支持与 PlatformIO/IDF 工程目录关联（自动发现 `build/*.elf`）。
+- F-PROJ-3 MAY 支持与 PlatformIO/IDF 工程目录关联（自动发现 `build/*.elf`）。关联记录于 `meta.json` 的 `external: {kind, dir}`（`kind` ∈ `platformio`|`esp-idf`，缺省缺字段向后兼容）；识别规则：PlatformIO 以 `platformio.ini` 为标志（`[env:x]` 段映射 `.pio/build/<env>/*.elf`，裸 `[env]` 映射 `env` 目录；声明 env 与磁盘 env 目录取并集），ESP-IDF 以 `CMakeLists.txt` +（`sdkconfig` 或 `project.cmake` include）为标志（扫描 `build/*.elf` 顶层）；候选按 mtime 新→旧排序；导入经 F-FW-5 架构门控复制为工程内 `firmware.elf`，显式路径必须是当前扫描候选之一。
 
 ### 3.8 可扩展性（F-EXT）
 - F-EXT-1 MUST 提供外设 SDK，允许第三方以独立包形式注册外设模型。
@@ -297,7 +297,7 @@ AI 生成 IPC 处理时 MUST 遵循命名前缀：
 - `sim:*` 仿真控制（start/pause/step/reset/status）
 - `fw:*` 固件加载（load/listSymbols）
 - `dbg:*` 调试（setBreakpoint/continue/step/vars/regs）
-- `proj:*` 工程（new/open/save/saveAs/close）
+- `proj:*` 工程（new/open/save/saveAs/close；P4.3 起追加 linkExternal/unlinkExternal/scanExternal/importExternal）
 - `bb:*` 面包板（applyNetlist/getNetlist）
 - `per:*` 外设运行时（snapshot 事件由 Bridge→UI 单向推）
 

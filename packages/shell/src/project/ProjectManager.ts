@@ -1,10 +1,12 @@
 // PRD: §F-PROJ — Project (.breadesp directory) load/save.
 // Layout is stored separately from the netlist (PRD §6.5, §F-BB-4).
-import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, open, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { buildTemplateProject, chipKindSchema, validateLayout, validateNetlist } from '@breadesp/netlist';
 import type { ChipKind, LayoutFile, Netlist } from '@breadesp/netlist';
-import { validateElf } from '@breadesp/sim-core';
+import { readElfHeader, expectedElfMachine, validateElf } from '@breadesp/sim-core';
+import { scanExternalProject } from './ExternalProject.js';
+import type { ExternalProjectLink, ExternalScanResult } from './ExternalProject.js';
 
 const META_FILE = 'meta.json';
 const NETLIST_FILE = 'netlist.json';
@@ -16,6 +18,11 @@ export interface ProjectMeta {
   version: 1;
   createdAt: number;
   updatedAt: number;
+  /**
+   * P4.3 (PRD §F-PROJ-3): optional association with an external
+   * PlatformIO/ESP-IDF project; absent in pre-P4.3 metas (backward compatible).
+   */
+  external?: ExternalProjectLink;
 }
 
 /** Full project state as loaded from disk (PRD §F-PROJ-1 structure). */
@@ -26,6 +33,8 @@ export interface ProjectData {
   layout: LayoutFile;
   /** Absolute path to <dir>/firmware.elf when imported, else null. */
   firmwareElf: string | null;
+  /** Linked external build project (PRD §F-PROJ-3), else null. */
+  external: ExternalProjectLink | null;
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -108,7 +117,14 @@ export class ProjectManager {
     const firmwareElf = join(dir, FIRMWARE_FILE);
 
     this.dir = dir;
-    return { dir, meta, netlist, layout, firmwareElf: (await pathExists(firmwareElf)) ? firmwareElf : null };
+    return {
+      dir,
+      meta,
+      netlist,
+      layout,
+      firmwareElf: (await pathExists(firmwareElf)) ? firmwareElf : null,
+      external: meta.external ?? null,
+    };
   }
 
   /**
@@ -127,6 +143,69 @@ export class ProjectManager {
     if (!ok) {
       throw new Error(`[BB-101] firmware ELF ${elfPath} rejected: ${issues.map((i) => i.message).join('; ')}`);
     }
+  }
+
+  /**
+   * P4.3 (PRD §F-PROJ-3): associate the open project with an external
+   * PlatformIO/ESP-IDF project directory. Detection must succeed before the
+   * link is persisted ([BB-127]); the returned scan lists every discovered
+   * build/*.elf newest-first, each annotated with `archOk` against the
+   * saved netlist's chip.
+   */
+  async linkExternalProject(dir: string): Promise<ExternalScanResult> {
+    if (!this.dir) throw new Error('[BB-124] no project open');
+    const scan = await scanExternalProject(dir);
+    if (scan === null) {
+      throw new Error(`[BB-127] not a PlatformIO or ESP-IDF project: ${dir}`);
+    }
+    const meta = await this.readMeta(this.dir);
+    meta.external = scan.link;
+    meta.updatedAt = Date.now();
+    await this.writeMeta(meta);
+    return this.decorateScan(scan);
+  }
+
+  /** Remove the external project association (idempotent). */
+  async unlinkExternalProject(): Promise<void> {
+    if (!this.dir) throw new Error('[BB-124] no project open');
+    const meta = await this.readMeta(this.dir);
+    if (meta.external === undefined) return;
+    delete meta.external;
+    meta.updatedAt = Date.now();
+    await this.writeMeta(meta);
+  }
+
+  /** Re-scan the linked external project (PRD §F-PROJ-3 auto-discovery). */
+  async scanExternalFirmware(): Promise<ExternalScanResult> {
+    const meta = await this.linkedMeta();
+    const scan = await scanExternalProject(meta.external.dir);
+    if (scan === null) {
+      throw new Error(`[BB-128] linked project no longer recognized: ${meta.external.dir}`);
+    }
+    return this.decorateScan(scan);
+  }
+
+  /**
+   * Copy a discovered external build into the project as firmware.elf
+   * (PRD §F-PROJ-1/§F-PROJ-3). Without `elfPath` the newest candidate is
+   * picked; an explicit path must be one of the current scan's candidates so
+   * this channel cannot import arbitrary files. The P0.6 architecture gate
+   * ([BB-101]) applies before anything is copied.
+   */
+  async importExternalFirmware(elfPath?: string): Promise<string> {
+    const scan = await this.scanExternalFirmware();
+    if (scan.candidates.length === 0) {
+      throw new Error(`[BB-129] no build/*.elf found under ${scan.link.dir} (build the firmware first)`);
+    }
+    let chosen = scan.candidates[0];
+    if (elfPath !== undefined) {
+      const found = scan.candidates.find((c) => c.path === elfPath);
+      if (found === undefined) {
+        throw new Error(`[BB-129] ${elfPath} is not a discovered candidate of ${scan.link.dir}; rescan and pick from the list`);
+      }
+      chosen = found;
+    }
+    return this.importFirmware(chosen.path);
   }
 
   /**
@@ -166,6 +245,56 @@ export class ProjectManager {
     this.dir = null;
   }
 
+  /** Meta of the open project with the external link mandatory ([BB-128] otherwise). */
+  private async linkedMeta(): Promise<ProjectMeta & { external: ExternalProjectLink }> {
+    if (!this.dir) throw new Error('[BB-124] no project open');
+    const meta = await this.readMeta(this.dir);
+    const external = meta.external;
+    if (external === undefined) {
+      throw new Error('[BB-128] no external project linked; call proj:linkExternal first');
+    }
+    return { ...meta, external };
+  }
+
+  /**
+   * Annotate each candidate with `archOk` — whether its ELF header matches the
+   * saved netlist's chip family. An unreadable/undecodable file is simply
+   * archOk:false; scanning never fails on a single bad build artifact.
+   */
+  private async decorateScan(scan: ExternalScanResult): Promise<ExternalScanResult> {
+    // linkExternalProject/scanExternalFirmware both run with a project open;
+    // loadNetlist re-checks the open-project invariant ([BB-124]).
+    const netlist = await this.loadNetlist();
+    const expected = expectedElfMachine(netlist.chip);
+    const candidates = await Promise.all(
+      scan.candidates.map(async (c) => {
+        let archOk = false;
+        try {
+          // Only the 52-byte header decides the architecture; cap the read so
+          // a multi-MB app binary is not pulled into memory per candidate.
+          const buf = Buffer.alloc(0x34);
+          const fh = await open(c.path, 'r');
+          try {
+            await fh.read(buf, 0, buf.length, 0);
+          } finally {
+            await fh.close();
+          }
+          const header = readElfHeader(buf);
+          archOk = header !== null && header.machine === expected;
+        } catch {
+          archOk = false;
+        }
+        return { ...c, archOk };
+      }),
+    );
+    return { ...scan, candidates };
+  }
+
+  private async writeMeta(meta: ProjectMeta): Promise<void> {
+    if (!this.dir) throw new Error('[BB-124] no project open');
+    await writeFile(join(this.dir, META_FILE), JSON.stringify(meta, null, 2));
+  }
+
   private async readMeta(dir: string): Promise<ProjectMeta> {
     const file = join(dir, META_FILE);
     if (!(await pathExists(file))) {
@@ -177,7 +306,18 @@ export class ProjectManager {
       m.version !== 1 || typeof m.createdAt !== 'number' || typeof m.updatedAt !== 'number') {
       throw new Error(`[BB-121] malformed ${META_FILE} in ${dir} (expected {version:1, createdAt, updatedAt})`);
     }
-    return { version: 1, createdAt: m.createdAt, updatedAt: m.updatedAt };
+    const meta: ProjectMeta = { version: 1, createdAt: m.createdAt, updatedAt: m.updatedAt };
+    // P4.3 (PRD §F-PROJ-3): optional external link; validated strictly when present.
+    if (m.external !== undefined) {
+      const ext = m.external as Record<string, unknown> | null;
+      if (ext === null || typeof ext !== 'object' || Array.isArray(ext) ||
+        (ext.kind !== 'platformio' && ext.kind !== 'esp-idf') ||
+        typeof ext.dir !== 'string' || ext.dir.length === 0) {
+        throw new Error(`[BB-121] malformed ${META_FILE} in ${dir} (external must be {kind: platformio|esp-idf, dir})`);
+      }
+      meta.external = { kind: ext.kind, dir: ext.dir };
+    }
+    return meta;
   }
 
   private async readNetlist(dir: string): Promise<Netlist> {
