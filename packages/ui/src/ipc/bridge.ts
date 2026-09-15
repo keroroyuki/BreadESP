@@ -9,13 +9,40 @@ interface SimDbusChannel {
   port?: number;
 }
 
+/** ExternalProjectKind — mirrors shell/src/project/ExternalProject.ts (PRD §F-PROJ-3). */
+export type ExternalProjectKind = 'platformio' | 'esp-idf';
+
+/** ExternalProjectLink — mirrors shell/src/project/ExternalProject.ts (PRD §F-PROJ-3). */
+export interface ExternalProjectLink {
+  kind: ExternalProjectKind;
+  dir: string;
+}
+
+/** ExternalElfCandidate — mirrors shell/src/project/ExternalProject.ts (PRD §F-PROJ-3). */
+export interface ExternalElfCandidate {
+  path: string;
+  env: string | null;
+  mtimeMs: number;
+  sizeBytes: number;
+  /** Filled by the Bridge: ELF header matches the project chip family. */
+  archOk?: boolean;
+}
+
+/** ExternalScanResult — mirrors shell/src/project/ExternalProject.ts (PRD §F-PROJ-3). */
+export interface ExternalScanResult {
+  link: ExternalProjectLink;
+  /** Newest build first. */
+  candidates: ExternalElfCandidate[];
+}
+
 /** ProjectData — mirrors ProjectManager in shell/src/project/ProjectManager.ts (PRD §F-PROJ-1). */
 interface ProjectData {
   dir: string;
-  meta: { version: 1; createdAt: number; updatedAt: number };
+  meta: { version: 1; createdAt: number; updatedAt: number; external?: ExternalProjectLink };
   netlist: Netlist;
   layout: LayoutFile;
   firmwareElf: string | null;
+  external: ExternalProjectLink | null;
 }
 
 /** Payload of `sim:load` — mirrors shell/src/preload.ts (PRD §6.6). */
@@ -95,6 +122,12 @@ interface BridgeApi {
     save: (p: { netlist: Netlist; layout: LayoutFile }) => Promise<void>;
     saveAs: (p: { dir: string; netlist: Netlist; layout: LayoutFile }) => Promise<void>;
     close: () => Promise<void>;
+    /** P4.3 (PRD §F-PROJ-3): link a PlatformIO/ESP-IDF project; returns the discovered ELFs. */
+    linkExternal: (p: { dir: string }) => Promise<ExternalScanResult>;
+    unlinkExternal: () => Promise<void>;
+    scanExternal: () => Promise<ExternalScanResult>;
+    /** Import a discovered build as firmware.elf; no elfPath picks the newest. Returns the dest path. */
+    importExternal: (p?: { elfPath?: string }) => Promise<string>;
   };
   bb: { applyNetlist: (p: unknown) => Promise<void>; getNetlist: () => Promise<unknown>; };
   per: {

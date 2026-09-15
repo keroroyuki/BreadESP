@@ -12,6 +12,7 @@ import { BreadboardCanvas } from './components/Breadboard/BreadboardCanvas';
 import { Palette } from './components/Palette/Palette';
 import { Inspector } from './components/Inspector/Inspector';
 import { ProjectToolbar } from './components/ProjectToolbar/ProjectToolbar';
+import { ExternalFirmware } from './components/ExternalFirmware/ExternalFirmware';
 import { SimControls } from './components/SimControls/SimControls';
 import { SerialConsole } from './components/SerialConsole/SerialConsole';
 import { ScreenView } from './components/ScreenView/ScreenView';
@@ -84,6 +85,7 @@ export function App() {
         <span style={{ marginLeft: 12 }}>sim: {status}</span>
       </header>
       <ProjectToolbar />
+      <ExternalFirmware />
       <SimControls />
       <div style={main}>
         <Palette />

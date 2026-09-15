@@ -6,6 +6,7 @@
 // `bb:applyNetlist` so peripheral instances and routing follow the logic half.
 import { create } from 'zustand';
 import type { LayoutFile, LayoutItem, Netlist, WireEndpoint } from '@breadesp/netlist';
+import type { ExternalProjectLink } from '../ipc/bridge';
 
 const EMPTY_NETLIST: Netlist = { version: 1, chip: 'esp32', peripherals: [], wires: [] };
 
@@ -13,11 +14,23 @@ interface ProjectState {
   dir: string | null;
   netlist: Netlist;
   layout: LayoutItem[];
+  /** P4.3 (PRD §F-PROJ-3): linked external PlatformIO/ESP-IDF project, else null. */
+  external: ExternalProjectLink | null;
+  /** Absolute path of the project's imported firmware.elf, else null. */
+  firmwareElf: string | null;
   setDir: (dir: string) => void;
   setNetlist: (netlist: Netlist) => void;
   setLayout: (items: LayoutItem[]) => void;
+  setExternal: (link: ExternalProjectLink | null) => void;
+  setFirmwareElf: (path: string | null) => void;
   /** Hydrate both halves from a Bridge-validated opened project (PRD §F-PROJ-2). */
-  loadProject: (p: { dir: string; netlist: Netlist; layout: LayoutFile }) => void;
+  loadProject: (p: {
+    dir: string;
+    netlist: Netlist;
+    layout: LayoutFile;
+    external?: ExternalProjectLink | null;
+    firmwareElf?: string | null;
+  }) => void;
   /** New/close: empty halves, optionally pointing at a fresh skeleton dir. */
   resetProject: (dir: string | null) => void;
   addPeripheral: (kind: string, x: number, y: number) => string;
@@ -49,11 +62,22 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   dir: null,
   netlist: EMPTY_NETLIST,
   layout: [],
+  external: null,
+  firmwareElf: null,
   setDir: (dir) => set({ dir }),
   setNetlist: (netlist) => set({ netlist }),
   setLayout: (items) => set({ layout: items }),
-  loadProject: (p) => set({ dir: p.dir, netlist: p.netlist, layout: p.layout.items }),
-  resetProject: (dir) => set({ dir, netlist: EMPTY_NETLIST, layout: [] }),
+  setExternal: (link) => set({ external: link }),
+  setFirmwareElf: (path) => set({ firmwareElf: path }),
+  loadProject: (p) =>
+    set({
+      dir: p.dir,
+      netlist: p.netlist,
+      layout: p.layout.items,
+      external: p.external ?? null,
+      firmwareElf: p.firmwareElf ?? null,
+    }),
+  resetProject: (dir) => set({ dir, netlist: EMPTY_NETLIST, layout: [], external: null, firmwareElf: null }),
 
   addPeripheral: (kind, x, y) => {
     const { netlist, layout } = get();
