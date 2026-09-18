@@ -90,6 +90,7 @@ const qemu = {
   getSpeed: vi.fn().mockReturnValue(1),
   getGdbPort: vi.fn().mockReturnValue(null),
   getFirmwareElf: vi.fn().mockReturnValue(null),
+  getChip: vi.fn().mockReturnValue(null),
   on: vi.fn(),
 };
 const gdb = {
@@ -434,6 +435,7 @@ describe('preload ↔ handlers IPC contract (P1.1)', () => {
     process.env.BREADESP_GDB_BIN = '/opt/xtensa/bin/xtensa-esp32-elf-gdb';
     qemu.getGdbPort.mockReturnValueOnce(3333);
     qemu.getFirmwareElf.mockReturnValueOnce('/tmp/blink.elf');
+    qemu.getChip.mockReturnValueOnce('esp32');
     try {
       const handler = state.handles.get('dbg:connect');
       expect(handler).toBeDefined();
@@ -443,6 +445,7 @@ describe('preload ↔ handlers IPC contract (P1.1)', () => {
         elfPath: '/tmp/blink.elf',
         targetHost: '127.0.0.1',
         port: 3333,
+        chip: 'esp32',
       });
     } finally {
       if (prevBin === undefined) delete process.env.BREADESP_GDB_BIN;

@@ -52,6 +52,7 @@ export class QemuRunner extends EventEmitter {
   private qmpPort: number | null = null;
   private gdbPort: number | null = null;
   private firmwareElf: string | null = null;
+  private chip: ChipKind | null = null;
   private stopping = false;
   private exitWaiter: Promise<number | null> = Promise.resolve(null);
   /** PRD §F-SIM-2 — logical-clock throttle multiplier (see setSpeed). */
@@ -107,6 +108,12 @@ export class QemuRunner extends EventEmitter {
   /** Firmware ELF path of the current/last load (dbg:connect passes it to GDB). */
   getFirmwareElf(): string | null { return this.firmwareElf; }
 
+  /**
+   * Chip of the current/last load (P4.5): dbg:connect / DAP attach pass it to
+   * GDB for the Xtensa dynconfig selection (esp-gdb register layout).
+   */
+  getChip(): ChipKind | null { return this.chip; }
+
   /** UART0 output accumulated this session (oldest first, truncated to the tail). */
   getUartLog(): string { return this.uartLog.join(''); }
 
@@ -141,6 +148,7 @@ export class QemuRunner extends EventEmitter {
     this.qmpPort = qmpPort;
     this.gdbPort = gdbPort;
     this.firmwareElf = input.firmwareElf;
+    this.chip = input.chip;
     this.uartLog.length = 0;
 
     this.exitWaiter = new Promise<number | null>((resolve) => {

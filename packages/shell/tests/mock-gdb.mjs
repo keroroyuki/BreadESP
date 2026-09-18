@@ -19,6 +19,11 @@ const scenarioIdx = argv.indexOf('--scenario');
 const scenario = scenarioIdx >= 0 ? argv[scenarioIdx + 1] : 'ok';
 
 process.stderr.write(`mock-gdb: start scenario=${scenario} elf=${argv[argv.length - 1] ?? '?'}\n`);
+// P4.5: the adapter may inject XTENSA_GNU_CONFIG for esp-gdb dynconfig
+// selection; echo it so tests can assert the env made it into the subprocess.
+if (process.env.XTENSA_GNU_CONFIG !== undefined) {
+  process.stderr.write(`mock-gdb: dynconfig=${process.env.XTENSA_GNU_CONFIG}\n`);
+}
 process.stdout.write('=thread-group-added,id="i1"\n');
 process.stdout.write('(gdb)\n');
 
@@ -121,20 +126,46 @@ rl.on('line', (line) => {
   }
   if (cmd.startsWith('-exec-continue')) {
     if (scenario === 'hang') return;
+    // Real GDB/MI announces the resume with an exec-async *running record
+    // before the ^running result (the DAP 'continued' event rides on it).
+    process.stdout.write('*running,thread-id="all"\n');
     done(token, 'thread-id="all"');
     stoppedAfter(30, '*stopped,reason="breakpoint-hit",disp="keep",bkptno="1",frame={addr="0x40080024",func="app_main",args=[]},thread-id="1",stopped-threads=["all"],core="0"');
     return;
   }
   if (cmd.startsWith('-exec-step-instruction')) {
     if (scenario === 'hang') return;
+    process.stdout.write('*running,thread-id="all"\n');
     done(token, 'thread-id="all"');
     stoppedAfter(30, '*stopped,reason="end-stepping-range",frame={addr="0x40080027",func="app_main",args=[]},thread-id="1",stopped-threads=["all"],core="0"');
     return;
   }
   if (cmd.startsWith('-exec-next-instruction')) {
     if (scenario === 'hang') return;
+    process.stdout.write('*running,thread-id="all"\n');
     done(token, 'thread-id="all"');
     stoppedAfter(30, '*stopped,reason="end-stepping-range",frame={addr="0x40080029",func="app_main",args=[]},thread-id="1",stopped-threads=["all"],core="0"');
+    return;
+  }
+  // P4.5 (PRD §F-DBG-6): -exec-finish runs until the current frame returns.
+  if (cmd.startsWith('-exec-finish')) {
+    if (scenario === 'hang') return;
+    process.stdout.write('*running,thread-id="all"\n');
+    done(token, 'thread-id="all"');
+    stoppedAfter(30, '*stopped,reason="function-finished",frame={addr="0x40080100",func="call_start_cpu0",args=[],file="cpu_start.c",fullname="/repo/cpu_start.c",line="300",arch=""},thread-id="1",stopped-threads=["all"],core="0"');
+    return;
+  }
+  // P4.5 (PRD §F-DBG-6): -exec-interrupt stops a running target; GDB reports
+  // the stop as a signal-received record (SIGINT), frame included.
+  if (cmd.startsWith('-exec-interrupt')) {
+    if (scenario === 'hang') return;
+    done(token);
+    stoppedAfter(30, '*stopped,reason="signal-received",signal-name="0",signal-meaning="Stop",frame={addr="0x40080024",func="app_main",args=[],arch=""},thread-id="1",stopped-threads=["all"],core="0"');
+    return;
+  }
+  // P4.5 (PRD §F-DBG-6): -stack-list-frames, innermost frame first.
+  if (cmd.startsWith('-stack-list-frames')) {
+    done(token, 'stack=[frame={level="0",addr="0x40080024",func="app_main",file="blink.S",fullname="/repo/blink.S",line="10",arch=""},frame={level="1",addr="0x40080100",func="call_start_cpu0",file="cpu_start.c",fullname="/repo/cpu_start.c",line="300",arch=""}]');
     return;
   }
   if (cmd.startsWith('-stack-list-variables')) {

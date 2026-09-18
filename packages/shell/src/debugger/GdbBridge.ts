@@ -10,7 +10,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import { EventEmitter } from 'node:events';
+import type { ChipKind } from '@breadesp/netlist';
 import { parseMiLine, type MiRecord, type MiTuple, type MiValue } from './MiParser.js';
+import { resolveDynconfigEnv } from './XtensaDynconfig.js';
 
 export interface BreakpointInfo { id: number; address: string; enabled: boolean; }
 
@@ -45,6 +47,8 @@ export interface FrameInfo {
   addr: string;
   func?: string;
   file?: string;
+  /** Absolute source path as resolved by GDB's debug info, when known. */
+  fullname?: string;
   line?: string;
 }
 
@@ -63,8 +67,16 @@ export interface GdbStartOptions {
   elfPath: string;
   targetHost: string;
   port: number;
+  /** Target chip; selects the esp-gdb Xtensa dynconfig when available (P4.5). */
+  chip?: ChipKind;
   /** Per-command deadline in ms (default 10s). */
   commandTimeoutMs?: number;
+  /**
+   * Extra environment for the GDB process. Xtensa dynconfig selection
+   * (XTENSA_GNU_CONFIG) is derived from `chip` automatically; explicit
+   * entries here take precedence.
+   */
+  env?: Record<string, string | undefined>;
   /** Test seam: full argv override (element 0 = executable) for mock-subprocess integration tests (dev-plan §7.2). */
   argsBuilder?: (opts: GdbStartOptions) => string[];
 }
@@ -114,7 +126,13 @@ export class GdbBridge extends EventEmitter {
       ? opts.argsBuilder(opts)
       : [opts.gdbBin, '--nx', '--interpreter=mi2', '--quiet', opts.elfPath];
     const [bin, ...rest] = argv;
-    const child = spawn(bin, rest, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    const dynconfigEnv = opts.chip !== undefined ? resolveDynconfigEnv(opts.gdbBin, opts.chip) : undefined;
+    const env = { ...dynconfigEnv, ...opts.env };
+    const child = spawn(bin, rest, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      env: Object.keys(env).length > 0 ? { ...process.env, ...env } : process.env,
+    });
     this.proc = child;
 
     child.on('error', (err) => this.onProcessGone(new Error(`[BB-111] GDB process error: ${err.message}`), -1));
@@ -176,6 +194,12 @@ export class GdbBridge extends EventEmitter {
     await this.send(`-break-delete ${id}`);
   }
 
+  /** Delete several breakpoints in one `-break-delete` (P4.5 DAP set replacement). */
+  async removeBreakpoints(ids: number[]): Promise<void> {
+    if (ids.length === 0) return;
+    await this.send(`-break-delete ${ids.join(' ')}`);
+  }
+
   /** Resume the target; resolves on `^running` — the stop arrives as a `stopped` event. */
   async continue(): Promise<void> {
     await this.send('-exec-continue');
@@ -189,6 +213,45 @@ export class GdbBridge extends EventEmitter {
   /** Step over the next instruction (PRD §F-DBG-2 单步跨过). */
   async stepOver(): Promise<void> {
     await this.send('-exec-next-instruction');
+  }
+
+  /**
+   * Run until the current frame returns (-exec-finish, P4.5 DAP step-out);
+   * the stop arrives as a `stopped` event with reason 'function-finished'.
+   */
+  async stepOut(): Promise<void> {
+    await this.send('-exec-finish');
+  }
+
+  /**
+   * Interrupt a running target (-exec-interrupt, P4.5 DAP pause). The stop
+   * arrives as a `stopped` event; GDB reports it as signal-received (SIGINT)
+   * rather than an exec-async reason on some stubs, hence the mapping happens
+   * on the DAP layer, not here.
+   */
+  async interrupt(): Promise<void> {
+    await this.send('-exec-interrupt');
+  }
+
+  /**
+   * Call-stack frames of the current stop, innermost first, via
+   * `-stack-list-frames` (P4.5 DAP stackTrace). Levels are the MI `level`
+   * fields; DWARF-backed fixtures carry func/file/fullname/line.
+   */
+  async stackFrames(): Promise<FrameInfo[]> {
+    const rec = await this.send('-stack-list-frames');
+    // MI wraps each element as `frame={...}` inside the results list, the same
+    // shape -break-list uses with `bkpt={...}` — unwrap before reading fields.
+    return asList(rec.payload?.stack).map((entry) => {
+      const t = asRecord(asRecord(entry).frame);
+      return {
+        addr: miString(t.addr),
+        func: miStringOpt(t.func),
+        file: miStringOpt(t.file),
+        fullname: miStringOpt(t.fullname),
+        line: miStringOpt(t.line),
+      };
+    });
   }
 
   /**

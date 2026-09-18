@@ -69,7 +69,15 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
     if (gdbBin === undefined) {
       throw new Error('[BB-110] BREADESP_GDB_BIN is not set; cannot spawn xtensa-esp32-elf-gdb');
     }
-    await gdb.start({ gdbBin, elfPath: firmwareElf, targetHost: '127.0.0.1', port: gdbPort });
+    // Chip drives the esp-gdb Xtensa dynconfig selection (P4.5): without it
+    // esp-gdb's built-in register layout mismatches the QEMU stub ('g' packet error).
+    await gdb.start({
+      gdbBin,
+      elfPath: firmwareElf,
+      targetHost: '127.0.0.1',
+      port: gdbPort,
+      chip: qemu.getChip() ?? undefined,
+    });
     return { connected: true };
   });
   ipcMain.handle('dbg:disconnect', async () => gdb.stop());

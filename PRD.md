@@ -353,6 +353,7 @@ my-idea/
 │       └── xtensa-elf.mjs      # 共享 Xtensa 汇编器 + ELF32 写入器
 ├── docs/
 │   ├── architecture.md
+│   ├── dap.md                  # DAP 适配器使用指南（§F-DBG-6）
 │   └── peripheral-sdk.md
 └── packages/
     ├── shell/                  # Electron 主进程 / Bridge
@@ -366,6 +367,11 @@ my-idea/
     │       ├── qemu/DBusChannel.ts
     │       ├── debugger/GdbBridge.ts
     │       ├── debugger/MiParser.ts
+    │       ├── debugger/XtensaDynconfig.ts
+    │       ├── debugger/dap/DapProtocol.ts
+    │       ├── debugger/dap/QemuGdbBackend.ts
+    │       ├── debugger/dap/DapServer.ts
+    │       ├── debugger/dap/cli.ts
     │       ├── peripherals/PeripheralManager.ts
     │       ├── project/ProjectManager.ts
     │       ├── netlist/NetlistResolver.ts
