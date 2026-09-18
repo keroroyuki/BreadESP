@@ -56,7 +56,7 @@
 - **M1**（任务 1.1–1.10 已完成，Electron 应用级手动回归随收尾统一进行）：UI 拖拽 LED 连 GPIO2，OLED 显示固件绘制的文字，可断点单步。
 - **M2**（进行中，任务 2.1–2.3 已完成）：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
 - **M3**（已达成 2026-09-11，任务 3.1–3.4 完成）：麦克风波形注入后固件能读到采样值；旋钮正交序列与 SHT30 读回复经真实 QEMU e2e 验证。
-- **M4**（进行中，任务 4.1–4.4 已完成）：切换芯片型号后同一工程可在 ESP32/S3 跑通（S3 已真实 QEMU 验证；C3/C6 的 machine/仿真器映射与门控就绪，等待 riscv32 版 QEMU 二进制接入后做真实启动验证）；新建工程向导支持选芯片/选模板；PlatformIO/IDF 工程目录可关联并自动发现 build/*.elf 导入为 firmware.elf；条件断点/watchpoint 已接入调试面板（GDB/MI 线格式经扩展 mock 冻结，真实 GDB e2e 维持 BREADESP_GDB_BIN 门控）。
+- **M4**（进行中，任务 4.1–4.5 已完成）：切换芯片型号后同一工程可在 ESP32/S3 跑通（S3 已真实 QEMU 验证；C3/C6 的 machine/仿真器映射与门控就绪，等待 riscv32 版 QEMU 二进制接入后做真实启动验证）；新建工程向导支持选芯片/选模板；PlatformIO/IDF 工程目录可关联并自动发现 build/*.elf 导入为 firmware.elf；条件断点/watchpoint 已接入调试面板（GDB/MI 线格式经扩展 mock 冻结，真实 GDB e2e 维持 BREADESP_GDB_BIN 门控）；DAP 适配器上线（stdio/TCP 双模式，launch/attach，真实 QEMU + esp-gdb 17.1 e2e 通过，见 docs/dap.md）。
 - **M5**（未开始）：第三方包 `registerPeripheral()` 后 UI 自动出现新器件。
 
 ---
@@ -125,7 +125,7 @@
 | 4.2 | 工程向导（选芯片/选模板） | 新建流程 | 已完成 2026-09-12 |
 | 4.3 | PlatformIO/IDF 工程关联（自动发现 build/*.elf） | 联动 | 已完成 2026-09-13 |
 | 4.4 | 条件断点 / watchpoint | 调试增强 | 已完成 2026-09-15 |
-| 4.5 | DAP 适配器（接入 VS Code） | 跨工具调试 | |
+| 4.5 | DAP 适配器（接入 VS Code） | 跨工具调试 | 已完成 2026-09-18 |
 
 ### Phase 5 — 生态与扩展（M5）
 
@@ -374,6 +374,8 @@ Previously applyNetlist leaked old instances on re-apply.
 - `BREADESP_QEMU_BIN`：QEMU 二进制绝对路径（handlers 使用）。
 - `BREADESP_QEMU_DBUS_BIN`：带 `breadesp-dbus` 设备的 QEMU 二进制路径（e2e 测试门控）。
 - `BREADESP_GDB_BIN`：GDB 二进制路径。
+- `XTENSA_GNU_CONFIG`：esp-gdb Xtensa dynconfig 覆盖（P4.5 起通常无需设置——
+  GdbBridge 按 chip 自动指向 `<gdb>/lib/xtensa_<chip>.so`；显式设置时优先生效）。
 - `VITE_DEV_SERVER_URL`：dev 模式 UI 加载地址（Electron main 使用）。
 - `BREADESP_LOG_DIR`：日志目录（默认 `~/.breadesp/logs`）。
 - `BREADESP_DOCKER_MIRROR`：Docker Hub 镜像前缀（如 `docker.1ms.run/`，构建设备版 QEMU 时）。
@@ -755,6 +757,42 @@ Previously applyNetlist leaked old instances on re-apply.
 > 追加式扩展（§6.6 兼容，旧消费者忽略新字段）；-break-condition 的表达式为
 > 行尾参数（GDB 语义），空串即清条件。
 
+> P4.5 验证记录（2026-09-18）：`pnpm typecheck` 0 错误；全仓测试 Windows
+> 581 通过 + 14 跳过（门控 e2e；shell 包带 BREADESP_GDB_BIN 时 250 通过 +
+> 12 跳过）。分四层验证——DAP 帧协议 9 项单测（Content-Length 往返、字节级
+> 分块/合帧、未知头与大小写容忍、UTF-8 字节计数、残帧缓冲、缺头/非数字
+> Content-Length [BB-132] 拒绝）；GdbBridge 24 项 mock 集成测试（新增 5：
+> stackFrames 解析 `-stack-list-frames`、stepOut/-exec-finish 的
+> function-finished 停止、interrupt/-exec-interrupt 的 signal-received 停止、
+> removeBreakpoints 批量 -break-delete、env 透传 XTENSA_GNU_CONFIG 进子进程）；
+> DAP 会话 12 项集成测试（mock GDB/QEMU 双 seam，in-memory 传输 + TCP socket
+> 双模式：initialize→attach→函数断点→configurationDone→threads/stackTrace/
+> scopes/variables/evaluate 全链路、复杂类型变量经 evaluate 回落、断点集合
+> 整组替换的线格式冻结、GDB ^error 降级 verified=false、协议误用/[BB-132]/
+> 未知命令/未知 variablesReference 全部可读错误响应、stopOnEntry 报 entry
+> 停止且不自动续跑、launch 模式拉起 mock QEMU 且 disconnect 回收 VM、畸形
+> 帧终止会话；另 XtensaDynconfig 3 项：按芯片选 ../lib/xtensa_<chip>.so、
+> RISC-V/缺库返回 undefined、用户设置优先）；真实 QEMU + esp-gdb 17.1 e2e
+> （dap-launch.e2e.test.ts）——launch→函数断点 app_main 命中→stackTrace 两帧
+> →寄存器 pc→evaluate $pc→stepIn→UART output→disconnect terminateDebuggee，
+> 全链路通过；既有 gdb-breakpoint e2e（P0.5 验收）同环境首次在 Windows 本机
+> 真实通过。金标固件与 QEMU 设备零改动。
+> 自我迭代抓出并已修复四个真实问题：① stackFrames() 漏解 MI 结果列表的
+> `frame={...}` 单键包装（与 -break-list 的 bkpt 同构，单测抓出）；② threads
+> 漏初始化门控（误用测试暴露）；③ **esp-gdb 17.1 与 QEMU stub 寄存器布局
+> 不匹配**——内建配置 388 字节 'g' 包对 628 字节回复报 "Remote 'g' packet
+> reply is too long"，RSP 探针确认 stub 不提供 tdesc 协商、工具链不带 XML，
+> 最终定位 esp-gdb 17.x 的 dynconfig 机制（`XTENSA_GNU_CONFIG` 指向
+> `lib/xtensa_<chip>.so`），以 `XtensaDynconfig.ts` 下沉到 GdbBridge（按
+> chip 自动选择，dbg:connect 与 DAP 共同受益，`QemuRunner.getChip()` 新增，
+> 既有 gdb-breakpoint e2e 由此首次在本机转绿）；④ 附着冻结 VM 的无 reason
+> 首停需消费后再等断点命中（真实 GDB 行为，e2e 抓出）。
+> 设计要点：launch 模式下 QemuRunner 全程保持 loaded，continue 走 GDB
+> `-exec-continue`（stub 恢复 vCPU）而非 QMP cont——双重恢复会撕裂 GDB 与
+> VM 的停走状态；QEMU stdout 经 backend 以 stdout 类 output 事件转发；
+> DAP 协议零新运行时依赖（§5 不变），PRD §7 目录同步追加 dap/ 四文件与
+> XtensaDynconfig.ts；用法文档 docs/dap.md。
+
 ### M2 清单
 - [x] TFT 渲染 rgb565 彩图
 - [x] 蜂鸣器按 PWM 频率发声
@@ -771,7 +809,7 @@ Previously applyNetlist leaked old instances on re-apply.
 - [ ] 同一工程可在 ESP32 与 ESP32-S3 跑通
 - [x] PlatformIO 工程 `build/*.elf` 自动被发现
 - [x] 条件断点/watchpoint 可用
-- [ ] DAP 接入 VS Code 可调试
+- [x] DAP 接入 VS Code 可调试
 
 ### M5 清单
 - [ ] 第三方包 `registerPeripheral()` 后 UI 自动出现新器件

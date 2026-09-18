@@ -243,6 +243,31 @@ SHT30 命令写 → i2c 前向事务 → sht30.onTransaction 解析命令字
 - **UI 状态机**（`debuggerStore`）：`detached → attached ⇄ running`。`onStop` 记录停止帧并自动刷新变量/寄存器/观察值；detach 后迟到的 in-flight 回复被丢弃（避免脏写回）。
 - **测试固件**：`blink.elf` 自带手工构建的 DWARF4（`.debug_info`/`.debug_abbrev`）——`app_main` 的局部变量位于寄存器（DW_OP_regx），全局 `led_state` 位于 PT_LOAD 内存（DW_OP_addr），使 vars/regs/evaluate 在 e2e 中有真实数据。
 
+### 4.2 DAP 适配器（P4.5，PRD §F-DBG-6）
+
+`packages/shell/src/debugger/dap/` 提供标准 Debug Adapter Protocol 入口，VS Code 等
+DAP 客户端因此可以替代内置面板调试同一 QEMU 实例（用法见 [dap.md](dap.md)）：
+
+- **分层**：`DapServer`（会话/命令分发，stdio 或 TCP 传输，Content-Length 帧由
+  `DapProtocol` 零依赖手写）→ `DapBackend`（接口）→ `QemuGdbBackend`（组合
+  `QemuRunner` + `GdbBridge`）。launch 模式由后端拉起 `-S` 冻结 VM 再附 GDB；attach
+  模式连到既有 stub（如 Electron 应用里正在跑的仿真）。执行控制在 GDB：continue 是
+  `-exec-continue` 而非 QMP `cont`，launch 模式下 QemuRunner 保持 `loaded`，避免双重
+  恢复把 VM 与 GDB 的停走状态撕裂。
+- **GDB 面**：复用 P1.9/P4.4 的 GdbBridge 全部能力，P4.5 追加 `stackFrames()`
+  （`-stack-list-frames`，MI 元素同样经 `frame={...}` 单键包装——mock 驱动的首版漏了解包，
+  单测抓出）、`stepOut()`（`-exec-finish`）、`interrupt()`（`-exec-interrupt`）、
+  `removeBreakpoints(ids)`（批量 `-break-delete`）与 `env` 透传。
+- **esp-gdb 17.x dynconfig**（`XtensaDynconfig.ts`，真实 e2e 抓出的兼容性修复）：esp-gdb
+  17.x 内建 Xtensa 寄存器布局与 espressif QEMU stub 不匹配（`-target-select` 报
+  `Remote 'g' packet reply is too long`），GdbBridge 按 `chip` 自动设置
+  `XTENSA_GNU_CONFIG=<gdb>/lib/xtensa_<chip>.so`（`dbg:connect` 与 DAP 共同受益；
+  用户显式设置优先，RISC-V 芯片无需）。`QemuRunner.getChip()` 为此新增。
+- **停止原因映射**：GDB reason → DAP reason（breakpoint/step/data breakpoint/
+  entry/pause）；附着冻结 VM 的无 reason 首停映射为 `pause`。
+- **断点集合语义**：按源文件整组替换（先 `-break-delete` 旧集合再插入），GDB 拒绝的
+  位置降级 `verified=false` 行；函数断点与条件断点复用 P4.4 的 `-break-insert [-c]`。
+
 ## 5. 仿真状态机
 
 ```
