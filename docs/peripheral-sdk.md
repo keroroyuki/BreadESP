@@ -6,6 +6,7 @@
 
 ```ts
 // my-led/index.ts
+import { PERIPHERAL_SDK_VERSION } from '@breadesp/peripherals';
 import type { PeripheralFactory, Peripheral, PeripheralContext, BusTransaction, RenderSnapshot } from '@breadesp/peripherals';
 
 class MyLed implements Peripheral {
@@ -24,6 +25,7 @@ class MyLed implements Peripheral {
 
 export const myLedFactory: PeripheralFactory = {
   kind: 'my-led', version: '1.0.0', displayName: 'My LED',
+  sdkVersion: PERIPHERAL_SDK_VERSION, // 声明构建时针对的 SDK 契约版本（§6）
   pins: [{ id: 'A', role: 'gpio-out' }, { id: 'K', role: 'gnd', optional: true }],
   create(ctx, props) { return new MyLed(String(props?.instanceId ?? crypto.randomUUID()), ctx); },
 };
@@ -31,13 +33,32 @@ export const myLedFactory: PeripheralFactory = {
 
 ## 2. 注册
 
-在你的 Bridge 入口调用：
+在你的包入口调用：
 
 ```ts
 import { registerPeripheral } from '@breadesp/peripherals';
 import { myLedFactory } from 'my-led';
 registerPeripheral(myLedFactory);
 ```
+
+**两个进程都要注册**（P5.1 起明确）：注册表是进程内的模块级单例——Bridge（Electron 主进程）
+侧注册让 `PeripheralManager` 能实例化模型并路由事务；UI（渲染进程）侧注册让 palette 与画布
+能看到该器件（palette 条目、引脚圆点、连线交互全部从 factory 元数据驱动）。`registerBuiltins()`
+幂等，可在任意入口重复调用。
+
+注册时的强制校验（PRD §6.2， coded errors）：
+
+- `[BB-220]` 工厂形状非法：kind 必须是小写 kebab-case（`/^[a-z0-9]+(-[a-z0-9]+)*$/`），
+  `version`/`sdkVersion` 必须是 semver，`displayName` 非空，`pins` 中 id 唯一且 role 属于
+  §6.1 的 PinRole 集合，`defaults` 必须是 plain object，`create` 必须是函数。错误信息列出全部
+  问题项。可用导出的 `validatePeripheralFactory(factory)` 在自己的测试里预检（返回问题数组，
+  空数组 = 通过）。
+- `[BB-221]` kind 冲突：后注册者报错，先注册者不被替换。
+- `[BB-222]` SDK 版本不兼容：`sdkVersion` 的 major 高于宿主 `PERIPHERAL_SDK_VERSION`
+  的 major 时拒绝（宿主无法保证未知的契约面），错误信息提示升级 BreadESP。
+
+Bridge 侧网表引用了未注册的 kind 时，`bb:applyNetlist` 拒绝并报 `[BB-206]`（含 kind 与
+instanceId），已有实例与路由保持原样（原子替换语义不变）。
 
 ## 3. 引脚角色与事务路由（PRD §6.1、§4.2）
 
@@ -98,13 +119,32 @@ registerPeripheral(myLedFactory);
 实现 `dispose()` 用于释放定时器、解除事件订阅等资源；不实现则无副作用。
 注意：`applyNetlist` 是原子操作，新网表中任一实例创建失败时旧的实例与路由保持原样。
 
-## 6. 版本与兼容
+## 6. 版本与兼容（P5.1 稳定化）
 
-- `kind` 全局唯一；冲突时后注册者报错。
-- `version` 用语义化版本；破坏性改动 MUST 升 major。
+- `kind` 全局唯一；冲突时后注册者报错 `[BB-221]`，先注册者不被替换。
+- `version` 用语义化版本（注册时强制校验，非法 semver 拒绝 `[BB-220]`）；破坏性改动 MUST 升 major。
 - 新增可选 `props` 向后兼容，无需升版本。
+- 宿主 SDK 契约版本由 `@breadesp/peripherals` 导出为 `PERIPHERAL_SDK_VERSION`（当前 `1.0.0`）。
+  第三方工厂 SHOULD 声明 `sdkVersion`（构建时针对的 SDK 版本）：major ≤ 宿主 major 即兼容；
+  major 更高时注册拒绝 `[BB-222]`。不声明 `sdkVersion` 的包按兼容处理（P5.1 之前的行为）。
+  宿主对 §6.1–6.4 只做追加式扩展（新 PinRole 成员、新快照类型、新可选方法）；必须破坏性变更时
+  升 `PERIPHERAL_SDK_VERSION` 的 major，并在 PRD 顶部记录。
 
-## 7. 测试约定
+## 7. UI 自动呈现（P5.1）
+
+第三方外设注册后**无需任何 UI 代码**即可获得：
+
+- **Palette 条目**：palette 由注册表驱动（`displayName` + `version` 徽标），新 kind 自动出现、可拖放。
+- **画布节点**：引脚圆点与 pin→pin 连线交互从 `factory.pins` 驱动（§3）；无专属渲染的 kind 显示
+  通用节点体——中性指示灯 + 一行状态文本，由最新快照推导（`level`→亮度百分比、`tone`→频率、
+  `text`→截断文本、`pixels`→几何标注、`audio`→采样率、`waveform`→通道数）。
+- **ScreenView**：`pixels` 快照按 instanceId 自动开画布渲染（mono/rgb565）。
+
+已知限制（后续里程碑）：`tone`/`audio` 快照的发声引擎目前按内建 kind（buzzer/speaker）匹配，
+第三方音频外设不会自动发声；示波器面板同样只消费内建 oscilloscope 的波形。
+
+## 8. 测试约定
 
 每个外设 MUST 至少有一个单元测试（见 `packages/peripherals/tests/ssd1306.test.ts`），
-覆盖"收到一条典型事务 → 产生预期快照"的路径。
+覆盖"收到一条典型事务 → 产生预期快照"的路径。工厂本身 SHOULD 用 `validatePeripheralFactory()`
+预检（见 §2）。

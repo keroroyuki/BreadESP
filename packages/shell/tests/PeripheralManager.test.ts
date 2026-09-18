@@ -216,9 +216,10 @@ describe('PeripheralManager routing (PRD §4.2, dev-plan P1.4)', () => {
 
   it('throws on an unknown peripheral kind', () => {
     const manager = new PeripheralManager();
+    // P5.1: coded [BB-206] with kind + instance context and a remediation hint.
     expect(() =>
       manager.applyNetlist({ version: 1, chip: 'esp32', peripherals: [{ instanceId: 'x1', kind: 'nope' }], wires: [] }),
-    ).toThrow('Unknown peripheral kind: nope');
+    ).toThrow(/\[BB-206\] unknown peripheral kind 'nope' \(instance 'x1'\)/);
   });
 
   it('routing before any netlist is applied is a no-op', () => {

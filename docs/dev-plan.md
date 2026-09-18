@@ -57,7 +57,7 @@
 - **M2**（进行中，任务 2.1–2.3 已完成）：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
 - **M3**（已达成 2026-09-11，任务 3.1–3.4 完成）：麦克风波形注入后固件能读到采样值；旋钮正交序列与 SHT30 读回复经真实 QEMU e2e 验证。
 - **M4**（进行中，任务 4.1–4.5 已完成）：切换芯片型号后同一工程可在 ESP32/S3 跑通（S3 已真实 QEMU 验证；C3/C6 的 machine/仿真器映射与门控就绪，等待 riscv32 版 QEMU 二进制接入后做真实启动验证）；新建工程向导支持选芯片/选模板；PlatformIO/IDF 工程目录可关联并自动发现 build/*.elf 导入为 firmware.elf；条件断点/watchpoint 已接入调试面板（GDB/MI 线格式经扩展 mock 冻结，真实 GDB e2e 维持 BREADESP_GDB_BIN 门控）；DAP 适配器上线（stdio/TCP 双模式，launch/attach，真实 QEMU + esp-gdb 17.1 e2e 通过，见 docs/dap.md）。
-- **M5**（未开始）：第三方包 `registerPeripheral()` 后 UI 自动出现新器件。
+- **M5**（进行中，任务 5.1 已完成）：第三方包 `registerPeripheral()` 后 UI 自动出现新器件（palette 注册表驱动 + 画布通用节点体，经单测冻结；SDK 注册校验 [BB-220/221/222] 与 sdkVersion 门控落地）。
 
 ---
 
@@ -129,12 +129,43 @@
 
 ### Phase 5 — 生态与扩展（M5）
 
-| # | 任务 | 产物 |
-|---|---|---|
-| 5.1 | 外设插件 SDK 稳定化 + 版本化 | 第三方可扩展 |
-| 5.2 | 本地外设目录扫描 | 离线市场 |
-| 5.3 | 外设打包模板（脚手架） | 降低门槛 |
-| 5.4 | 文档站 + 教程 | 可用性 |
+| # | 任务 | 产物 | 状态 |
+|---|---|---|---|
+| 5.1 | 外设插件 SDK 稳定化 + 版本化 | 第三方可扩展 | 已完成 2026-09-19 |
+| 5.2 | 本地外设目录扫描 | 离线市场 | 未开始 |
+| 5.3 | 外设打包模板（脚手架） | 降低门槛 | 未开始 |
+| 5.4 | 文档站 + 教程 | 可用性 | 未开始 |
+
+> P5.1 验证记录（2026-09-19）：`pnpm typecheck` 0 错误；全仓测试 Windows 613 通过
+> + 14 跳过（门控 e2e，同 P4.5 基线；较 P4.5 净增 32 项）；`pnpm --filter
+> @breadesp/ui build`（tsc -b + vite）成功。分四层验证——
+> 注册表层 19 项单测（`packages/peripherals/tests/registry.test.ts`：内建集
+> 注册顺序/自校验全过/registerBuiltins 幂等、合法第三方工厂注册与按 kind 解析、
+> listPeripherals 返回新鲜数组隔离、[BB-220] 形状矩阵（非对象/缺 create、9 种
+> 非法 kind 对 5 种合法 kind、6 种非 semver version 对 prerelease/build 接受、
+> 空/空白 displayName、6 种畸形 pins 表、非对象 defaults、非 semver sdkVersion）、
+> [BB-220] 错误消息列出全部问题项、sdkVersion 兼容（同 major/旧 major 接受、
+> 新 major 拒绝 [BB-222] 且双方版本点名、被拒工厂不留存、缺省 sdkVersion 按
+> P5.1 前兼容接受）、semver 助手行为含前导零拒绝与 PERIPHERAL_SDK_VERSION
+> 自检）；UI 层 13 项单测（paletteEntries 4 项——纯映射保序保字段、空快照、
+> 内建集 displayName/semver 齐全、**M5 验收直译**：第三方 registerPeripheral()
+> 后自动出现在 live palette；genericNode 9 项——无快照回退、level 百分比与
+> 钳制含 NaN、tone Hz/silent、text 截断、pixels 几何、audio 采样率与灯态、
+> waveform 通道数、未知未来快照类型仍可渲染）；shell 层未知 kind 测试改钉
+> [BB-206] 编码消息（含 kind/instanceId 与注册指引）。真实 QEMU e2e 不适用
+> （本任务不触碰仿真链路）；第三方消费链路（registry → PeripheralManager
+> 实例化/路由）与既有 probe 工厂测试及全部内建外设 e2e 走的是同一通用路径。
+> 自我迭代抓出并已修复两处：① registerBuiltins 幂等标志若置前，中途失败会
+> 静默留下部分注册——改为循环完成后置位，失败保持每次调用都显式抛出；
+> ② 新增 UI 测试的未用参数 typecheck 错误。
+> 契约同步：PRD §6.2 补齐至现状契约（props 参数、viaPin、emitInput/drivePin、
+> acceptCapture、rotate、sdkVersion）并新增注册与版本化段落（[BB-220/221/222]
+> + [BB-206]）；PRD §7 追加 paletteEntries.ts 与 genericNode.ts；
+> docs/peripheral-sdk.md 重写 §2（双进程注册 + 编码校验错误）与 §6（版本化
+> 规则），新增 §7 UI 自动呈现（含已知限制：第三方 tone/audio 不自动发声）。
+> 设计要点：palette 由注册表驱动取代硬编码清单；画布对无专属渲染的 kind
+> 回退到快照驱动的通用节点体（内建 st7789 由此结束裸盒状态）；UI 零新 IPC、
+> QEMU 设备零改动、零新运行时依赖（PRD §5 不变）。
 
 ---
 
@@ -812,7 +843,7 @@ Previously applyNetlist leaked old instances on re-apply.
 - [x] DAP 接入 VS Code 可调试
 
 ### M5 清单
-- [ ] 第三方包 `registerPeripheral()` 后 UI 自动出现新器件
+- [x] 第三方包 `registerPeripheral()` 后 UI 自动出现新器件
 - [ ] 外设打包脚手架可生成可发布包
 - [ ] 文档站与教程上线
 

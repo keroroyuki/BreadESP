@@ -15,6 +15,23 @@ export type PinRole =
   | 'probe'
   | 'power' | 'gnd';
 
+/**
+ * Runtime list of every PinRole (P5.1, PRD §6.1/§F-EXT-1) — the single source
+ * the registry validates factory pin tables against. Keep in sync with the
+ * PinRole union above; additive union members MUST be appended here too.
+ */
+export const PIN_ROLES: readonly PinRole[] = [
+  'gpio-in', 'gpio-out',
+  'pwm-in',
+  'i2c-sda', 'i2c-scl',
+  'spi-mosi', 'spi-miso', 'spi-sck', 'spi-cs',
+  'i2s-ws', 'i2s-bck',
+  'i2s-data-in', 'i2s-data-out',
+  'adc-in',
+  'probe',
+  'power', 'gnd',
+];
+
 export interface PinDescriptor {
   id: string;
   role: PinRole;
@@ -191,6 +208,7 @@ export interface Peripheral {
 // §6.2 Factory contract for registering peripherals.
 export interface PeripheralFactory {
   kind: string;
+  /** Semantic version of THIS peripheral (semver; enforced at registration, P5.1). */
   version: string;
   displayName: string;
   pins: PinDescriptor[];
@@ -200,5 +218,13 @@ export interface PeripheralFactory {
    * agree on defaults.
    */
   defaults?: Record<string, unknown>;
+  /**
+   * SDK contract version the factory was built against (P5.1, additive
+   * optional member). Semver string; registration rejects factories built
+   * against a NEWER major than the host's PERIPHERAL_SDK_VERSION, since the
+   * host cannot guarantee the newer contract surface. Absent = pre-P5.1
+   * factory, accepted as compatible with the current host.
+   */
+  sdkVersion?: string;
   create(ctx: PeripheralContext, props?: Record<string, unknown>): Peripheral;
 }

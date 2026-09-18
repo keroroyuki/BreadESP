@@ -15,6 +15,7 @@ import { useCaptureStore } from '../../store/captureStore';
 import { bridge } from '../../ipc/bridge';
 import { wirePath } from './Wire';
 import { adjustSht30 } from './sensorDraft';
+import { describeGenericSnapshot } from './genericNode';
 import { sht30ConfigFromProps, sht30FormatReading } from '@breadesp/peripherals';
 import {
   MCU_GPIO_PINS,
@@ -41,6 +42,15 @@ interface PendingWire {
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 const endpointLabel = (ep: WireEndpoint): string =>
   `${ep.instanceId === MCU_INSTANCE_ID ? 'MCU' : ep.instanceId}.${ep.pin}`;
+
+/**
+ * Kinds with a bespoke canvas body below. Everything else — including any
+ * third-party kind registered at runtime (PRD §F-EXT-1, dev-plan P5.1) —
+ * gets the generic snapshot-driven body so it is visible without UI code.
+ */
+const BESPOKE_CANVAS_KINDS: ReadonlySet<string> = new Set([
+  'led', 'button', 'buzzer', 'speaker', 'oscilloscope', 'mic', 'knob', 'sht30', 'ssd1306',
+]);
 
 export function BreadboardCanvas() {
   const layout = useProjectStore((s) => s.layout);
@@ -545,6 +555,35 @@ export function BreadboardCanvas() {
                     />
                   </Group>
                 )}
+                {!BESPOKE_CANVAS_KINDS.has(item.kind) && (() => {
+                  // Generic body (PRD §F-EXT-1, dev-plan P5.1): any registered
+                  // kind without a bespoke renderer — third-party packages
+                  // included — shows a neutral lamp plus a one-line status
+                  // derived from its latest snapshot, so it is visible and
+                  // alive on the canvas with zero per-kind UI code.
+                  const st = describeGenericSnapshot(snap);
+                  return (
+                    <Group listening={false}>
+                      <Circle
+                        x={NODE_W / 2}
+                        y={34}
+                        radius={12}
+                        fill={st.lamp === null ? '#cbd5e1' : '#10b981'}
+                        opacity={st.lamp === null ? 0.6 : 0.15 + 0.85 * st.lamp}
+                        stroke="#475569"
+                      />
+                      <Text
+                        x={14}
+                        y={48}
+                        width={NODE_W - 28}
+                        align="center"
+                        text={st.text}
+                        fontSize={9}
+                        fill="#64748b"
+                      />
+                    </Group>
+                  );
+                })()}
                 {sel && (
                   <Group
                     onClick={(e) => {

@@ -55,7 +55,13 @@ export class PeripheralManager extends EventEmitter {
         }
         seen.add(inst.instanceId);
         const factory = getFactory(inst.kind);
-        if (!factory) throw new Error(`Unknown peripheral kind: ${inst.kind}`);
+        // P5.1 (PRD §F-EXT-1): a kind the registry does not know usually means
+        // the third-party package was never registered in the Bridge process.
+        if (!factory) {
+          throw new Error(
+            `[BB-206] unknown peripheral kind '${inst.kind}' (instance '${inst.instanceId}'); register the peripheral package before applying the netlist`,
+          );
+        }
         const ctx: PeripheralContext = {
           emitSnapshot: (s) => this.emitThrottled(s),
           // Input peripherals (mic P3.1, knob/sht30 P3.4) push injections

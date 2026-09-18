@@ -208,18 +208,24 @@ export interface PinDescriptor {
 import type { BusTransaction, RenderSnapshot } from './types';
 
 export interface PeripheralFactory {
-  kind: string;                 // 唯一类型标识，如 'ssd1306'
-  version: string;              // 语义化版本
+  kind: string;                 // 唯一类型标识，如 'ssd1306'（小写 kebab-case）
+  version: string;              // 语义化版本（semver，注册时强制校验）
   displayName: string;
   pins: PinDescriptor[];
   /** 实例省略 props 时的默认参数（如默认 I2C 地址）；NetlistResolver 路由时同以此回退 */
   defaults?: Record<string, unknown>;
-  create(ctx: PeripheralContext): Peripheral;
+  /** 该工厂构建时针对的 SDK 契约版本（P5.1 追加，可选；semver）。缺失 = P5.1 之前的包，按兼容处理 */
+  sdkVersion?: string;
+  create(ctx: PeripheralContext, props?: Record<string, unknown>): Peripheral;
 }
 
 export interface PeripheralContext {
   /** 向 UI 推送渲染快照（如显存帧） */
   emitSnapshot: (snapshot: RenderSnapshot) => void;
+  /** 外设 → MCU 上行注入（P3.1 追加：I2S PCM；P3.4 追加：GPIO 电平、I2C 读回复） */
+  emitInput?: (injection: PeripheralInjection) => void;
+  /** 驱动本实例某个 gpio-in 引脚到 MCU（P3.4 追加；未接线返回 false） */
+  drivePin?: (pinId: string, level: 0 | 1) => boolean;
   /** 日志 */
   log: (level: 'info'|'warn'|'error', msg: string) => void;
   /** 逻辑时钟订阅 */
@@ -229,14 +235,26 @@ export interface PeripheralContext {
 export interface Peripheral {
   readonly kind: string;
   readonly instanceId: string;
-  /** 收到一条总线事务 */
-  onTransaction(tx: BusTransaction): void;
+  /** 收到一条总线事务；viaPin（P2.5 追加）标识事务所经的本实例引脚 */
+  onTransaction(tx: BusTransaction, viaPin?: string): void;
   /** GPIO 输入请求（外设主动驱动 MCU 输入，如按键） */
   driveInput?(pinId: string, level: 0|1): void;
+  /** 本地采集音频块喂入（P3.2 追加，仅输入类外设实现） */
+  acceptCapture?(chunk: CaptureChunk): void;
+  /** 旋钮旋转手势（P3.4 追加，正 = 顺时针 detent 步数） */
+  rotate?(delta: number): void;
   /** 资源释放 */
   dispose?(): void;
 }
 ```
+
+**注册与版本化（P5.1，§F-EXT-1/2）**：`@breadesp/peripherals` 导出宿主 SDK 契约版本
+`PERIPHERAL_SDK_VERSION`（当前 `1.0.0`；§6.1–6.4 出现破坏性变更时升 major）。`registerPeripheral()`
+在注册时强制校验工厂契约——形状非法（kind 非小写 kebab、version 非 semver、displayName 为空、
+pins 引脚 id 重复或 role 越界、create 缺失等）拒绝 `[BB-220]`；kind 已被注册拒绝 `[BB-221]`；
+`sdkVersion` 的 major 高于宿主 `PERIPHERAL_SDK_VERSION` major 时拒绝 `[BB-222]`（宿主无法保证
+未知的契约面）。`registerBuiltins()` 幂等；`validatePeripheralFactory()` 导出供第三方自检。
+Bridge 侧网表应用时遇到未注册 kind 报 `[BB-206]`（含 kind/instanceId 与注册指引）。
 
 ### 6.3 BusTransaction（Bridge↔外设模型）
 ```ts
@@ -390,7 +408,9 @@ my-idea/
     │       ├── components/
     │       │   ├── Breadboard/BreadboardCanvas.tsx
     │       │   ├── Breadboard/Wire.tsx
+    │       │   ├── Breadboard/genericNode.ts  # 无专属渲染的 kind 的通用节点体（§F-EXT-1, P5.1）
     │       │   ├── Palette/Palette.tsx
+    │       │   ├── Palette/paletteEntries.ts  # 注册表驱动的 palette 条目（§F-EXT-1, P5.1）
     │       │   ├── Inspector/Inspector.tsx
     │       │   ├── SerialConsole/SerialConsole.tsx
     │       │   ├── ScreenView/ScreenView.tsx
@@ -406,8 +426,8 @@ my-idea/
     │   ├── package.json
     │   ├── tsconfig.json
     │   ├── src/
-    │   │   ├── types.ts        # §6.1-6.4 全部类型
-    │   │   ├── registry.ts    # 外设注册中心
+    │   │   ├── types.ts        # §6.1-6.4 全部类型（含 PIN_ROLES 运行时表）
+    │   │   ├── registry.ts    # 外设注册中心（P5.1：注册校验 + SDK 版本门控，§6.2）
     │   │   ├── led.ts
     │   │   ├── button.ts
     │   │   ├── ssd1306.ts
