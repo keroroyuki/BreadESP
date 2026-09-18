@@ -235,4 +235,59 @@ describe('GdbBridge (mock GDB/MI subprocess)', () => {
     // The mock echoes back whatever location it parsed; quoting must survive.
     expect(rows[0].location).toBe('*(unsigned int*)0x3ff44004');
   }, 10000);
+
+  // --- P4.5 surface: stack frames / step-out / interrupt (F-DBG-6 DAP) ---
+
+  it('stackFrames() parses -stack-list-frames innermost first (P4.5)', async () => {
+    const bridge = await startBridge('ok');
+    const frames = await bridge.stackFrames();
+    expect(frames).toEqual([
+      { addr: '0x40080024', func: 'app_main', file: 'blink.S', fullname: '/repo/blink.S', line: '10' },
+      { addr: '0x40080100', func: 'call_start_cpu0', file: 'cpu_start.c', fullname: '/repo/cpu_start.c', line: '300' },
+    ]);
+  }, 10000);
+
+  it('stepOut() runs until the frame returns (-exec-finish) and reports the stop (P4.5)', async () => {
+    const bridge = await startBridge('ok');
+    const stopped = onceStopped(bridge, 'finish stop');
+    await bridge.stepOut();
+    const info = await stopped;
+    expect(info.reason).toBe('function-finished');
+    expect(info.frame?.func).toBe('call_start_cpu0');
+  }, 10000);
+
+  it('interrupt() stops a running target with signal-received (P4.5)', async () => {
+    const bridge = await startBridge('ok');
+    const stopped = onceStopped(bridge, 'interrupt stop');
+    await bridge.interrupt();
+    const info = await stopped;
+    expect(info.reason).toBe('signal-received');
+    expect(info.frame?.func).toBe('app_main');
+  }, 10000);
+
+  it('removeBreakpoints() deletes several ids in one -break-delete (P4.5)', async () => {
+    const bridge = await startBridge('ok');
+    await bridge.setBreakpoint('app_main');
+    await bridge.setBreakpoint('*0x40080078');
+    await bridge.removeBreakpoints([1, 2]);
+    expect(await bridge.listBreakpoints()).toEqual([]);
+  }, 10000);
+
+  it('passes extra environment (XTENSA_GNU_CONFIG) into the GDB process (P4.5)', async () => {
+    const logs: string[] = [];
+    const bridge = new GdbBridge();
+    openBridge = bridge;
+    bridge.on('log', (s: string) => logs.push(s));
+    await bridge.start({
+      gdbBin: NODE,
+      elfPath: 'mock://blink.elf',
+      targetHost: '127.0.0.1',
+      port: 1234,
+      env: { XTENSA_GNU_CONFIG: 'D:/fake/lib/xtensa_esp32.so' },
+      argsBuilder: mockArgsBuilder('ok'),
+    });
+    // The mock echoes the env at startup; GdbBridge re-emits stderr as 'log'.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(logs.join('')).toContain('dynconfig=D:/fake/lib/xtensa_esp32.so');
+  }, 10000);
 });

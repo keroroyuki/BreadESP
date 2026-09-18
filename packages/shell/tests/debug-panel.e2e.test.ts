@@ -71,7 +71,7 @@ describe.skipIf(QEMU_BIN === null || GDB_BIN === null)('debug panel e2e (real QE
     const gdb = new GdbBridge();
     gdb.on('log', () => {}); // keep GDB's stderr chatter out of the test output
     try {
-      await gdb.start({ gdbBin: GDB_BIN!, elfPath: FIXTURE_ELF, targetHost: '127.0.0.1', port: gdbPort });
+      await gdb.start({ gdbBin: GDB_BIN!, elfPath: FIXTURE_ELF, targetHost: '127.0.0.1', port: gdbPort, chip: 'esp32' });
 
       // 1. Breakpoint right after `led_state = 1` — the stop proves the write happened.
       const bp = await gdb.setBreakpoint('led_state_written');

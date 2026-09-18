@@ -141,7 +141,15 @@ describe.skipIf(QEMU_BIN === null || GDB_BIN === null)('GdbBridge e2e (real QEMU
 
     const gdb = new GdbBridge();
     try {
-      await gdb.start({ gdbBin: GDB_BIN!, elfPath: FIXTURE_ELF, targetHost: '127.0.0.1', port: gdbPort });
+      // chip selects the esp-gdb Xtensa dynconfig (P4.5); without it esp-gdb
+      // 17.x's built-in layout mismatches the QEMU stub ('g' packet error).
+      await gdb.start({
+        gdbBin: GDB_BIN!,
+        elfPath: FIXTURE_ELF,
+        targetHost: '127.0.0.1',
+        port: gdbPort,
+        chip: 'esp32',
+      });
 
       const bp = await gdb.setBreakpoint('app_main');
       expect(bp.id).toBeGreaterThan(0);
