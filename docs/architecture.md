@@ -366,3 +366,33 @@ UART0 是固件的标准控制台（PRD §F-SER-1/§F-SER-2），双向链路如
   `ECHO: <line>\r\n` 并复位 127 字节行缓冲。`--check` 模式校验入库 fixture 无漂移。
 - **验收**（键入回车被固件读到）：真实 QEMU e2e 注入两行，均在 UART 输出中回显——证明
   stdin → RX FIFO → 固件读取 → TX 的完整闭环；第二行回显同时证明行缓冲复位。
+
+## 11. 本地外设目录（离线市场，P5.2，PRD §F-EXT-3）
+
+外设生态的离线入口：扫描本地目录发现第三方包，显式加载进 Bridge 注册表，UI 零代码呈现。
+
+```
+~/.breadesp/peripherals/<pkg>/breadesp-peripheral.json + 入口模块
+        │  scan（只读，坏包降级为 invalid 条目）
+        ▼
+PluginCatalog (shell) ──per:catalogScan──▶ Marketplace 面板（状态徽标/问题清单）
+        │  per:catalogLoad（目标必须是当前扫描的 'ok' 条目 → [BB-224] 门）
+        ▼
+动态 import 入口模块 → 默认导出函数接收宿主 API（PeripheralHostApi）→ registerPeripheral
+        │  注册表差分得到新 kind 集；失败 [BB-223] 并回滚（unregisterPeripheral）
+        ▼
+响应携带 PeripheralMeta[] ──▶ 渲染进程 registerRemotePeripheral（仅元数据存根）
+        │  registryTick 驱动 palette 重渲染；画布引脚/通用节点体自动可用
+        ▼
+PeripheralManager.applyNetlist 按 kind 在 Bridge 侧实例化真实模型（与内建同路径）
+```
+
+- **双进程注册表**：模型只运行在 Bridge；渲染进程镜像元数据存根（`create()` 误用报
+  `[BB-207]`），palette/pin 锚点/通用节点体全部从元数据驱动，因此无需随包分发 UI 代码。
+- **双实例规避**：散包无法解析宿主自己的 `@breadesp/peripherals` 实例，故入口契约是
+  宿主注入 `registerPeripheral` 的默认导出函数（`PeripheralHostApi`），而非包自行 import。
+- **幂等与重试**：同目录重复加载幂等（session 级 loaded 表 + inflight 去重）；失败修复后可
+  直接重试——入口 URL 带进程级尝试序号绕开 ESM 模块缓存。热更新/卸载不在契约内（重启生效）。
+- **安全边界**：扫描只读且永不失败为整体错误；加载门要求目标是当前扫描的 `ok` 条目，
+  IPC 无法诱使 Bridge 导入任意路径；清单 entry 必须解析在包目录内（段级 `..` 检测 +
+  跨平台绝对路径形态）。执行第三方代码本身是有意的扩展机制，由用户显式点击触发。

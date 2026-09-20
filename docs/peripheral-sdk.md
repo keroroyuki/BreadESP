@@ -60,6 +60,10 @@ registerPeripheral(myLedFactory);
 Bridge 侧网表引用了未注册的 kind 时，`bb:applyNetlist` 拒绝并报 `[BB-206]`（含 kind 与
 instanceId），已有实例与路由保持原样（原子替换语义不变）。
 
+> 包的分发与加载方式见 §8：放进本地外设目录（`~/.breadesp/peripherals/`）即可被
+> "Peripheral catalog" 面板发现和加载；该场景下入口改为默认导出接收宿主 API 的函数（§8.2），
+> 而不是自行 import 注册。
+
 ## 3. 引脚角色与事务路由（PRD §6.1、§4.2）
 
 外设通过 `pins[].role` 声明它需要的引脚类型。`NetlistResolver` 的 MVP 路由规则：
@@ -143,7 +147,77 @@ instanceId），已有实例与路由保持原样（原子替换语义不变）�
 已知限制（后续里程碑）：`tone`/`audio` 快照的发声引擎目前按内建 kind（buzzer/speaker）匹配，
 第三方音频外设不会自动发声；示波器面板同样只消费内建 oscilloscope 的波形。
 
-## 8. 测试约定
+## 8. 本地外设目录与离线市场（P5.2，PRD §F-EXT-3）
+
+第三方包可以不经 npm 发布，直接放进本地目录被 BreadESP 发现和加载：
+
+```
+~/.breadesp/peripherals/           # 可用 BREADESP_PERIPHERALS_DIR 覆盖
+└── acme-matrix/                   # 每个子目录 = 一个外设包
+    ├── breadesp-peripheral.json   # 清单（必需）
+    └── index.mjs                  # 入口模块
+```
+
+### 8.1 清单格式（`breadesp-peripheral.json`，`manifestVersion: 1`）
+
+```json
+{
+  "manifestVersion": 1,
+  "name": "acme-matrix",
+  "version": "0.3.1",
+  "displayName": "Acme LED Matrix",
+  "description": "8x8 LED matrix driver",
+  "entry": "index.mjs",
+  "sdkVersion": "1.0.0",
+  "provides": ["acme-matrix"]
+}
+```
+
+- `name`：小写 kebab-case，可带 `@scope/` 前缀；`version`：包自身的 semver。
+- `entry`：入口模块的**相对路径**，必须解析在包目录内（拒绝绝对路径与 `..` 逃逸）。
+  无 `package.json` 的散包用 `.mjs`（ESM）或 `.cjs`（CJS，经默认导出互操作）扩展名，
+  裸 `.js` 会被 Node 按 CommonJS 解释。
+- `sdkVersion`：扫描期预检 major 门控——高于宿主 `PERIPHERAL_SDK_VERSION` 的包标记为
+  `incompatible` 并禁止加载（代码层的 `[BB-222]` 门控在加载时仍然生效）。
+- `provides`：宣称提供的 kind 列表，仅作市场展示；真实 kind 以加载时的注册差分为准。
+
+### 8.2 入口模块契约（宿主 API 注入）
+
+目录加载场景下，包**不应**自己 `import '@breadesp/peripherals'`（散包无法解析到宿主
+的模块实例，注册会落到另一个注册表）。入口 SHOULD 默认导出一个接收宿主 API 的函数：
+
+```js
+// index.mjs
+export default function register(host) {
+  host.registerPeripheral({
+    kind: 'acme-matrix',
+    version: '0.3.1',
+    displayName: 'Acme LED Matrix',
+    sdkVersion: host.PERIPHERAL_SDK_VERSION,
+    pins: [{ id: 'DIN', role: 'spi-mosi' }, { id: 'CS', role: 'spi-cs' }, { id: 'CLK', role: 'spi-sck' }],
+    create: (ctx, props) => new AcmeMatrix(String(props?.instanceId), ctx),
+  });
+}
+```
+
+`host` 为 `PeripheralHostApi`：宿主自身的 `registerPeripheral` 与 `PERIPHERAL_SDK_VERSION`。
+默认导出可以是 async（加载方会 await）。模型代码与 §1 完全相同——区别只在注册入口。
+模块顶层副作用注册也会被注册表差分观察到，但仅在模块能解析到宿主同一
+`@breadesp/peripherals` 实例时生效（例如 monorepo 内开发），散包请勿依赖。
+
+### 8.3 加载语义与错误码
+
+- 扫描只读：目录缺失 = 空市场；坏包降级为 `invalid` 条目并列出全部问题，不影响其他包。
+- 加载由用户在 "Peripheral catalog" 面板显式点击触发；目标必须是当前扫描中 `status='ok'`
+  的条目，否则 `[BB-224]`（加载前会重新扫描，该通道无法被用来导入任意路径）。
+- 入口执行失败、默认导出不是函数、或跑完未注册任何 kind：`[BB-223]`，并回滚已产生的
+  部分注册（不留残留）。注册自身的 `[BB-220]`/`[BB-221]`/`[BB-222]` 原样传播。
+- 同一目录重复加载幂等（双击安全）。加载失败后修复文件可直接重试（入口 URL 带尝试
+  序号绕开 ESM 模块缓存）；**已成功**的包不支持热更新——改动在应用重启后生效，卸载同理。
+- 加载成功后无需任何 UI 代码：Bridge 返回 `PeripheralMeta` 元数据，渲染进程镜像为
+  仅元数据存根，palette 与画布立即可见（§7）；模型的 `create()` 只在 Bridge 进程运行。
+
+## 9. 测试约定
 
 每个外设 MUST 至少有一个单元测试（见 `packages/peripherals/tests/ssd1306.test.ts`），
 覆盖"收到一条典型事务 → 产生预期快照"的路径。工厂本身 SHOULD 用 `validatePeripheralFactory()`

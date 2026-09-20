@@ -111,7 +111,23 @@
 ### 3.8 可扩展性（F-EXT）
 - F-EXT-1 MUST 提供外设 SDK，允许第三方以独立包形式注册外设模型。
 - F-EXT-2 MUST 外设模型接口稳定（见 §6.2）。
-- F-EXT-3 SHOULD 提供外设市场占位（本地目录扫描，MVP 不做在线市场）。
+- F-EXT-3 SHOULD 提供外设市场占位（本地目录扫描，MVP 不做在线市场）。P5.2 落地契约：
+  - 本地目录：默认 `<用户主目录>/.breadesp/peripherals/`（`BREADESP_PERIPHERALS_DIR` 可覆盖）；每个**子目录**是一个外设包。
+  - 包格式：目录内含 `breadesp-peripheral.json` 清单与入口 JS 模块。清单字段：`manifestVersion: 1`、
+    `name`（小写 kebab，可带 `@scope/`）、`version`（包自身 semver）、`displayName`、`entry`（相对路径，
+    必须解析在包目录内），可选 `description` / `sdkVersion`（扫描期预检 §6.2 的 major 门控，高于宿主则
+    标 `incompatible`）/ `provides`（宣称的 kind 列表，仅展示用；真实 kind 以注册差分为准）。
+  - 入口契约：模块 SHOULD 默认导出 `(host: PeripheralHostApi) => void | Promise<void>`；`host` 携带
+    宿主自身的 `registerPeripheral` 与 `PERIPHERAL_SDK_VERSION`（绕开双实例解析风险）。模块顶层副作用
+    注册同样被差分观察，但仅在包能解析到宿主同一 `@breadesp/peripherals` 实例时有效。
+  - 扫描为**只读**（缺根目录 = 空目录而非错误；坏包降级为 `invalid` 条目并列出全部问题）。
+  - 加载 MUST 由用户显式触发（§6.6 `per:catalogLoad`），且目标必须是当前扫描中 `status='ok'` 的条目
+    （加载前重新扫描，杜绝经 IPC 导入任意路径，[BB-224]）；入口执行失败或未注册任何 kind 报 [BB-223]
+    并回滚注册表（不残留部分注册）；同一目录重复加载幂等。卸载/热更新不在契约内（重启应用生效）；
+    加载失败的包修复后可直接重试（入口 URL 带尝试序号规避 ESM 模块缓存）。
+  - 加载成功后，Bridge 把新 kind 的工厂元数据（`PeripheralMeta`）随响应返回，渲染进程以
+    `registerRemotePeripheral()` 镜像为仅元数据存根——palette/画布自动呈现（§F-EXT-1），模型的
+    `create()` 只在 Bridge 进程实例化（误用报 [BB-207]）。
 
 ---
 
@@ -256,6 +272,13 @@ pins 引脚 id 重复或 role 越界、create 缺失等）拒绝 `[BB-220]`；ki
 未知的契约面）。`registerBuiltins()` 幂等；`validatePeripheralFactory()` 导出供第三方自检。
 Bridge 侧网表应用时遇到未注册 kind 报 `[BB-206]`（含 kind/instanceId 与注册指引）。
 
+**目录加载与镜像（P5.2，§F-EXT-3）**：`PeripheralMeta`（kind/version/displayName/pins/defaults/
+sdkVersion 的 JSON 安全元数据）与 `PeripheralHostApi`（`registerPeripheral` + `PERIPHERAL_SDK_VERSION`）
+为追加式导出；`registerRemotePeripheral(meta)` 把 Bridge 侧已加载的 kind 以仅元数据存根镜像进当前
+进程的注册表（同样过 [BB-220]/[BB-221]/[BB-222] 门控；存根 `create()` 报 `[BB-207]`，模型只能在
+Bridge 实例化）；`unregisterPeripheral(kind)` 为宿主内部回滚原语（目录加载失败时清除部分注册），
+第三方包 MUST NOT 调用。
+
 ### 6.3 BusTransaction（Bridge↔外设模型）
 ```ts
 export interface BusTransaction {
@@ -317,7 +340,7 @@ AI 生成 IPC 处理时 MUST 遵循命名前缀：
 - `dbg:*` 调试（setBreakpoint/continue/step/vars/regs；P4.4 起追加 setConditionalBreakpoint/setWatchpoint/conditionBreakpoint）
 - `proj:*` 工程（new/open/save/saveAs/close；P4.3 起追加 linkExternal/unlinkExternal/scanExternal/importExternal）
 - `bb:*` 面包板（applyNetlist/getNetlist）
-- `per:*` 外设运行时（snapshot 事件由 Bridge→UI 单向推）
+- `per:*` 外设运行时（snapshot 事件由 Bridge→UI 单向推；P5.2 起追加 catalogScan/catalogLoad 本地目录扫描与加载）
 
 所有 IPC 参数与返回 MUST 为 JSON 可序列化（Uint8Array 用 number[]）。
 
@@ -391,6 +414,7 @@ my-idea/
     │       ├── debugger/dap/DapServer.ts
     │       ├── debugger/dap/cli.ts
     │       ├── peripherals/PeripheralManager.ts
+    │       ├── peripherals/PluginCatalog.ts  # 本地外设目录扫描/加载（§F-EXT-3, P5.2）
     │       ├── project/ProjectManager.ts
     │       ├── netlist/NetlistResolver.ts
     │       └── ipc/handlers.ts
@@ -404,6 +428,7 @@ my-idea/
     │       ├── App.tsx
     │       ├── store/simulationStore.ts
     │       ├── store/projectStore.ts
+    │       ├── store/marketplaceStore.ts  # 本地外设目录状态 + 远端工厂镜像（§F-EXT-3, P5.2）
     │       ├── ipc/bridge.ts
     │       ├── components/
     │       │   ├── Breadboard/BreadboardCanvas.tsx
@@ -411,6 +436,8 @@ my-idea/
     │       │   ├── Breadboard/genericNode.ts  # 无专属渲染的 kind 的通用节点体（§F-EXT-1, P5.1）
     │       │   ├── Palette/Palette.tsx
     │       │   ├── Palette/paletteEntries.ts  # 注册表驱动的 palette 条目（§F-EXT-1, P5.1）
+    │       │   ├── Marketplace/Marketplace.tsx       # 本地外设目录面板（§F-EXT-3, P5.2）
+    │       │   ├── Marketplace/marketplaceDraft.ts   # 面板纯展示逻辑（§F-EXT-3, P5.2）
     │       │   ├── Inspector/Inspector.tsx
     │       │   ├── SerialConsole/SerialConsole.tsx
     │       │   ├── ScreenView/ScreenView.tsx
