@@ -7,6 +7,7 @@ import { ProjectManager } from './project/ProjectManager.js';
 import { QemuRunner } from './qemu/QemuRunner.js';
 import { GdbBridge } from './debugger/GdbBridge.js';
 import { PeripheralManager } from './peripherals/PeripheralManager.js';
+import { PluginCatalog } from './peripherals/PluginCatalog.js';
 import { registerBuiltins } from '@breadesp/peripherals';
 
 async function bootstrap() {
@@ -16,8 +17,10 @@ async function bootstrap() {
   const qemu = new QemuRunner();
   const gdb = new GdbBridge();
   const peripherals = new PeripheralManager();
+  // Local peripheral catalog (P5.2, PRD §F-EXT-3): the offline marketplace.
+  const catalog = new PluginCatalog();
 
-  await registerIpcHandlers({ project, qemu, gdb, peripherals });
+  await registerIpcHandlers({ project, qemu, gdb, peripherals, catalog });
 
   await app.whenReady();
   const win = new BrowserWindow({

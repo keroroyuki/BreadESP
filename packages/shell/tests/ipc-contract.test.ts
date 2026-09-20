@@ -60,6 +60,7 @@ const EXPECTED_INVOKE_CHANNELS = [
   'proj:linkExternal', 'proj:unlinkExternal', 'proj:scanExternal', 'proj:importExternal',
   'bb:applyNetlist', 'bb:getNetlist',
   'per:driveInput', 'per:captureChunk', 'per:rotateKnob',
+  'per:catalogScan', 'per:catalogLoad',
 ] as const;
 
 /** PRD §6.6 contract — main -> renderer one-way push channels. */
@@ -126,6 +127,7 @@ const project = {
   importExternalFirmware: vi.fn(),
 };
 const peripherals = { applyNetlist: vi.fn(), driveInput: vi.fn(), feedCapture: vi.fn(), driveRotate: vi.fn(), on: vi.fn() };
+const catalog = { scan: vi.fn(), load: vi.fn(), getRootDir: vi.fn() };
 const win = { webContents: { send: (channel: string, payload: unknown) => { state.sends.push({ channel, payload }); } } };
 
 /** Extract the callback handlers.ts registered for a stub service event. */
@@ -138,7 +140,7 @@ function listenerFor(service: { on: Mock }, event: string): (payload: unknown) =
 beforeAll(async () => {
   callEveryApiFunction(state.api);
   // Stubs mirror only the surface registerIpcHandlers touches — safe at this test boundary.
-  await registerIpcHandlers({ qemu, gdb, project, peripherals, win } as unknown as HandlerDeps);
+  await registerIpcHandlers({ qemu, gdb, project, peripherals, catalog, win } as unknown as HandlerDeps);
   // Fire one probe event per emitter so every Bridge -> UI push channel is
   // observable in `sends` (subscriptions alone do not send anything).
   listenerFor(qemu, 'status')('running');
@@ -299,6 +301,37 @@ describe('preload ↔ handlers IPC contract (P1.1)', () => {
       await expect(handler!(undefined, payload)).rejects.toThrow('[BB-202]');
     }
     expect(peripherals.feedCapture).not.toHaveBeenCalled();
+  });
+
+  // --- P5.2 (PRD §F-EXT-3): local peripheral catalog channels ---
+
+  it('routes per:catalogScan to PluginCatalog and returns its scan (P5.2)', async () => {
+    const scan = { rootDir: '/tmp/peripherals', entries: [] };
+    catalog.scan.mockReturnValueOnce(scan);
+    const handler = state.handles.get('per:catalogScan');
+    expect(handler).toBeDefined();
+    await expect(handler!(undefined)).resolves.toBe(scan);
+    expect(catalog.scan).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes per:catalogLoad to PluginCatalog.load with the payload dir (P5.2)', async () => {
+    const result = { dir: '/tmp/peripherals/acme', kinds: ['acme-matrix'], factories: [] };
+    catalog.load.mockReturnValueOnce(result);
+    const handler = state.handles.get('per:catalogLoad');
+    expect(handler).toBeDefined();
+    await expect(handler!(undefined, { dir: '/tmp/peripherals/acme' })).resolves.toBe(result);
+    expect(catalog.load).toHaveBeenCalledWith('/tmp/peripherals/acme');
+  });
+
+  it('rejects malformed per:catalogLoad payloads with [BB-225] before reaching the catalog (P5.2)', async () => {
+    const handler = state.handles.get('per:catalogLoad');
+    expect(handler).toBeDefined();
+    catalog.load.mockClear();
+    const bad: unknown[] = [{ dir: '' }, { dir: 42 }, {}, null, '/tmp/bare-string'];
+    for (const payload of bad) {
+      await expect(handler!(undefined, payload)).rejects.toThrow('[BB-225]');
+    }
+    expect(catalog.load).not.toHaveBeenCalled();
   });
 
   it('routes proj:save through ProjectManager with both persistence halves', async () => {

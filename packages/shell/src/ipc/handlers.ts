@@ -6,17 +6,19 @@ import type { ProjectManager } from '../project/ProjectManager.js';
 import type { QemuRunner } from '../qemu/QemuRunner.js';
 import type { GdbBridge } from '../debugger/GdbBridge.js';
 import type { PeripheralManager } from '../peripherals/PeripheralManager.js';
+import type { PluginCatalog } from '../peripherals/PluginCatalog.js';
 
 export interface HandlerDeps {
   project: ProjectManager;
   qemu: QemuRunner;
   gdb: GdbBridge;
   peripherals: PeripheralManager;
+  catalog: PluginCatalog;
   win?: BrowserWindow;
 }
 
 export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
-  const { project, qemu, gdb, peripherals } = deps;
+  const { project, qemu, gdb, peripherals, catalog } = deps;
 
   // sim:*
   ipcMain.handle('sim:load', async (_e, p: { elfPath: string; chip: ChipKind; qemuBin: string; gdbPort?: number; dbus?: { socket?: string; host?: string; port?: number } }) => {
@@ -204,6 +206,19 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
       throw new Error('[BB-202] invalid per:captureChunk payload (instanceId/rate/samples)');
     }
     peripherals.feedCapture(p.instanceId, { rate: p.rate, samples: p.samples });
+  });
+
+  // Local peripheral catalog (P5.2, PRD §F-EXT-3 "offline marketplace"):
+  // scan the local peripherals root (read-only) and load a package into the
+  // Bridge registry on explicit user request. The load target must be a
+  // currently-scanned 'ok' entry — the catalog re-scans internally, so this
+  // channel cannot be talked into importing arbitrary paths ([BB-224]).
+  ipcMain.handle('per:catalogScan', async () => catalog.scan());
+  ipcMain.handle('per:catalogLoad', async (_e, p: { dir: string }) => {
+    if (typeof p?.dir !== 'string' || p.dir.length === 0) {
+      throw new Error('[BB-225] invalid per:catalogLoad payload (dir)');
+    }
+    return catalog.load(p.dir);
   });
 
   // Forward peripheral snapshots to the renderer (Bridge -> UI, PRD §6.6).

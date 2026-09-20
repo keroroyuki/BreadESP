@@ -4,6 +4,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { ChipKind, LayoutFile, Netlist } from '@breadesp/netlist';
 import type { ProjectData } from './project/ProjectManager.js';
 import type { ExternalScanResult } from './project/ExternalProject.js';
+import type { PeripheralCatalogLoadResult, PeripheralCatalogScan } from './peripherals/PluginCatalog.js';
 
 /** DBus forward channel — mirrors QemuDbusChannel in sim-core (PRD §6.7). */
 export interface SimDbusChannel {
@@ -137,6 +138,11 @@ const api = {
     // Local mic capture (P3.2, PRD §F-PER-7): renderer -> Bridge PCM chunks.
     captureChunk: (p: { instanceId: string; rate: number; samples: number[] }) =>
       ipcRenderer.invoke('per:captureChunk', p),
+    // Local peripheral catalog (P5.2, PRD §F-EXT-3). Returns are plain JSON
+    // data produced by PluginCatalog (paths/manifests/metadata). IPC boundary:
+    // invoke is untyped over the wire; the main side constructs these shapes.
+    catalogScan: () => ipcRenderer.invoke('per:catalogScan') as Promise<PeripheralCatalogScan>,
+    catalogLoad: (p: { dir: string }) => ipcRenderer.invoke('per:catalogLoad', p) as Promise<PeripheralCatalogLoadResult>,
   },
 };
 

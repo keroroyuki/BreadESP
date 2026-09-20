@@ -83,11 +83,13 @@ beforeAll(async () => {
   const qemu = { load: vi.fn(), start: vi.fn(), pause: vi.fn(), reset: vi.fn(), getStatus: vi.fn(), getGdbPort: vi.fn(), getFirmwareElf: vi.fn(), on: vi.fn() };
   const gdb = { start: vi.fn(), stop: vi.fn(), isConnected: vi.fn(), setBreakpoint: vi.fn(), removeBreakpoint: vi.fn(), clearBreakpoints: vi.fn(), listBreakpoints: vi.fn(), continue: vi.fn(), step: vi.fn(), stepOver: vi.fn(), vars: vi.fn(), regs: vi.fn(), evaluate: vi.fn(), on: vi.fn() };
   const peripherals = { applyNetlist: vi.fn(), driveInput: vi.fn(), on: vi.fn() };
+  const catalog = { scan: vi.fn(), load: vi.fn(), getRootDir: vi.fn() };
   await registerIpcHandlers({
     project: new ProjectManager(),
     qemu,
     gdb,
     peripherals,
+    catalog,
   } as unknown as Parameters<typeof registerIpcHandlers>[0]);
 });
 
