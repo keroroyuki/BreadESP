@@ -3,7 +3,7 @@
 // validatePeripheralFactory — malformed factories, duplicate kinds and
 // factories built against a newer SDK major are rejected with coded errors
 // ([BB-220]/[BB-221]/[BB-222]) instead of failing deep inside the Bridge.
-import { PIN_ROLES, type PeripheralFactory, type PinDescriptor } from './types';
+import { PIN_ROLES, type PeripheralFactory, type PeripheralMeta, type PinDescriptor } from './types';
 import { ledFactory } from './led';
 import { buttonFactory } from './button';
 import { ssd1306Factory } from './ssd1306';
@@ -136,6 +136,42 @@ export function registerPeripheral(factory: PeripheralFactory): void {
 
 export function getFactory(kind: string): PeripheralFactory | undefined {
   return factories.get(kind);
+}
+
+/**
+ * Remove a registered kind (P5.2). Returns true when something was removed.
+ * Host-internal: the Bridge's catalog loader uses this to roll back a failed
+ * package load so no partial registration survives. Third-party packages MUST
+ * NOT call this — unregistering a kind with live instances only breaks future
+ * lookups, it never tears the instances down.
+ */
+export function unregisterPeripheral(kind: string): boolean {
+  return factories.delete(kind);
+}
+
+/**
+ * Mirror a Bridge-side factory into this process's registry from its metadata
+ * (P5.2, PRD §F-EXT-3). The renderer uses this for catalog-loaded kinds: the
+ * palette, pin anchors and the generic node body all render from metadata, so
+ * a metadata-only stub makes the kind placeable with zero model code. The
+ * stub's create() can never legitimately run — models instantiate in the
+ * Bridge process only — so it throws a coded error as a tripwire. The full
+ * registration gates ([BB-220]/[BB-221]/[BB-222]) apply to the metadata too.
+ */
+export function registerRemotePeripheral(meta: PeripheralMeta): void {
+  registerPeripheral({
+    kind: meta.kind,
+    version: meta.version,
+    displayName: meta.displayName,
+    pins: meta.pins,
+    defaults: meta.defaults,
+    sdkVersion: meta.sdkVersion,
+    create: () => {
+      throw new Error(
+        `[BB-207] peripheral kind '${meta.kind}' is provided by a catalog package; its model can only be instantiated in the Bridge process`,
+      );
+    },
+  });
 }
 
 /** Every registered factory in registration order (fresh array per call). */

@@ -228,3 +228,28 @@ export interface PeripheralFactory {
   sdkVersion?: string;
   create(ctx: PeripheralContext, props?: Record<string, unknown>): Peripheral;
 }
+
+// §6.2, §F-EXT-3 — JSON-safe metadata of a registered factory (P5.2). The
+// Bridge sends one per catalog-loaded kind to the renderer, which mirrors it
+// into its own registry via registerRemotePeripheral() so the palette, pin
+// anchors and generic node body can render the kind without the model code
+// (models only ever instantiate in the Bridge process).
+export interface PeripheralMeta {
+  kind: string;
+  version: string;
+  displayName: string;
+  pins: PinDescriptor[];
+  defaults?: Record<string, unknown>;
+  sdkVersion?: string;
+}
+
+// §F-EXT-3 — Host API handed to a catalog package entry's default export at
+// load time (P5.2). Passing the host's own registration surface sidesteps the
+// dual-instance hazard: a package that instead imports '@breadesp/peripherals'
+// itself only lands in the host registry when module resolution dedupes to the
+// host's copy, so the default-export form is the supported contract.
+export interface PeripheralHostApi {
+  registerPeripheral: (factory: PeripheralFactory) => void;
+  /** The host's SDK contract version (gate [BB-222] decisions at load time). */
+  PERIPHERAL_SDK_VERSION: string;
+}
