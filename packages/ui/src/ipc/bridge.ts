@@ -1,6 +1,7 @@
 // PRD: §6.6 — Thin typed wrapper around window.breadesp (exposed by preload.ts).
 // Renderer never touches Node directly.
 import type { ChipKind, LayoutFile, Netlist } from '@breadesp/netlist';
+import type { PeripheralMeta } from '@breadesp/peripherals';
 
 /** DBus forward channel — mirrors SimDbusChannel in shell/src/preload.ts (PRD §6.7). */
 interface SimDbusChannel {
@@ -52,6 +53,48 @@ interface SimLoadInput {
   qemuBin: string;
   gdbPort?: number;
   dbus?: SimDbusChannel;
+}
+
+/** PeripheralPackageManifest — mirrors shell PluginCatalog (PRD §F-EXT-3, P5.2). */
+export interface PeripheralPackageManifest {
+  manifestVersion: 1;
+  name: string;
+  version: string;
+  displayName: string;
+  description?: string;
+  entry: string;
+  sdkVersion?: string;
+  provides?: string[];
+}
+
+/** PeripheralCatalogStatus — mirrors shell PluginCatalog (PRD §F-EXT-3, P5.2). */
+export type PeripheralCatalogStatus = 'ok' | 'invalid' | 'incompatible';
+
+/** PeripheralCatalogEntry — mirrors shell PluginCatalog (PRD §F-EXT-3, P5.2). */
+export interface PeripheralCatalogEntry {
+  dir: string;
+  status: PeripheralCatalogStatus;
+  issues: string[];
+  manifest: PeripheralPackageManifest | null;
+  /** True when the package was loaded into the Bridge registry this session. */
+  loaded: boolean;
+  /** Factory kinds the package registered (empty until loaded). */
+  kinds: string[];
+  /** Factory metadata for renderer-side mirroring (populated once loaded). */
+  factories: PeripheralMeta[];
+}
+
+/** PeripheralCatalogScan — mirrors shell PluginCatalog (PRD §F-EXT-3, P5.2). */
+export interface PeripheralCatalogScan {
+  rootDir: string;
+  entries: PeripheralCatalogEntry[];
+}
+
+/** PeripheralCatalogLoadResult — mirrors shell PluginCatalog (PRD §F-EXT-3, P5.2). */
+export interface PeripheralCatalogLoadResult {
+  dir: string;
+  kinds: string[];
+  factories: PeripheralMeta[];
 }
 
 /** One row of the debug panel's breakpoint list — mirrors shell GdbBridge (PRD §F-DBG-1, P4.4). */
@@ -150,6 +193,10 @@ interface BridgeApi {
     rotateKnob: (p: { instanceId: string; delta: number }) => Promise<void>;
     /** Local mic capture (P3.2, PRD §F-PER-7): host-mic PCM chunk for one instance. */
     captureChunk: (p: { instanceId: string; rate: number; samples: number[] }) => Promise<void>;
+    /** Local peripheral catalog (P5.2, PRD §F-EXT-3): scan the offline marketplace root. */
+    catalogScan: () => Promise<PeripheralCatalogScan>;
+    /** Load a scanned package into the Bridge registry (explicit user action). */
+    catalogLoad: (p: { dir: string }) => Promise<PeripheralCatalogLoadResult>;
   };
 }
 

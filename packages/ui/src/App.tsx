@@ -10,6 +10,7 @@ import { useCaptureStore } from './store/captureStore';
 import { bridge } from './ipc/bridge';
 import { BreadboardCanvas } from './components/Breadboard/BreadboardCanvas';
 import { Palette } from './components/Palette/Palette';
+import { Marketplace } from './components/Marketplace/Marketplace';
 import { Inspector } from './components/Inspector/Inspector';
 import { ProjectToolbar } from './components/ProjectToolbar/ProjectToolbar';
 import { ExternalFirmware } from './components/ExternalFirmware/ExternalFirmware';
@@ -88,7 +89,10 @@ export function App() {
       <ExternalFirmware />
       <SimControls />
       <div style={main}>
-        <Palette />
+        <div style={leftCol}>
+          <Palette />
+          <Marketplace />
+        </div>
         <BreadboardCanvas />
         <Inspector />
       </div>
@@ -105,4 +109,12 @@ export function App() {
 const layout: React.CSSProperties = { display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'system-ui, sans-serif' };
 const header: React.CSSProperties = { padding: 8, borderBottom: '1px solid #ccc', background: '#1f2937', color: '#fff' };
 const main: React.CSSProperties = { display: 'flex', flex: 1, minHeight: 0 };
+// P5.2: the left column stacks the palette over the local peripheral catalog.
+const leftCol: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  width: 200,
+  minHeight: 0,
+  borderRight: '1px solid #ccc',
+};
 const bottom: React.CSSProperties = { display: 'flex', height: 220, borderTop: '1px solid #ccc' };
