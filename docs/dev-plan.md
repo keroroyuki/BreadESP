@@ -57,7 +57,7 @@
 - **M2**（进行中，任务 2.1–2.3 已完成）：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
 - **M3**（已达成 2026-09-11，任务 3.1–3.4 完成）：麦克风波形注入后固件能读到采样值；旋钮正交序列与 SHT30 读回复经真实 QEMU e2e 验证。
 - **M4**（进行中，任务 4.1–4.5 已完成）：切换芯片型号后同一工程可在 ESP32/S3 跑通（S3 已真实 QEMU 验证；C3/C6 的 machine/仿真器映射与门控就绪，等待 riscv32 版 QEMU 二进制接入后做真实启动验证）；新建工程向导支持选芯片/选模板；PlatformIO/IDF 工程目录可关联并自动发现 build/*.elf 导入为 firmware.elf；条件断点/watchpoint 已接入调试面板（GDB/MI 线格式经扩展 mock 冻结，真实 GDB e2e 维持 BREADESP_GDB_BIN 门控）；DAP 适配器上线（stdio/TCP 双模式，launch/attach，真实 QEMU + esp-gdb 17.1 e2e 通过，见 docs/dap.md）。
-- **M5**（进行中，任务 5.1 已完成）：第三方包 `registerPeripheral()` 后 UI 自动出现新器件（palette 注册表驱动 + 画布通用节点体，经单测冻结；SDK 注册校验 [BB-220/221/222] 与 sdkVersion 门控落地）。
+- **M5**（进行中，任务 5.1/5.2 已完成）：第三方包 `registerPeripheral()` 后 UI 自动出现新器件（palette 注册表驱动 + 画布通用节点体，经单测冻结；SDK 注册校验 [BB-220/221/222] 与 sdkVersion 门控落地）；本地外设目录（`~/.breadesp/peripherals/`）扫描成目录面板——投包即见、显式加载进 Bridge 注册表、渲染进程元数据镜像后 palette 自动可拖，经 51 项新增测试与真实 IPC 集成链路冻结（PRD §F-EXT-3）。
 
 ---
 
@@ -132,7 +132,7 @@
 | # | 任务 | 产物 | 状态 |
 |---|---|---|---|
 | 5.1 | 外设插件 SDK 稳定化 + 版本化 | 第三方可扩展 | 已完成 2026-09-19 |
-| 5.2 | 本地外设目录扫描 | 离线市场 | 未开始 |
+| 5.2 | 本地外设目录扫描 | 离线市场 | 已完成 2026-09-20 |
 | 5.3 | 外设打包模板（脚手架） | 降低门槛 | 未开始 |
 | 5.4 | 文档站 + 教程 | 可用性 | 未开始 |
 
@@ -166,6 +166,67 @@
 > 设计要点：palette 由注册表驱动取代硬编码清单；画布对无专属渲染的 kind
 > 回退到快照驱动的通用节点体（内建 st7789 由此结束裸盒状态）；UI 零新 IPC、
 > QEMU 设备零改动、零新运行时依赖（PRD §5 不变）。
+
+> P5.2 验证记录（2026-09-20）：`pnpm typecheck` 0 错误；全仓测试 Windows 664 通过
+> + 14 跳过（门控 e2e；较 P5.1 净增 51 项——基线经 git worktree 在 HEAD(800fbf9)
+> 复测确认为 613 通过 + 14 跳过，与 P5.1 记录一致）；`pnpm --filter
+> @breadesp/ui build`（tsc -b + vite）与 `pnpm --filter @breadesp/shell build`
+> 成功。分五层验证——
+> 注册表层新增 5 项单测（`packages/peripherals/tests/remote.test.ts`：
+> registerRemotePeripheral 元数据存根注册与按 kind 解析/引脚保真、存根 create()
+> 的 [BB-207] 警戒、元数据重过 [BB-220]/[BB-221]/[BB-222] 全套门控且被拒不留存、
+> unregisterPeripheral 移除后可重注册/未知 kind 返回 false）；
+> PluginCatalog 层 23 项单测（真实临时目录 + 真实入口模块——清单纯校验矩阵
+> （manifestVersion/name 含 @scope/version/displayName/description/entry 逃逸
+> 段级检测含 '..v2' 合法目录名与 POSIX 根/盘符/UNC 三形态/sdkVersion/provides）、
+> 扫描（缺根=空目录、无清单目录跳过、坏 JSON/超大清单/入口缺失/形状非法全部降级
+> invalid 且问题列全、SDK 新 major 标 incompatible、按 name 排序）、加载（宿主
+> API 默认导出注册 + 元数据返回 + 扫描回标 loaded、幂等重载、并发双击经 inflight
+> 去重共享同一 import、CJS 入口互操作、[BB-224] 门（未扫描目录/invalid/
+> incompatible 条目）、[BB-223]（零注册/非函数默认导出/语法错误）、中途抛错回滚
+> + 修复后重试成功（进程级尝试序号绕开 ESM 模块缓存）、[BB-220]/[BB-221]/[BB-222]
+> 原样传播且部分注册回滚、扫描后入口文件消失的竞态、多 kind 包））；
+> IPC 契约层 38 项（新增 3：per:catalogScan 路由、per:catalogLoad 路由透传、
+> 5 种畸形负载 [BB-225] 拒绝且未触达 catalog）；preload↔handlers 通道清单精确
+> 匹配断言同步扩展。集成层 5 项（`catalog.integration.test.ts`，真实 preload →
+> handlers → PluginCatalog → 注册表 → PeripheralManager 链路，双向 JSON 边界）：
+> 投包即被发现（清单原样过界）、加载返回可镜像元数据（嵌套 pins 数组过 JSON
+> 边界无损）、**M5 消费验收**——catalog 加载的 plug-led 经 bb:applyNetlist 连线
+> mcu.GPIO5 后，真实 route() 的 gpio 事务驱动模型产出 level 快照（与内建外设
+> 同一路径）、[BB-224]/[BB-225] 跨边界传播、双击幂等；UI 层 15 项
+> （marketplaceDraft 7 项——loaded 优先于磁盘损坏的状态标签、canLoad 矩阵、
+> displayName/目录名回退、跨分隔符 basename、name@version 副标题、已注册 kinds/
+> 宣称 provides 行、目录汇总计数；marketplaceStore 8 项——扫描水合、渲染进程
+> 重载后经扫描 factories 重新镜像且 paletteEntries 可见、无新镜像不增 tick、
+> 扫描失败保留旧条目、加载成功镜像 + 条目标 loaded + tick +1、加载失败不污染
+> 注册表与 tick、并发加载去重、mirrorCatalogFactories 跳过已存在 kind）。
+> 真实 QEMU e2e 不适用（本任务不触碰仿真链路）；catalog 加载的外设经
+> applyNetlist/route 的消费路径与全部内建外设 e2e 走的是同一通用路径（已由
+> netlist-routing/dbus-device 等 e2e 冻结），集成测试在真实 IPC 边界上对该路径
+> 做了直接断言。另附 `tests/manual-smoke-p52.ts`（tsx 手动冒烟，非 vitest）：
+> 在**纯 Node 运行时**（即 Electron 主进程的真实模块环境，区别于 vite-node）
+> 走完"投包→扫描→加载→连线→路由事务→产出快照"全程，已验证通过。
+> 自我迭代抓出并已修复四处真实缺陷：① 加载回滚盲区——入口函数注册后抛错时
+> 成功路径的差分循环未执行，added 为空导致部分注册残留（改为 catch 路径现场
+> 差分回滚）；② ESM 模块缓存毒化——失败加载后修复文件重试仍重放缓存模块
+> （入口 URL 加进程级尝试序号；初版按实例计数被"新实例重试"测试场景抓出，
+> 改为模块级计数器）；③ 清单 entry 逃逸检测误伤——子串匹配 '..' 会拒绝
+> '..v2' 这类合法目录名，且漏 POSIX 根路径在 win32 的语义差（改段级精确检测
+> + 跨平台绝对形态）；④ entry 缺失但清单合法的条目 manifest 被误置 null
+> （市场面板应展示已解析的清单信息）。另观察到一次全仓并行测试中的单条瞬态
+> 失败（DapServer launch-flow）；经 git worktree 在 P5.1 HEAD 复现同款失败，
+> 确认为该用例既有的计时敏感 flake，非本次改动引入（其后连续多轮全量/单包
+> 复跑全绿）。
+> 契约同步：PRD §F-EXT-3 展开为完整契约（目录约定/清单格式/入口契约/加载
+> 语义/镜像机制），§6.2 追加 P5.2 段落（PeripheralMeta/PeripheralHostApi/
+> registerRemotePeripheral/unregisterPeripheral + [BB-207]），§6.6 per:* 追加
+> catalogScan/catalogLoad，§7 追加 PluginCatalog.ts 与 Marketplace 两件套 +
+> marketplaceStore；docs/peripheral-sdk.md 新增 §8（目录格式/宿主注入入口/错误码）
+> 并在 §2 衔接，docs/architecture.md 新增 §11（双进程注册表与镜像链路）；
+> §11.2 追加 BREADESP_PERIPHERALS_DIR。设计要点：加载失败回滚靠新增的
+> unregisterPeripheral（宿主内部原语，第三方禁用）；渲染进程镜像复用 P5.1 的
+> registerPeripheral 全套门控；扫描永不为整体错误（坏包降级为条目级状态）；
+> 零新运行时依赖（PRD §5 不变）、QEMU 设备零改动。
 
 ---
 
@@ -409,6 +470,7 @@ Previously applyNetlist leaked old instances on re-apply.
   GdbBridge 按 chip 自动指向 `<gdb>/lib/xtensa_<chip>.so`；显式设置时优先生效）。
 - `VITE_DEV_SERVER_URL`：dev 模式 UI 加载地址（Electron main 使用）。
 - `BREADESP_LOG_DIR`：日志目录（默认 `~/.breadesp/logs`）。
+- `BREADESP_PERIPHERALS_DIR`：本地外设目录根（默认 `~/.breadesp/peripherals`，P5.2 离线市场扫描源）。
 - `BREADESP_DOCKER_MIRROR`：Docker Hub 镜像前缀（如 `docker.1ms.run/`，构建设备版 QEMU 时）。
 - `BREADESP_SUBPROJECT_MIRRORS`：QEMU meson wrap 子项目镜像模板列表（逗号分隔，`{name}` 占位）。
 - `BREADESP_MSYS2_DIR`：Windows MSYS2 根目录（默认 `C:\msys64`）。
