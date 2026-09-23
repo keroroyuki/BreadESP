@@ -396,3 +396,18 @@ PeripheralManager.applyNetlist 按 kind 在 Bridge 侧实例化真实模型（�
 - **安全边界**：扫描只读且永不失败为整体错误；加载门要求目标是当前扫描的 `ok` 条目，
   IPC 无法诱使 Bridge 导入任意路径；清单 entry 必须解析在包目录内（段级 `..` 检测 +
   跨平台绝对路径形态）。执行第三方代码本身是有意的扩展机制，由用户显式点击触发。
+
+### 11.1 打包脚手架（P5.3，PRD §F-EXT-4）
+
+`pnpm create-peripheral <name>` 是外设包的起步入口：`PeripheralScaffold`（shell 包，
+纯函数核心 + fs 写入层）生成四文件可发布包——清单（`sdkVersion` 盖宿主当前
+`PERIPHERAL_SDK_VERSION`）、宿主 API 注入入口（含可运行的 GPIO 电平示例模型）、README、
+零依赖 `self-check.mjs`。设计要点：
+
+- **自校验**：清单产出后回灌 `validatePeripheralManifest`（不变式断言），名称规则直接复用
+  目录的 `PERIPHERAL_PACKAGE_NAME_RE`——生成器与消费方共用一处真相，不可能生成目录拒收的包。
+- **提前失败**：kind 与已注册 kind 冲突在生成期以 [BB-230] 拒绝（否则加载时必撞
+  [BB-221]）；目标目录非空以 [BB-231] 拒绝（脚手架永不覆盖既有文件），写入中途失败
+  清理已创建的部分文件。
+- **CLI 形态**：shell 包内 tsx 入口（同 DAP `debugger/dap/cli.ts` 模式），`parseScaffoldArgs`/
+  `runScaffoldCli` 导出供测试注入 IO；渲染进程与 IPC 面零改动，无新运行时依赖。

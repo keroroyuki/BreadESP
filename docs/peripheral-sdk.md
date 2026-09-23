@@ -217,8 +217,37 @@ export default function register(host) {
 - 加载成功后无需任何 UI 代码：Bridge 返回 `PeripheralMeta` 元数据，渲染进程镜像为
   仅元数据存根，palette 与画布立即可见（§7）；模型的 `create()` 只在 Bridge 进程运行。
 
-## 9. 测试约定
+## 9. 打包脚手架（P5.3，PRD §F-EXT-4）
+
+不用从零搭包结构——脚手架直接生成一个**可发布**的外设包：
+
+```bash
+pnpm create-peripheral acme-matrix --description "8x8 LED matrix driver"
+# 选项：--display-name <文本>  --description <文本>  --into <父目录>
+```
+
+`name` 是小写 kebab（可带 `@scope/` 前缀），去掉 scope 的部分同时作为工厂 kind 与包目录名。
+`--into` 缺省为当前工作目录；直接指向本地外设目录根（`~/.breadesp/peripherals/` 或
+`BREADESP_PERIPHERALS_DIR`）即可跳过手动拷贝。生成的目录恰好四个文件：
+
+| 文件 | 作用 |
+|---|---|
+| `breadesp-peripheral.json` | 清单（§8.1；`sdkVersion` 自动盖宿主当前 `PERIPHERAL_SDK_VERSION`） |
+| `index.mjs` | 宿主 API 注入入口（§8.2）+ 可运行的 GPIO 电平示例模型 |
+| `self-check.mjs` | 零依赖冒烟：`node self-check.mjs`（见 §10） |
+| `README.md` | 安装/加载/开发指引 |
+
+生成的包无任何特权路径：它必须通过 §8 的全部关卡（扫描 `ok` → 显式加载 → 注册门控），
+仓库测试固定了这条"生成即可发布"链路。脚手架自身的错误码：
+
+- `[BB-230]` 非法请求——name/displayName/description 形状问题会一次列全；kind 与已注册
+  kind 冲突也在此拒绝（否则加载时必撞 `[BB-221]`）。
+- `[BB-231]` 目标目录已存在且非空——脚手架永不覆盖既有文件（已存在的空目录允许写入）；
+  写入中途失败会清理已创建的部分文件。
+
+## 10. 测试约定
 
 每个外设 MUST 至少有一个单元测试（见 `packages/peripherals/tests/ssd1306.test.ts`），
 覆盖"收到一条典型事务 → 产生预期快照"的路径。工厂本身 SHOULD 用 `validatePeripheralFactory()`
-预检（见 §2）。
+预检（见 §2）。脚手架生成的包（§9）以 `self-check.mjs` 承载这一约定的零依赖形态——
+它驱动示例模型跑通电平行为，改模型时应同步扩展其中的检查。

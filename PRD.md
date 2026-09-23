@@ -128,6 +128,19 @@
   - 加载成功后，Bridge 把新 kind 的工厂元数据（`PeripheralMeta`）随响应返回，渲染进程以
     `registerRemotePeripheral()` 镜像为仅元数据存根——palette/画布自动呈现（§F-EXT-1），模型的
     `create()` 只在 Bridge 进程实例化（误用报 [BB-207]）。
+- F-EXT-4 SHOULD 提供外设打包脚手架，降低新包起步门槛。P5.3 落地契约：
+  - 命令：`pnpm create-peripheral <name> [--display-name <文本>] [--description <文本>]
+    [--dir <父目录>]`。`name` 为小写 kebab（可带 `@scope/` 前缀），去掉 scope 的部分同时作为
+    包目录名与工厂 kind；`--dir` 缺省为当前工作目录。
+  - 生成物（恰好四个文件）：`breadesp-peripheral.json`（清单，`sdkVersion` 盖宿主当前
+    `PERIPHERAL_SDK_VERSION`，`provides` 填生成的 kind）、`index.mjs`（§F-EXT-3 宿主 API 注入
+    入口 + 可运行的 GPIO 电平示例模型）、`README.md`（安装/加载/开发指引）、`self-check.mjs`
+    （零依赖冒烟：`node self-check.mjs` 自检入口注册形状与示例模型的电平行为）。
+  - 生成器自校验：产出的清单 MUST 通过 §F-EXT-3 的 `validatePeripheralManifest`（零问题项）；
+    生成的包 MUST 在目录扫描中得 `ok` 并可加载消费（与手工编写的包同一路径，无特权）。
+  - 错误码：非法名称/选项 `[BB-230]`（列出全部问题；kind 与已注册 kind 冲突同属此类——
+    加载时必撞 [BB-221]，脚手架提前拒绝）；目标目录已存在且非空 `[BB-231]`（脚手架永不
+    覆盖既有文件；已存在的空目录允许写入）。写入中途失败时清理已创建的部分文件。
 
 ---
 
@@ -415,6 +428,8 @@ my-idea/
     │       ├── debugger/dap/cli.ts
     │       ├── peripherals/PeripheralManager.ts
     │       ├── peripherals/PluginCatalog.ts  # 本地外设目录扫描/加载（§F-EXT-3, P5.2）
+    │       ├── peripherals/PeripheralScaffold.ts  # 外设打包脚手架生成器（§F-EXT-4, P5.3）
+    │       ├── peripherals/scaffold-cli.ts   # create-peripheral CLI 入口（§F-EXT-4, P5.3）
     │       ├── project/ProjectManager.ts
     │       ├── netlist/NetlistResolver.ts
     │       └── ipc/handlers.ts
