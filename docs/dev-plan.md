@@ -57,7 +57,7 @@
 - **M2**（进行中，任务 2.1–2.3 已完成）：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
 - **M3**（已达成 2026-09-11，任务 3.1–3.4 完成）：麦克风波形注入后固件能读到采样值；旋钮正交序列与 SHT30 读回复经真实 QEMU e2e 验证。
 - **M4**（进行中，任务 4.1–4.5 已完成）：切换芯片型号后同一工程可在 ESP32/S3 跑通（S3 已真实 QEMU 验证；C3/C6 的 machine/仿真器映射与门控就绪，等待 riscv32 版 QEMU 二进制接入后做真实启动验证）；新建工程向导支持选芯片/选模板；PlatformIO/IDF 工程目录可关联并自动发现 build/*.elf 导入为 firmware.elf；条件断点/watchpoint 已接入调试面板（GDB/MI 线格式经扩展 mock 冻结，真实 GDB e2e 维持 BREADESP_GDB_BIN 门控）；DAP 适配器上线（stdio/TCP 双模式，launch/attach，真实 QEMU + esp-gdb 17.1 e2e 通过，见 docs/dap.md）。
-- **M5**（进行中，任务 5.1/5.2 已完成）：第三方包 `registerPeripheral()` 后 UI 自动出现新器件（palette 注册表驱动 + 画布通用节点体，经单测冻结；SDK 注册校验 [BB-220/221/222] 与 sdkVersion 门控落地）；本地外设目录（`~/.breadesp/peripherals/`）扫描成目录面板——投包即见、显式加载进 Bridge 注册表、渲染进程元数据镜像后 palette 自动可拖，经 51 项新增测试与真实 IPC 集成链路冻结（PRD §F-EXT-3）。
+- **M5**（进行中，任务 5.1/5.2/5.3 已完成）：第三方包 `registerPeripheral()` 后 UI 自动出现新器件（palette 注册表驱动 + 画布通用节点体，经单测冻结；SDK 注册校验 [BB-220/221/222] 与 sdkVersion 门控落地）；本地外设目录（`~/.breadesp/peripherals/`）扫描成目录面板——投包即见、显式加载进 Bridge 注册表、渲染进程元数据镜像后 palette 自动可拖，经 51 项新增测试与真实 IPC 集成链路冻结（PRD §F-EXT-3）；打包脚手架 `pnpm create-peripheral` 生成四文件可发布包（清单/宿主 API 入口/README/零依赖 self-check），经 24 项新增测试、真实 CLI 运行与纯 Node 冒烟冻结（PRD §F-EXT-4）。
 
 ---
 
@@ -133,7 +133,7 @@
 |---|---|---|---|
 | 5.1 | 外设插件 SDK 稳定化 + 版本化 | 第三方可扩展 | 已完成 2026-09-19 |
 | 5.2 | 本地外设目录扫描 | 离线市场 | 已完成 2026-09-20 |
-| 5.3 | 外设打包模板（脚手架） | 降低门槛 | 未开始 |
+| 5.3 | 外设打包模板（脚手架） | 降低门槛 | 已完成 2026-09-21 |
 | 5.4 | 文档站 + 教程 | 可用性 | 未开始 |
 
 > P5.1 验证记录（2026-09-19）：`pnpm typecheck` 0 错误；全仓测试 Windows 613 通过
@@ -227,6 +227,47 @@
 > unregisterPeripheral（宿主内部原语，第三方禁用）；渲染进程镜像复用 P5.1 的
 > registerPeripheral 全套门控；扫描永不为整体错误（坏包降级为条目级状态）；
 > 零新运行时依赖（PRD §5 不变）、QEMU 设备零改动。
+
+> P5.3 验证记录（2026-09-21）：`pnpm typecheck` 0 错误；全仓测试 Windows 688 通过
+> + 14 跳过（门控 e2e，同 P5.2 基线；较 P5.2 净增 24 项）；`pnpm --filter
+> @breadesp/shell build`（tsc）与 `pnpm --filter @breadesp/ui build`（tsc -b + vite）
+> 成功。分四层验证——
+> 生成器层 12 项单测（`packages/shell/tests/PeripheralScaffold.test.ts`：
+> normalizeScaffoldRequest 名称/显示名/描述矩阵（8 种非法 name 含 @scope 形态、
+> 非对象请求、多行文本拒绝、全部问题一次列全的 [BB-230]）、kind 与已注册 kind
+> 冲突提前拒绝（含 @scope 剥壳后的碰撞）、buildPeripheralPackage 恰好四文件 +
+> 清单回灌 validatePeripheralManifest 零问题项 + 字段精确对值（sdkVersion 盖宿主
+> PERIPHERAL_SDK_VERSION、provides 填 kind、无 description 时不落字段）、
+> 数字开头 kind 的类名标识符合法化、入口/README/self-check 内容关键缝合）；
+> 写盘层 3 项（嵌套父目录创建 + 落盘内容与纯构建逐字节相等、已存在空目录可用/
+> 非空 [BB-231] 拒绝且既有文件零改动、父路径是文件时干净失败零残留）；
+> **M5 验收直译** 2 项——脚手架产出的包经真实 PluginCatalog 扫描得 'ok'、加载注册
+> kind 且元数据与清单精确一致、经 bb 网表连线 mcu.GPIO4 后真实 route() 驱动模型产出
+> level 快照（0/1 双写，注入时钟越过 30fps 节流窗），生成的 self-check.mjs 被子进程
+> 真实执行通过且对破坏后的入口正确非零退出；
+> CLI 层 7 项（parseScaffoldArgs 全旗标/缺省/5 种用法错误 [BB-230]、--help 出 stdout
+> 退 0、用法错误出 stderr 退 2、内建 kind 冲突退 2 且零落盘、CLI 全链路写盘与库构建
+> 逐字节一致、[BB-231] 透传退 2）。
+> 真实 CLI 端到端验证：`pnpm create-peripheral acme-lamp --description ... --into <tmp>`
+> 真实执行成功（tsx 入口守卫在 tsx 直连与 vitest 导入双场景行为正确），生成包
+> `node self-check.mjs` 独立通过；另附 `tests/manual-smoke-p53.ts`（tsx 手动冒烟，
+> 非 vitest）在**纯 Node 运行时**走完"脚手架→扫描→加载→连线→路由→快照→self-check"
+> 全程，已验证通过。真实 QEMU e2e 不适用（本任务不触碰仿真链路）；脚手架产物的消费
+> 链路与 P5.2 catalog 加载、全部内建外设 e2e 走的是同一通用路径。
+> 自我迭代抓出并已修复两处：① 写入失败路径的错误消息草稿残缺（join 拼接半成品）——
+> 重写为逐文件 try/catch 带文件名的干净失败 + 部分文件清理；② 审查发现请求非对象时
+> normalize 会以裸 TypeError 崩溃——补 [BB-230] 边界守卫与测试。另有意识地规避：
+> CLI 旗标弃用 `--dir`（pnpm 会吞掉同名全局旗标）改用 `--into`；模板生成代码刻意
+> 不含反引号与 ${}（杜绝模板套模板的转义事故），占位符经 split/join 替换（无正则
+> 转义风险）。
+> 契约同步：PRD 新增 §F-EXT-4（命令形态/四文件生成物/自校验不变式/[BB-230]/[BB-231]
+> 错误码），§7 追加 PeripheralScaffold.ts 与 scaffold-cli.ts；docs/peripheral-sdk.md
+> 新增 §9（脚手架用法）并将测试约定顺移为 §10（生成包自带的 self-check.mjs 即其零依赖
+> 形态）；docs/architecture.md §11 追加 §11.1；根 package.json 新增
+> `create-peripheral` 脚本（pnpm --filter shell exec tsx）；§11.3 追加该命令。
+> 设计要点：生成器核心是纯函数 + 薄 fs 层（可测性）；名称规则复用目录的
+> PERIPHERAL_PACKAGE_NAME_RE（单一真相，不可能生成目录拒收的包）；零新 IPC、
+> 渲染进程零改动、零新运行时依赖（PRD §5 不变）、QEMU 设备零改动。
 
 ---
 
@@ -482,6 +523,7 @@ Previously applyNetlist leaked old instances on re-apply.
 | `pnpm typecheck` | 全仓类型检查 |
 | `pnpm test` | 全仓测试 |
 | `pnpm fetch-qemu` | 下载 QEMU 二进制 |
+| `pnpm create-peripheral <name>` | 生成外设包脚手架（PRD §F-EXT-4，P5.3） |
 | `node scripts/build-qemu-device.mjs [--target linux-docker\|windows-msys2]` | 构建 breadesp-dbus 设备版 QEMU |
 | `node scripts/make-blink-elf.mjs [--chip esp32\|esp32s3]` / `make-i2c-elf.mjs` / `make-uart-echo-elf.mjs` / `make-knob-elf.mjs` / `make-sht-elf.mjs` | 重新生成测试固件 |
 | `pnpm dev` | 启动 Electron + Vite dev |
@@ -906,7 +948,7 @@ Previously applyNetlist leaked old instances on re-apply.
 
 ### M5 清单
 - [x] 第三方包 `registerPeripheral()` 后 UI 自动出现新器件
-- [ ] 外设打包脚手架可生成可发布包
+- [x] 外设打包脚手架可生成可发布包
 - [ ] 文档站与教程上线
 
 ---
