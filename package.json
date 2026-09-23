@@ -10,7 +10,8 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "fetch-qemu": "node scripts/fetch-qemu.mjs"
+    "fetch-qemu": "node scripts/fetch-qemu.mjs",
+    "create-peripheral": "pnpm --filter @breadesp/shell exec tsx src/peripherals/scaffold-cli.ts"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

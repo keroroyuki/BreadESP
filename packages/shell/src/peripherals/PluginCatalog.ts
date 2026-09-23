@@ -28,8 +28,13 @@ export const PERIPHERAL_MANIFEST_FILE = 'breadesp-peripheral.json';
 /** Defensive manifest size cap: a manifest is a small JSON document. */
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 
-/** Package name: lowercase kebab, optionally @scoped (npm-style identity). */
-const NAME_RE = /^(?:@[a-z0-9]+(?:-[a-z0-9]+)*\/)?[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/**
+ * Package name: lowercase kebab, optionally @scoped (npm-style identity).
+ * Exported (P5.3, PRD §F-EXT-4): the package scaffold validates requested
+ * names against the same rule as the catalog manifest, so a scaffolded
+ * package can never drift into a name the catalog would reject.
+ */
+export const PERIPHERAL_PACKAGE_NAME_RE = /^(?:@[a-z0-9]+(?:-[a-z0-9]+)*\/)?[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** Factory kinds are lowercase kebab (the registry's KIND_RE, mirrored). */
 const KIND_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -124,7 +129,7 @@ export function validatePeripheralManifest(raw: unknown): { manifest: Peripheral
   const issues: string[] = [];
   if (!isPlainObject(raw)) return { manifest: null, issues: ['manifest must be a JSON object'] };
   if (raw.manifestVersion !== 1) issues.push(`manifestVersion must be 1 (got ${String(raw.manifestVersion)})`);
-  if (typeof raw.name !== 'string' || !NAME_RE.test(raw.name)) {
+  if (typeof raw.name !== 'string' || !PERIPHERAL_PACKAGE_NAME_RE.test(raw.name)) {
     issues.push(`name must be a lowercase kebab-case package name, optionally @scoped (got ${String(raw.name)})`);
   }
   if (!isSemver(raw.version)) issues.push(`version must be a semantic version (got ${String(raw.version)})`);
