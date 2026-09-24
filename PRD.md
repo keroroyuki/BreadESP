@@ -244,6 +244,7 @@ export type PinRole =
   | 'i2s-data-in'   // MCU→外设（喇叭）
   | 'i2s-data-out'  // 外设→MCU（麦克风）
   | 'adc-in'        // 模拟输入（外设→MCU）
+  | 'probe'         // 观测探针（P2.5 追加，§F-PER-8 示波器通道：只接收路由事务，不影响信号）
   | 'power'
   | 'gnd';
 
