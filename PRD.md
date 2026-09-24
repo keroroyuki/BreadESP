@@ -142,6 +142,28 @@
     加载时必撞 [BB-221]，脚手架提前拒绝）；目标目录已存在且非空 `[BB-231]`（脚手架永不
     覆盖既有文件；已存在的空目录允许写入）。写入中途失败时清理已创建的部分文件。
 
+### 3.9 文档与教程（F-DOC）
+- F-DOC-1 MUST 提供离线文档站：仓库内 Markdown 源（`README.md`/`PRD.md`/`CHANGELOG.md`/
+  `docs/*.md`/`docs/tutorials/*.md`）经 `pnpm docs:build` 构建为静态 HTML，输出到
+  `docs/site/`（gitignored）；产物零外部资源（无 CDN 字体/脚本/样式、零 JavaScript），
+  断网可用。
+- F-DOC-2 MUST 提供分步教程（`docs/tutorials/`，文件名序即教程顺序，front-matter 携带
+  `title`/`description`）：上手安装与首跑、首个工程（blink LED）、调试工作流、内建外设
+  参考、外设创作（SDK + 本地目录 + 脚手架）、DAP/VS Code 接入。
+- F-DOC-3 MUST 构建期校验站内链接完整性：相对链接的目标页必须在站点清单内并被重写为
+  产物相对路径，`#anchor` 必须命中目标页标题锚点（GitHub 兼容 slug：小写、去除标点、
+  空格转连字符、重名追加 `-N` 序号）；全部断链/坏锚一次列全并以 `[BB-241]` 使构建失败。
+  外部 `http(s):` 链接原样保留且不联网校验。
+- F-DOC-4 MUST 零新增运行时依赖（Node 内置模块 + 仓库既有 devDependency）；构建 MUST
+  可复现：同一输入产生逐字节相同的输出（不嵌入时间戳、随机 id 或宿主绝对路径）。
+- F-DOC-5 SHOULD 提供本地预览：`pnpm docs:serve` 重新构建并静态伺服产物（回环绑定、
+  路径穿越拒绝、正确 MIME、响应 `no-store`）。
+- F-DOC-6 文档站内容 MUST 与 §6/§7 契约一致；代码示例 MUST 可粘贴运行（dev-plan §8.3）。
+  文档站为纯工具链：零 IPC 改动、零渲染进程改动、零 QEMU 设备改动。
+- 错误码（`packages/docs-site`）：`[BB-240]` CLI 用法错误；`[BB-241]` 站点内容校验失败
+  （断链/坏锚/缺源文件/front-matter 畸形/路由冲突，一次列全）；`[BB-242]` 读写失败
+  （含输出目录安全门：非空且无构建标记的目录拒绝清理）。
+
 ---
 
 ## 4. 系统架构（§4）
@@ -408,7 +430,16 @@ my-idea/
 ├── docs/
 │   ├── architecture.md
 │   ├── dap.md                  # DAP 适配器使用指南（§F-DBG-6）
-│   └── peripheral-sdk.md
+│   ├── peripheral-sdk.md
+│   ├── dev-plan.md
+│   ├── site/                   # 文档站构建产物（§F-DOC-1, P5.4；gitignored，pnpm docs:build 生成）
+│   └── tutorials/              # 分步教程（§F-DOC-2, P5.4；文件名序即顺序）
+│       ├── 01-getting-started.md
+│       ├── 02-first-project.md
+│       ├── 03-debugging.md
+│       ├── 04-peripherals.md
+│       ├── 05-authoring-peripherals.md
+│       └── 06-vscode-dap.md
 └── packages/
     ├── shell/                  # Electron 主进程 / Bridge
     │   ├── package.json
@@ -488,19 +519,34 @@ my-idea/
     │       ├── schema.ts      # zod schema
     │       ├── validate.ts
     │       └── index.ts
-    └── sim-core/             # QEMU 二进制占位 + 启动参数构造
+    ├── sim-core/             # QEMU 二进制占位 + 启动参数构造
+    │   ├── package.json
+    │   ├── tsconfig.json
+    │   ├── bin/               # gitignored，QEMU 二进制（含 qemu-breadesp/ 设备版）
+    │   ├── build/             # gitignored，QEMU 设备构建工作区（源码 checkout）
+    │   ├── device/
+    │   │   └── breadesp_dbus.c  # breadesp-dbus QEMU 自定义设备（§4.2, §6.7）
+    │   ├── fixtures/
+    │   │   ├── blink.elf        # 金样固件（make-blink-elf.mjs 生成）
+    │   │   └── i2c.elf          # GPIO+I2C 事务固件（make-i2c-elf.mjs 生成）
+    │   ├── src/
+    │   │   ├── args.ts        # 构造 QEMU 命令行（含 dbus 通道参数）
+    │   │   ├── elf.ts         # ELF 解析（入口/符号）
+    │   │   └── index.ts
+    │   └── tests/
+    └── docs-site/             # 离线文档站构建器（§F-DOC, P5.4；零运行时依赖静态生成）
         ├── package.json
         ├── tsconfig.json
-        ├── bin/               # gitignored，QEMU 二进制（含 qemu-breadesp/ 设备版）
-        ├── build/             # gitignored，QEMU 设备构建工作区（源码 checkout）
-        ├── device/
-        │   └── breadesp_dbus.c  # breadesp-dbus QEMU 自定义设备（§4.2, §6.7）
-        ├── fixtures/
-        │   ├── blink.elf        # 金样固件（make-blink-elf.mjs 生成）
-        │   └── i2c.elf          # GPIO+I2C 事务固件（make-i2c-elf.mjs 生成）
+        ├── tsconfig.tests.json
         ├── src/
-        │   ├── args.ts        # 构造 QEMU 命令行（含 dbus 通道参数）
-        │   ├── elf.ts         # ELF 解析（入口/符号）
+        │   ├── types.ts       # §F-DOC 全部对外类型（PageSource/DocsSite/BuildReport 等）
+        │   ├── markdown.ts    # 受限 Markdown 方言 → HTML（GitHub 兼容标题锚点 slug）
+        │   ├── site.ts        # 站点清单：页面源发现、front-matter、导航模型
+        │   ├── links.ts       # 站内链接完整性校验与产物路径重写（[BB-241]）
+        │   ├── theme.ts       # HTML 模板 + 内联 CSS（零外部资源、零 JS）
+        │   ├── build.ts       # 静态构建编排（确定性输出 + 输出目录安全门）
+        │   ├── serve.ts       # 本地预览静态服务器（§F-DOC-5）
+        │   ├── cli.ts         # docs:build / docs:check / docs:serve CLI 入口
         │   └── index.ts
         └── tests/
 ```
