@@ -57,7 +57,7 @@
 - **M2**（进行中，任务 2.1–2.3 已完成）：TFT 渲染彩图，蜂鸣器发声，喇叭播放正弦波。
 - **M3**（已达成 2026-09-11，任务 3.1–3.4 完成）：麦克风波形注入后固件能读到采样值；旋钮正交序列与 SHT30 读回复经真实 QEMU e2e 验证。
 - **M4**（进行中，任务 4.1–4.5 已完成）：切换芯片型号后同一工程可在 ESP32/S3 跑通（S3 已真实 QEMU 验证；C3/C6 的 machine/仿真器映射与门控就绪，等待 riscv32 版 QEMU 二进制接入后做真实启动验证）；新建工程向导支持选芯片/选模板；PlatformIO/IDF 工程目录可关联并自动发现 build/*.elf 导入为 firmware.elf；条件断点/watchpoint 已接入调试面板（GDB/MI 线格式经扩展 mock 冻结，真实 GDB e2e 维持 BREADESP_GDB_BIN 门控）；DAP 适配器上线（stdio/TCP 双模式，launch/attach，真实 QEMU + esp-gdb 17.1 e2e 通过，见 docs/dap.md）。
-- **M5**（进行中，任务 5.1/5.2/5.3 已完成）：第三方包 `registerPeripheral()` 后 UI 自动出现新器件（palette 注册表驱动 + 画布通用节点体，经单测冻结；SDK 注册校验 [BB-220/221/222] 与 sdkVersion 门控落地）；本地外设目录（`~/.breadesp/peripherals/`）扫描成目录面板——投包即见、显式加载进 Bridge 注册表、渲染进程元数据镜像后 palette 自动可拖，经 51 项新增测试与真实 IPC 集成链路冻结（PRD §F-EXT-3）；打包脚手架 `pnpm create-peripheral` 生成四文件可发布包（清单/宿主 API 入口/README/零依赖 self-check），经 24 项新增测试、真实 CLI 运行与纯 Node 冒烟冻结（PRD §F-EXT-4）。
+- **M5**（已达成 2026-09-24，任务 5.1–5.4 完成）：第三方包 `registerPeripheral()` 后 UI 自动出现新器件（palette 注册表驱动 + 画布通用节点体，经单测冻结；SDK 注册校验 [BB-220/221/222] 与 sdkVersion 门控落地）；本地外设目录（`~/.breadesp/peripherals/`）扫描成目录面板——投包即见、显式加载进 Bridge 注册表、渲染进程元数据镜像后 palette 自动可拖，经 51 项新增测试与真实 IPC 集成链路冻结（PRD §F-EXT-3）；打包脚手架 `pnpm create-peripheral` 生成四文件可发布包（清单/宿主 API 入口/README/零依赖 self-check），经 24 项新增测试、真实 CLI 运行与纯 Node 冒烟冻结（PRD §F-EXT-4）；离线文档站 `pnpm docs:build|docs:check|docs:serve` 落地（手写受限 Markdown 渲染 + 站内链接完整性 [BB-241] 门控 + 字节级可复现构建 + 回环预览服务器），6 篇教程（上手/首工程/调试/外设参考/外设创作/VS Code DAP）经 81 项新增测试与真实构建/服务验证冻结（PRD §F-DOC）。
 
 ---
 
@@ -134,7 +134,7 @@
 | 5.1 | 外设插件 SDK 稳定化 + 版本化 | 第三方可扩展 | 已完成 2026-09-19 |
 | 5.2 | 本地外设目录扫描 | 离线市场 | 已完成 2026-09-20 |
 | 5.3 | 外设打包模板（脚手架） | 降低门槛 | 已完成 2026-09-21 |
-| 5.4 | 文档站 + 教程 | 可用性 | 未开始 |
+| 5.4 | 文档站 + 教程 | 可用性 | 已完成 2026-09-24 |
 
 > P5.1 验证记录（2026-09-19）：`pnpm typecheck` 0 错误；全仓测试 Windows 613 通过
 > + 14 跳过（门控 e2e，同 P4.5 基线；较 P4.5 净增 32 项）；`pnpm --filter
@@ -268,6 +268,61 @@
 > 设计要点：生成器核心是纯函数 + 薄 fs 层（可测性）；名称规则复用目录的
 > PERIPHERAL_PACKAGE_NAME_RE（单一真相，不可能生成目录拒收的包）；零新 IPC、
 > 渲染进程零改动、零新运行时依赖（PRD §5 不变）、QEMU 设备零改动。
+
+> P5.4 验证记录（2026-09-24）：`pnpm typecheck` 0 错误；全仓测试 Windows 769 通过
+> + 14 跳过（门控 e2e，同 P5.3 基线；较 P5.3 净增 81 项，全部属于新包
+> @breadesp/docs-site）；`pnpm build`（shell tsc + ui tsc/vite）成功。分五层验证——
+> 渲染层 35 项单测（`packages/docs-site/tests/markdown.test.ts`：ATX 1–6 级标题与
+> 闭合 # 剥离、GitHub 兼容 slugger（CJK 保留、标点剔除、重名 -N 序号——以 dev-plan
+> TOC 与 PRD 交叉链接的真实锚点做断言）、setext 下划线标题、段落软换行合并、原生
+> HTML 一律转义（文档站零 JS 不通透）、行内代码 verbatim 与多反引号、粗/斜/粗斜体
+> 且下划线不斜体（breadesp_dbus 类标识符保护）、链接/图片记录与渲染、stash 占位符
+> 嵌套还原（链接文本里的行内代码）、围栏代码语言类与未闭合到 EOF、表格对齐冒号/
+> `\|` 转义（含代码跨度内）/列数不齐降级为段落/缺单元格补齐与多余丢弃、紧/松列表
+> （<p> 包裹差）、缩进嵌套、懒续行、任务列表 checkbox、引用块递归与表格不被懒
+> 吸收）；站点模型层 11 项（site.test.ts：教程按文件名序发现、固定 guides/reference
+> 清单路由唯一、front-matter 解析（引号值/CRLF/未知键与畸形行与不闭合全部列 issue）、
+> 标题优先级 front matter > 清单 navTitle > 首个 H1、缺源文件列 issue 不抛、siteNav
+> 分组与空节剔除）；链接层 11 项（links.test.ts：relativeRoute 同目录/子目录/父目录/
+> 跨节数学、normalizePosix、相对页链接重写为产物相对路径、锚点保留并校验目标页
+> （坏锚点名页面与行号）、页内锚校验、外链原样放行不联网、仓根逃逸与站绝对路径
+> 拒绝、存在但非站点的 md 拒绝、不存在目标 broken link、资产注册与重写、单趟收集
+> 全部违规）；构建层 10 项（build.test.ts，真实临时目录夹具仓：全页 + index + 资产
+> 拷贝、跨页/锚点/图片重写断言、nav 当前页高亮与 h2/h3 TOC、front-matter 标题进
+> <title> 与侧边导航、index 分区卡片与描述、**F-DOC-4 双构建逐字节相等**、
+> [BB-242] 输出目录安全门（无标记非空目录拒绝清理且既有文件零改动、重建清理陈旧
+> 文件）、[BB-241] 一次列全且落盘前失败、缺源/空教程节列报、checkSite 零写入）；
+> **真实仓构建验收**（同文件）——breadespSite(仓根) 经 checkSite 零违规（13 页 =
+> 6 教程 + 3 指南 + 4 参考），真实构建断言页面集精确、README 的 ./docs/dev-plan.md
+> 重写为 ../reference/dev-plan.html、dev-plan TOC 自锚（#12-验收检查清单 等）与标题
+> id 逐一相等、教程互链与架构页链接重写、源中的 <script> 不穿透；CLI 层 9 项
+> （cli.test.ts：三子命令解析与缺省、9 种用法错误 [BB-240]、--help 出 stdout 退 0、
+> 用法错误出 stderr 退 2、真实构建到默认 docs/site 与 --out 覆盖、check 好仓退 0
+> 坏仓退 2 且零写入、serve 真实起服后经 HTTP 拉取页面并以 AbortSignal 停止退 0）；
+> 服务层 5 项（serve.test.ts，真实回环 socket：index/嵌套页/CSS 的 MIME 与
+> no-store、目录与 / 映射、裸/反斜杠/URL 编码三种路径穿越 403、404、HEAD 无体带
+> Content-Length、POST 405）。
+> 真实端到端验证：`pnpm docs:build` 真实执行成功（13 页 + index、46 条站内链接
+> 全过）；双目录构建 15 个文件逐字节一致（F-DOC-4）；`pnpm docs:serve` 真实起服
+> （127.0.0.1:4173）并经 HTTP 验证 /、教程页、PRD 参考页 200 与 MIME/no-store、
+> 不存在页 404、编码路径穿越 403。真实 QEMU e2e 不适用（本任务不触碰仿真链路）。
+> 自我迭代抓出并已修复三处实现缺陷：① setext 下划线被段落累积吞掉（"Title\n==="
+> 渲染成含 === 的标题文本）——段落累积遇下划线候选即停；② 紧凑列表项首段解包多拼
+> 一个换行（`outer\n\n<ul>`）——rest 已自带连接换行，直接拼接；③ 链接解析顺序——
+> 不存在的 .md 目标先撞"不在站点清单"而非"断链"，存在性检查提前（同类断言修正：
+> CLI 测试的构建文件数漏算标记文件）。另抓出一处**既有契约漂移**并修复：PRD §6.1
+> PinRole 缺 'probe' 成员（P2.5 代码 types.ts 与 architecture.md §3.6 已落地、PRD
+> 未同步）——随本任务以单独的 docs(prd) 提交补录（追加式、向后兼容）。环境备注：
+> 会话中 pnpm 独立 shim 损坏（global 下 @pnpm/exe 缺失），全程改经 corepack pnpm
+> 驱动并以会话级 PATH shim 兜住嵌套调用，产物与流程不受影响。
+> 契约同步：PRD 新增 §3.9 F-DOC（F-DOC-1..6 + [BB-240]/[BB-241]/[BB-242]）与 §7
+> 目录（docs/site/、docs/tutorials/、packages/docs-site/）；README 文档段（docs:*
+> 三命令 + dap.md 入列）与包结构表（docs-site 行）同步；§11.3 追加 docs:* 三命令。
+> 设计要点：Markdown 渲染器为手写受限方言（零新运行时依赖——tsx/vitest/@types/node
+> 均为仓库既有 devDependency，PRD §5 不变）；双趟渲染（首趟收集标题锚点，次趟注入
+> 链接解析器重写 href）；输出目录以 .breadesp-docs-site 标记文件做清理安全门；
+> 站点 chrome 英文、正文随源（PRD §10.7）；零新 IPC、渲染进程零改动、QEMU 设备
+> 零改动。
 
 ---
 
@@ -524,6 +579,9 @@ Previously applyNetlist leaked old instances on re-apply.
 | `pnpm test` | 全仓测试 |
 | `pnpm fetch-qemu` | 下载 QEMU 二进制 |
 | `pnpm create-peripheral <name>` | 生成外设包脚手架（PRD §F-EXT-4，P5.3） |
+| `pnpm docs:build` | 构建离线文档站到 `docs/site/`（PRD §F-DOC-1，P5.4） |
+| `pnpm docs:check` | 校验文档源与站内链接，零写入（PRD §F-DOC-3，P5.4） |
+| `pnpm docs:serve` | 重建并本地预览文档站（PRD §F-DOC-5，P5.4） |
 | `node scripts/build-qemu-device.mjs [--target linux-docker\|windows-msys2]` | 构建 breadesp-dbus 设备版 QEMU |
 | `node scripts/make-blink-elf.mjs [--chip esp32\|esp32s3]` / `make-i2c-elf.mjs` / `make-uart-echo-elf.mjs` / `make-knob-elf.mjs` / `make-sht-elf.mjs` | 重新生成测试固件 |
 | `pnpm dev` | 启动 Electron + Vite dev |
@@ -949,7 +1007,7 @@ Previously applyNetlist leaked old instances on re-apply.
 ### M5 清单
 - [x] 第三方包 `registerPeripheral()` 后 UI 自动出现新器件
 - [x] 外设打包脚手架可生成可发布包
-- [ ] 文档站与教程上线
+- [x] 文档站与教程上线（`pnpm docs:build` / `docs:serve`，6 篇教程，链接完整性门控）
 
 ---
 
