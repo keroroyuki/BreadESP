@@ -13,3 +13,6 @@ packages/sim-core/build/
 
 # Logs (PRD §9)
 *.breadesp/logs/
+
+# Docs site build output (PRD §F-DOC-1; rebuild with pnpm docs:build)
+docs/site/

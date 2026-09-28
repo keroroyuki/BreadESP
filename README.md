@@ -13,10 +13,20 @@ pnpm dev               # 启动 Electron 开发壳
 
 ## 文档
 
+离线文档站（PRD §F-DOC）：
+
+```bash
+pnpm docs:build   # 构建静态文档站到 docs/site/（零外部资源，断网可用）
+pnpm docs:serve   # 构建并本地预览 http://127.0.0.1:4173/
+pnpm docs:check   # 只校验：站内链接/锚点完整性（断链即失败）
+```
+
+- [docs/tutorials/01-getting-started.md](./docs/tutorials/01-getting-started.md) — 教程起点（安装与首跑，共 6 篇）
 - [PRD.md](./PRD.md) — 唯一真相源，AI 生成代码前必读
 - [docs/dev-plan.md](./docs/dev-plan.md) — 开发计划、里程碑、代码风格、提交规范
 - [docs/architecture.md](./docs/architecture.md) — 架构详解
 - [docs/peripheral-sdk.md](./docs/peripheral-sdk.md) — 外设 SDK 开发指南
+- [docs/dap.md](./docs/dap.md) — DAP 适配器（VS Code 调试）指南
 - [CHANGELOG.md](./CHANGELOG.md) — 变更记录
 
 ## 包结构
@@ -28,6 +38,7 @@ pnpm dev               # 启动 Electron 开发壳
 | `packages/peripherals` | 外设设备模型（运行于 Bridge） |
 | `packages/netlist` | 网表 schema 与校验 |
 | `packages/sim-core` | QEMU 二进制占位与启动参数构造 |
+| `packages/docs-site` | 离线文档站构建器（教程/指南/参考 → 静态 HTML，零运行时依赖） |
 
 ## AI Agent 约定（PRD §10）
 

@@ -11,7 +11,10 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "fetch-qemu": "node scripts/fetch-qemu.mjs",
-    "create-peripheral": "pnpm --filter @breadesp/shell exec tsx src/peripherals/scaffold-cli.ts"
+    "create-peripheral": "pnpm --filter @breadesp/shell exec tsx src/peripherals/scaffold-cli.ts",
+    "docs:build": "pnpm --filter @breadesp/docs-site exec tsx src/cli.ts build",
+    "docs:check": "pnpm --filter @breadesp/docs-site exec tsx src/cli.ts check",
+    "docs:serve": "pnpm --filter @breadesp/docs-site exec tsx src/cli.ts serve"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
