@@ -9,7 +9,6 @@
 import { EventEmitter } from 'node:events';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, normalize } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { ChipKind } from '@breadesp/netlist';
 import type { QemuArgsInput } from '@breadesp/sim-core';
 import { QemuRunner } from '../../qemu/QemuRunner.js';
@@ -385,7 +384,7 @@ export class QemuGdbBackend extends EventEmitter implements DapBackend {
  * Walk up from this module to find the fetch-qemu manifest (repo-local QEMU).
  */
 export function resolveQemuBinFromManifest(): string | null {
-  let dir = dirname(fileURLToPath(import.meta.url));
+  let dir = dirname(__filename);
   for (let depth = 0; depth < 8; depth++) {
     const manifestPath = join(dir, 'packages', 'sim-core', 'bin', 'qemu.json');
     if (existsSync(manifestPath)) {

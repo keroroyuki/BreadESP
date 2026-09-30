@@ -6,7 +6,6 @@
 // prints the next steps. The flag is `--into`, not `--dir`: pnpm swallows its
 // own global `--dir` option before the script ever sees it.
 import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { listPeripherals, registerBuiltins } from '@breadesp/peripherals';
 import {
   normalizeScaffoldRequest,
@@ -123,7 +122,7 @@ export async function runScaffoldCli(argv: string[], io: ScaffoldCliIO): Promise
 // Entry guard: run only when executed directly (tests import the functions
 // above without side effects).
 const invokedDirectly =
-  process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+  process.argv[1] !== undefined && __filename === resolve(process.argv[1]);
 if (invokedDirectly) {
   void runScaffoldCli(process.argv.slice(2), {
     out: (line) => console.log(line),

@@ -2,10 +2,9 @@
   "name": "@breadesp/shell",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "main": "./dist/main.js",
   "scripts": {
-    "dev": "tsx watch src/main.ts",
+    "dev": "electron .",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit",
     "test": "vitest run"
@@ -14,8 +13,7 @@
     "@breadesp/netlist": "workspace:*",
     "@breadesp/peripherals": "workspace:*",
     "@breadesp/sim-core": "workspace:*",
-    "electron": "^28.0.0",
-    "nanoid": "^5.0.0"
+    "electron": "^28.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
