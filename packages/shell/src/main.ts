@@ -20,8 +20,6 @@ async function bootstrap() {
   // Local peripheral catalog (P5.2, PRD §F-EXT-3): the offline marketplace.
   const catalog = new PluginCatalog();
 
-  await registerIpcHandlers({ project, qemu, gdb, peripherals, catalog });
-
   await app.whenReady();
   const win = new BrowserWindow({
     width: 1280, height: 800,
@@ -31,6 +29,12 @@ async function bootstrap() {
       nodeIntegration: false,
     },
   });
+
+  // Handlers must be registered before the renderer starts invoking, and the
+  // window must exist before them: every Bridge -> UI push (sim:status/uart,
+  // per:snapshot, dbg:*) forwards through deps.win.webContents.send — without
+  // it the pushes are silently dropped and the UI never hears the sim.
+  await registerIpcHandlers({ project, qemu, gdb, peripherals, catalog, win });
 
   // Dev: load Vite dev server; Prod: load built index.html.
   if (process.env.VITE_DEV_SERVER_URL) {
