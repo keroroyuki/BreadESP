@@ -601,7 +601,7 @@ Previously applyNetlist leaked old instances on re-apply.
 
 > 验证记录（2026-08-31 复验）：`pnpm typecheck` 0 错误；全仓测试 73 通过 + 1 跳过，含真实 QEMU UART e2e（`qemu-uart.e2e.test.ts`）通过；GDB 断点 e2e 需设 `BREADESP_GDB_BIN`，已于 2026-08-29 对真实 QEMU + `xtensa-esp32-elf-gdb` 验证通过（见 CHANGELOG）；入库二进制仅 `fixtures/blink.elf`（§5.4 允许的 ELF fixture），无 `*.bin` 入库。
 
-### M1 清单（进行中，任务 1.1–1.10 已完成：IPC 对齐、breadesp-dbus 设备与独立 QEMU 构建、DBusChannel 帧协议、NetlistResolver I2C/GPIO 路由、PeripheralManager 路由健壮性 + 30fps 快照节流、SSD1306 命令集补全、面包板画布拖拽放置 + pin 连线编辑（网表/布局严格分离：移动节点只改 layout、连线只改 netlist，序列化各自独立且 netlist 始终过 validateNetlist）、工程保存/加载（`.breadesp` 目录四件套 firmware.elf/netlist.json/layout.json/meta.json，new/open/save/saveAs/close 全生命周期，关闭重开往返结构相等）、调试面板（断点增删清列 + 单步进入/跨过/继续 + 局部变量/寄存器/全局观察，dbg:connect 惰性附着 + dbg:stopped/running/exit 推送，blink.elf 携带 DWARF4）、串口控制台双向（sim:sendUart 注入链路 + uart-echo.elf 金标固件，UART0 RX/TX 端到端回显）；dbus 与路由 e2e 已在真实 QEMU 上验证——OLED 事务落到 oled1，持续 1ms 事务流被压到 ≤30fps，Adafruit_GFX begin()+display() 帧路径显存更新正确）
+### M1 清单（进行中，任务 1.1–1.10 已完成：IPC 对齐、breadesp-dbus 设备与独立 QEMU 构建、DBusChannel 帧协议、NetlistResolver I2C/GPIO 路由、PeripheralManager 路由健壮性 + 30fps 快照节流、SSD1306 命令集补全、面包板画布拖拽放置 + pin 连线编辑（网表/布局严格分离：移动节点只改 layout、连线只改 netlist，序列化各自独立且 netlist 始终过 validateNetlist）、工程保存/加载（`.breadesp` 目录四件套 firmware.elf/netlist.json/layout.json/meta.json，new/open/save/saveAs/close 全生命周期，关闭重开往返结构相等）、调试面板（断点增删清列 + 单步进入/跨过/继续 + 局部变量/寄存器/全局观察，dbg:connect 惰性附着 + dbg:stopped/running/exit 推送，blink.elf 携带 DWARF4）、串口控制台双向（sim:sendUart 注入链路 + uart-echo.elf 金标固件，UART0 RX/TX 端到端回显）；dbus 与路由 e2e 已在真实 QEMU 上验证——OLED 事务落到 oled1，持续 1ms 事务流被压到 ≤30fps，Adafruit_GFX begin()+display() 帧路径显存更新正确、撤销/重做（F-BB-5：projectStore past/future 双栈 UNDO_LIMIT=20、六类画布编辑入栈、拖拽逐帧同实例合并为一步、load/reset 清栈，BreadboardCanvas Ctrl+Z/Ctrl+Y/Ctrl+Shift+Z 快捷键 + 文本输入焦点保护，8 例契约测试））
 - [ ] UI 可拖拽 LED/按键/OLED 到画布
 - [x] 可连线到 GPIO 并保存工程
 - [ ] LED 随 GPIO2 电平亮灭（blink）
@@ -610,7 +610,7 @@ Previously applyNetlist leaked old instances on re-apply.
 - [x] 可设断点、单步、看全局变量
 - [x] 串口可输出可注入
 - [x] 关闭重开工程恢复原样
-- [ ] peripherals 单元测试通过
+- [x] peripherals 单元测试通过
 
 > P1.8 验证记录（2026-08-31）：`pnpm typecheck` 0 错误；全仓测试 173 通过 + 3 跳过（Windows 门控）。
 > "关闭重开恢复原样"分三层验证——ProjectManager 单测（真实临时目录 save→close→reopen 结构相等，
@@ -639,6 +639,26 @@ Previously applyNetlist leaked old instances on re-apply.
 > `scripts/make-uart-echo-elf.mjs` 确定性生成（xtensa-elf.mjs 新增 l32i 编码），`--check` 模式
 > 可校验入库 fixture 无漂移。已知平台差异：Windows stdio 后端（char-win-stdio.c）丢弃 `\r` 字节，故 UI 与
 > 测试统一以 `\n` 结尾注入行。
+
+> 验收修复验证记录（2026-09-30）：`pnpm typecheck` 0 错误；全仓测试 776 通过 + 14 门控跳过
+> （ui 182 含 F-BB-5 新增 8 例）；`pnpm -r build` 六包全绿；`pnpm docs:check` 通过。本次修复三项
+> 实锤问题：① Electron 启动链从未跑通——lib 三包（netlist/peripherals/sim-core）与 shell 全部
+> 改为 tsc 产 CommonJS dist（源码相对导入无扩展名，ESM 产物在 Node 运行时不可解析；CJS 顺带
+> 恢复 `__dirname` 与沙箱 preload 的 CJS 要求），包 main 指 dist、types 留 src，shell/ui 的
+> vitest/vite resolve.alias 把 `@breadesp/*` 钉回源码（测试测源码、无 stale dist），移除零使用的
+> ESM-only 幽灵依赖 nanoid，`import.meta` 两处转 `__filename`；② `pnpm dev` 不可用——
+> `tsx watch src/main.ts` 用纯 Node 跑 electron 模块必炸且无 vite 环节，root dev 改指零依赖
+> `scripts/dev.mjs`（起 vite :5173 → 轮询端口 → spawn electron . 注入 VITE_DEV_SERVER_URL，
+> 任一退出双向回收）；③ F-BB-5 撤销/重做全仓无实现——projectStore past/future 双栈
+> UNDO_LIMIT=20、六类画布编辑入栈、拖拽逐帧同实例合并、load/reset 清栈，BreadboardCanvas
+> Ctrl+Z/Ctrl+Y/Ctrl+Shift+Z + 文本输入焦点保护。冒烟实测：`electron .` 启动主进程窗口正常，
+> PrintWindow 截图确认四区域布局完整渲染（顶栏工程/仿真工具条、左 Palette+Marketplace 列表
+> 经 per:catalogScan IPC 返回、中画布 ESP32 MCU 引脚阵列、底部串口/Screen/示波器/WaveGen
+> 四面板、右调试面板），IPC 主↔渲染链路全通——桌面应用首次真实启动成功。
+> Windows 本机无法完成的三项 M1 交互验收（LED 亮灭/OLED 渲染/按键注入）：依赖
+> breadesp-dbus 设备链路，其 QEMU 构建目标为 linux-docker（win32 被门控拒绝），本机 mingw
+> QEMU 无该设备——三项需在 WSL/Linux 对设备版 QEMU 复跑（对应 e2e 已在 WSL 验证过固件侧
+> 行为：netlist-routing/spi-st7789/pwm-buzzer 等 11 项门控文件）。
 
 > P2.1 验证记录（2026-08-31）：`pnpm typecheck` 0 错误；全仓测试 218 通过 + 5 跳过（Windows 门控，
 > 新增 spi e2e 跳过项）。分三层验证——st7789 模型 13 项单测（init→全帧渲染、DC 电平整帧适用、半像素跨帧、
@@ -999,10 +1019,17 @@ Previously applyNetlist leaked old instances on re-apply.
 - [x] 波形生成器可选正弦/方波/噪声
 
 ### M4 清单
-- [ ] 同一工程可在 ESP32 与 ESP32-S3 跑通
+- [x] 同一工程可在 ESP32 与 ESP32-S3 跑通
 - [x] PlatformIO 工程 `build/*.elf` 自动被发现
 - [x] 条件断点/watchpoint 可用
 - [x] DAP 接入 VS Code 可调试
+
+> M4 验证记录（2026-09-30）：「同一工程可在 ESP32 与 ESP32-S3 跑通」勾选依据为
+> P4.1 真实 QEMU e2e（s3-machine.e2e.test.ts，`BREADESP_QEMU_BIN` 门控）3 项——
+> blink.elf 经同一 QemuRunner 路径在 `-machine esp32` 打印 `Hello ESP32\r\n`、
+> s3-blink.elf 在 `-machine esp32s3` 打印 `Hello ESP32-S3\r\n`、错误族组合
+> （Xtensa 二进制跑 esp32c3 machine）QEMU 立即退出且 status='error' 有第 3 例冻结
+> （详见 P4.1 验证记录，2026-09-12）。
 
 ### M5 清单
 - [x] 第三方包 `registerPeripheral()` 后 UI 自动出现新器件

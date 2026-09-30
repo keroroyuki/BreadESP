@@ -422,6 +422,7 @@ my-idea/
 ├── tsconfig.base.json
 ├── .gitignore
 ├── scripts/
+│   ├── dev.mjs                 # 开发编排：vite dev server + Electron 主进程（pnpm dev）
 │   ├── fetch-qemu.mjs          # 按需下载 QEMU-ESP32 二进制
 │   ├── build-qemu-device.mjs   # 构建 breadesp-dbus 设备版 QEMU（Docker Linux / MSYS2）
 │   ├── make-blink-elf.mjs      # 生成 blink.elf 金样固件

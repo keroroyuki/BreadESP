@@ -4,6 +4,7 @@
 > [`docs/dev-plan.md`](./dev-plan.md)（开发计划）使用。
 > 面向 AI Agent 编写：结构编号化、路径精确化、每个待办测试项有稳定 ID 与验收标准。
 > 生成基线：commit `06c604c`（P5.4 完成），全仓 783 个 `it()` 用例，Windows 全量绿（769 通过 + 14 门控跳过）。
+> 2026-09-30 更新：F-BB-5 撤销/重做入账（ui +8），实测全仓 790 个 `it()` 用例，Windows 全量绿（776 通过 + 14 门控跳过）。
 
 ---
 
@@ -38,19 +39,19 @@ scripts/ (fetch-qemu / build-qemu-device / 10 个 make-*-elf 固件生成器)
 | 包 | src 文件 | 测试文件 | 用例数 | 测试类型构成 |
 |---|---|---|---|---|
 | `packages/shell` | 20 (~3990 行） | 34 vitest + 2 冒烟 + 2 helpers | **317** | 13 单元（271) + 5 集成（26) + 16 e2e(20，全部门控） |
-| `packages/ui` | 46 (.ts+.tsx) | 18 | **175** | 全部单元（纯逻辑/store/渲染器绑定），.tsx 组件零测试（dev-plan §7.2 策略） |
+| `packages/ui` | 46 (.ts+.tsx) | 18 | **182** | 全部单元（纯逻辑/store/渲染器绑定，含 F-BB-5 撤销重做契约 8 例），.tsx 组件零测试（dev-plan §7.2 策略） |
 | `packages/peripherals` | 13 | 10 | **163** | 全部单元（模型 + 注册表） |
 | `packages/docs-site` | 9 | 6 + helpers | **81** | 单元为主 + 真实 HTTP（serve) + 真实仓构建 |
 | `packages/sim-core` | 3 (+2235 行 C) | 3 | **28** | 单元 + 金样固件不变量 |
 | `packages/netlist` | 5 | 2 | **19** | 单元 |
-| `scripts/` | 13 个 .mjs | 0 | **0** | **无任何自动化测试** |
+| `scripts/` | 14 个 .mjs | 0 | **0** | **无任何自动化测试**（`dev.mjs` 为开发编排脚本，纯 spawn/端口轮询） |
 
 ### 1.3 最近基线运行（本次分析实测）
 
 ```
 corepack pnpm -r test   → exit 0
-shell: 303 passed + 14 skipped (13 门控文件)   ui: 175 passed   sim-core: 28 passed
-docs-site / netlist / peripherals: 全绿         总计 ≈769 passed + 14 skipped
+shell: 303 passed + 14 skipped (13 门控文件)   ui: 182 passed   sim-core: 28 passed
+docs-site / netlist / peripherals: 全绿         总计 ≈776 passed + 14 skipped
 ```
 
 - 本机已具备 `BREADESP_QEMU_BIN`（qemu-uart×2、s3-machine×3、gdb-breakpoint×1 真实执行）。
@@ -181,10 +182,10 @@ docs-site / netlist / peripherals: 全绿         总计 ≈769 passed + 14 skip
 - G11: `ProjectManager` 写盘非原子（无 tmp+rename），中途崩溃可留半文件，无测试钉住该行为（设计决策待 PRD 澄清）。
 - G12: 已知 flake——`DapServer.integration.test.ts` launch-flow 计时敏感（dev-plan P5.2 记录，曾单条瞬态失败，复测绿）；`sim-speed.e2e` 的 0.25x 占空比带在负载高的机器上有余量风险。
 
-### 3.5 packages/ui（175 用例，纯逻辑全覆盖，组件层按策略裸奔）
+### 3.5 packages/ui（182 用例，纯逻辑全覆盖，组件层按策略裸奔）
 
 **现有覆盖**（18 文件全单元）：
-- store 5 件：projectStore(21，网表/布局分离不变式+外部固件态)、debuggerStore(15，状态机+P4.4)、marketplaceStore(8)、captureStore(6)、simulationStore(3)。
+- store 5 件：projectStore(29，网表/布局分离不变式+外部固件态+F-BB-5 撤销/重做契约：≥20 步保留、混合编辑全链撤销、redo/新编辑清 future、拖拽逐帧合并、无效操作不入栈、空栈 no-op、load/reset 清栈)、debuggerStore(15，状态机+P4.4)、marketplaceStore(8)、captureStore(6)、simulationStore(3)。
 - 纯逻辑 6 件：wizardDraft(6)、externalDraft(11)、marketplaceDraft(7)、sensorDraft(7)、wavegenDraft(13)、paletteEntries(4)。
 - 渲染/几何 3 件：pinLayout(6)、genericNode(9)、traceBuilder(13)、TftRenderer(13)。
 - 音频 3 件：BuzzerAudio(14)、SpeakerAudio(11)、MicCapture(8)。
@@ -192,7 +193,7 @@ docs-site / netlist / peripherals: 全绿         总计 ≈769 passed + 14 skip
 **缺口**：
 - G13: **`OledRenderer.ts`（17 行 mono→Canvas）无测试**——TftRenderer 有 13 例而它裸奔，明显不对称。见 TP-003。
 - G14: `ipc/bridge.ts`（190 行类型化封装）无专属测试——仅经 store 测试的 mock 间接对齐。见 TP-005。
-- G15: 全部 28 个 .tsx 组件零测试（dev-plan §7.2 明确"M5 再评估"，现已过 M5——应重新评估）。最大风险文件：`BreadboardCanvas.tsx`（648 行，拖拽/连线/撤销重做逻辑与渲染耦合）。见 TP-006。
+- G15: 全部 28 个 .tsx 组件零测试（dev-plan §7.2 明确"M5 再评估"，现已过 M5——应重新评估）。最大风险文件：`BreadboardCanvas.tsx`（拖拽/连线交互状态机与渲染耦合；撤销/重做栈已于 2026-09-30 落到 projectStore 层并有 8 例契约测试，组件仅剩 Ctrl+Z/Y 快捷键绑定与输入焦点保护未钉）。见 TP-006。
 - G16: `App.tsx`/`main.tsx` 装配无冒烟。
 
 ### 3.6 packages/docs-site（81 用例，充分）
@@ -280,9 +281,9 @@ docs-site / netlist / peripherals: 全绿         总计 ≈769 passed + 14 skip
   - 估计：0.5 天。
 
 - [ ] **TP-006** BreadboardCanvas 逻辑抽离 + 测试（G15，分两步）
-  - Step 1（纯抽离）：把 648 行组件中的交互状态机（拖拽中态/连线预览/命中判定/撤销重做栈）抽为 `components/Breadboard/canvasInteraction.ts` 纯逻辑模块，组件只留 Konva 绑定。
-  - Step 2：新增 `canvasInteraction.test.ts`——放置/移动/连线起止合法性（自环/重复拒绝已在 projectStore 层，此处钉 UI 态）、撤销重做 ≥20 步（F-BB-5 契约）、删除实例级联删线。
-  - 验收：抽离后 .tsx ≤300 行；≥12 例全绿；F-BB-5 的"至少 20 步"首次有自动化断言。
+  - Step 1（纯抽离）：把组件中的交互状态机（拖拽中态/连线预览/命中判定）抽为 `components/Breadboard/canvasInteraction.ts` 纯逻辑模块，组件只留 Konva 绑定。撤销/重做栈已于 2026-09-30 落在 projectStore 层（不在抽离范围）。
+  - Step 2：新增 `canvasInteraction.test.ts`——放置/移动/连线起止合法性（自环/重复拒绝已在 projectStore 层，此处钉 UI 态）、快捷键触发 store undo/redo（Ctrl+Z/Ctrl+Y/Ctrl+Shift+Z 与文本输入焦点保护，F-BB-5 组件面）、删除实例级联删线。F-BB-5「至少 20 步」的 store 层契约已先行交付（projectStore 8 例）。
+  - 验收：抽离后 .tsx ≤300 行；≥12 例全绿；F-BB-5 组件面（快捷键→store 动作）首次有自动化断言。
   - 估计：2 天。**注意**：此为大重构，先确认 PRD §7 允许新增 `canvasInteraction.ts` 路径。
 
 - [ ] **TP-007** QemuGdbBackend 直接单测（G10）
