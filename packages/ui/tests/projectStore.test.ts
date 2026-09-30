@@ -1,9 +1,11 @@
-// PRD: §F-BB-4, §F-PROJ-1 — netlist/layout separation invariants of the UI store.
-// Wiring edits must never touch the visual half; moves must never touch the
-// logic half; both serialize independently (netlist.json / layout.json).
+// PRD: §F-BB-4, §F-PROJ-1, §F-BB-5 — netlist/layout separation invariants of the
+// UI store, plus the undo/redo history contract. Wiring edits must never touch
+// the visual half; moves must never touch the logic half; both serialize
+// independently (netlist.json / layout.json). Undo/redo snapshots both halves
+// and MUST retain at least 20 steps (F-BB-5).
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MCU_INSTANCE_ID, validateNetlist, type LayoutFile, type Netlist } from '@breadesp/netlist';
-import { toLayoutFile, toNetlistFile, useProjectStore } from '../src/store/projectStore';
+import { UNDO_LIMIT, toLayoutFile, toNetlistFile, useProjectStore } from '../src/store/projectStore';
 
 const emptyNetlist = (): Netlist => ({ version: 1, chip: 'esp32', peripherals: [], wires: [] });
 
@@ -240,6 +242,141 @@ describe('project load/reset (P1.8)', () => {
     expect(useProjectStore.getState().netlist.peripherals).toEqual([]);
     expect(useProjectStore.getState().netlist.wires).toEqual([]);
     expect(useProjectStore.getState().layout).toEqual([]);
+  });
+});
+
+describe('projectStore undo/redo (PRD §F-BB-5)', () => {
+  beforeEach(reset);
+
+  it('undo walks a mixed edit sequence all the way back to the empty board, staying valid', () => {
+    const st = useProjectStore.getState();
+    st.addPeripheral('led', 10, 20);
+    st.addWire({ instanceId: 'led-1', pin: 'A' }, { instanceId: MCU_INSTANCE_ID, pin: 'GPIO2' });
+    st.movePeripheral('led-1', 55, 66);
+    st.updatePeripheralProps('led-1', { brightness: 0.5 });
+    st.removeWire('wire-1');
+    st.removePeripheral('led-1');
+    expect(useProjectStore.getState().past).toHaveLength(6);
+
+    for (let i = 0; i < 6; i++) {
+      useProjectStore.getState().undo();
+      const { netlist, layout } = useProjectStore.getState();
+      expect(validateNetlist(netlist).ok).toBe(true);
+      // The halves stay in lockstep: instance ids appear on both sides or neither.
+      expect(netlist.peripherals.map((p) => p.instanceId)).toEqual(layout.map((l) => l.instanceId));
+    }
+    const { netlist, layout } = useProjectStore.getState();
+    expect(netlist).toEqual(emptyNetlist());
+    expect(layout).toEqual([]);
+  });
+
+  it('redo re-applies undone work; a fresh edit invalidates the redo stack', () => {
+    const st = useProjectStore.getState();
+    st.addPeripheral('led', 10, 20);
+    st.addWire({ instanceId: 'led-1', pin: 'A' }, { instanceId: MCU_INSTANCE_ID, pin: 'GPIO2' });
+    st.movePeripheral('led-1', 55, 66);
+
+    useProjectStore.getState().undo();
+    useProjectStore.getState().undo();
+    expect(useProjectStore.getState().layout[0]).toEqual({ instanceId: 'led-1', x: 10, y: 20, kind: 'led' });
+    expect(useProjectStore.getState().netlist.wires).toEqual([]);
+
+    useProjectStore.getState().redo();
+    useProjectStore.getState().redo();
+    expect(useProjectStore.getState().layout[0]).toEqual({ instanceId: 'led-1', x: 55, y: 66, kind: 'led' });
+    expect(useProjectStore.getState().netlist.wires).toHaveLength(1);
+    expect(useProjectStore.getState().future).toEqual([]);
+
+    // Undo one step, then branch: the new edit must retire the redo future.
+    useProjectStore.getState().undo();
+    useProjectStore.getState().addPeripheral('button', 0, 0);
+    expect(useProjectStore.getState().future).toEqual([]);
+    expect(useProjectStore.getState().redo).toBeDefined();
+    const layoutBefore = useProjectStore.getState().layout;
+    useProjectStore.getState().redo(); // no-op: future is gone
+    expect(useProjectStore.getState().layout).toBe(layoutBefore);
+  });
+
+  it('retains at least 20 undo steps (F-BB-5): 25 edits -> 20 undos, further undo is a no-op', () => {
+    const st = useProjectStore.getState();
+    for (let i = 0; i < 25; i++) st.addPeripheral('led', i, 0);
+    expect(UNDO_LIMIT).toBeGreaterThanOrEqual(20);
+    expect(useProjectStore.getState().past).toHaveLength(UNDO_LIMIT);
+
+    for (let i = 0; i < UNDO_LIMIT; i++) useProjectStore.getState().undo();
+    const { netlist, past } = useProjectStore.getState();
+    expect(past).toEqual([]);
+    // The 25 edits dropped the 5 oldest snapshots: back to the state after edit 5.
+    expect(netlist.peripherals).toHaveLength(5);
+
+    const before = useProjectStore.getState().netlist;
+    useProjectStore.getState().undo();
+    expect(useProjectStore.getState().netlist).toBe(before); // empty stack: identity untouched
+  });
+
+  it('coalesces a drag (per-frame moves of one instance) into a single undo step', () => {
+    const st = useProjectStore.getState();
+    st.addPeripheral('led', 10, 20); // step 1
+    st.movePeripheral('led-1', 11, 21); // drag frame 1
+    st.movePeripheral('led-1', 12, 22); // drag frame 2
+    st.movePeripheral('led-1', 13, 23); // drag frame 3
+    expect(useProjectStore.getState().past).toHaveLength(2);
+
+    // Undoing the drag restores the pre-drag position in one step (10, 20).
+    useProjectStore.getState().undo();
+    expect(useProjectStore.getState().layout[0]).toEqual({ instanceId: 'led-1', x: 10, y: 20, kind: 'led' });
+
+    // A move of a different instance ends the run: two more distinct steps.
+    useProjectStore.getState().redo();
+    st.movePeripheral('led-1', 40, 40); // new drag on the same instance
+    st.addPeripheral('button', 0, 0);
+    st.movePeripheral('button-1', 5, 5);
+    expect(useProjectStore.getState().past).toHaveLength(5); // 2 + move + place + move
+  });
+
+  it('rejected edits (self-loop / duplicate wire, unknown instance) never push history', () => {
+    const st = useProjectStore.getState();
+    st.addPeripheral('led', 0, 0);
+    st.updatePeripheralProps('led-99', { waveform: 'noise' });
+    expect(st.addWire({ instanceId: MCU_INSTANCE_ID, pin: 'GPIO2' }, { instanceId: MCU_INSTANCE_ID, pin: 'GPIO2' })).toBeNull();
+    st.addWire({ instanceId: 'led-1', pin: 'A' }, { instanceId: MCU_INSTANCE_ID, pin: 'GPIO2' });
+    expect(st.addWire({ instanceId: MCU_INSTANCE_ID, pin: 'GPIO2' }, { instanceId: 'led-1', pin: 'A' })).toBeNull();
+    expect(useProjectStore.getState().past).toHaveLength(2); // place + wire, nothing else
+  });
+
+  it('undo and redo are no-ops on empty stacks (state identity untouched)', () => {
+    const before = useProjectStore.getState();
+    before.undo();
+    before.redo();
+    const after = useProjectStore.getState();
+    expect(after.netlist).toBe(before.netlist);
+    expect(after.layout).toBe(before.layout);
+    expect(after.past).toEqual([]);
+    expect(after.future).toEqual([]);
+  });
+
+  it('loading or resetting a project never inherits the previous project history', () => {
+    const st = useProjectStore.getState();
+    st.addPeripheral('led', 0, 0);
+    st.addWire({ instanceId: 'led-1', pin: 'A' }, { instanceId: MCU_INSTANCE_ID, pin: 'GPIO2' });
+    useProjectStore.getState().undo(); // future now holds one entry
+    expect(useProjectStore.getState().future).toHaveLength(1);
+
+    useProjectStore.getState().loadProject({
+      dir: '/tmp/other',
+      netlist: emptyNetlist(),
+      layout: { version: 1, items: [] },
+    });
+    expect(useProjectStore.getState().past).toEqual([]);
+    expect(useProjectStore.getState().future).toEqual([]);
+    const netlistBefore = useProjectStore.getState().netlist;
+    useProjectStore.getState().undo();
+    useProjectStore.getState().redo();
+    expect(useProjectStore.getState().netlist).toBe(netlistBefore);
+
+    useProjectStore.getState().resetProject(null);
+    expect(useProjectStore.getState().past).toEqual([]);
+    expect(useProjectStore.getState().future).toEqual([]);
   });
 });
 

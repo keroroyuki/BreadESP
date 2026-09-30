@@ -42,6 +42,10 @@ interface PendingWire {
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 const endpointLabel = (ep: WireEndpoint): string =>
   `${ep.instanceId === MCU_INSTANCE_ID ? 'MCU' : ep.instanceId}.${ep.pin}`;
+/** True while a text surface (serial console, wavegen fields) owns the keyboard. */
+const isEditableTarget = (t: EventTarget | null): boolean =>
+  t instanceof HTMLElement &&
+  (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
 
 /**
  * Kinds with a bespoke canvas body below. Everything else — including any
@@ -61,6 +65,8 @@ export function BreadboardCanvas() {
   const addWire = useProjectStore((s) => s.addWire);
   const removeWire = useProjectStore((s) => s.removeWire);
   const updatePeripheralProps = useProjectStore((s) => s.updatePeripheralProps);
+  const undo = useProjectStore((s) => s.undo);
+  const redo = useProjectStore((s) => s.redo);
   const snapshots = useSimulationStore((s) => s.snapshots);
   // P3.2: which mic instances are capturing host audio (drives REC/LIVE toggle).
   const capturing = useCaptureStore((s) => s.capturing);
@@ -76,15 +82,32 @@ export function BreadboardCanvas() {
   );
   const stageRef = useRef<KonvaStage | null>(null);
 
-  // Esc cancels the pending wire / selections; Delete removes the selected wire or instance.
+  // Esc cancels the pending wire / selections; Delete removes the selected wire
+  // or instance. Ctrl+Z / Ctrl+Y (plus Ctrl+Shift+Z) drive undo/redo (F-BB-5).
+  // Text-entry surfaces (serial console, wavegen fields) keep native shortcuts:
+  // canvas keys never fire while an input has focus.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      if (e.ctrlKey && !e.altKey && (e.key === 'z' || e.key === 'Z')) {
+        if (isEditableTarget(e.target)) return;
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (e.ctrlKey && !e.altKey && (e.key === 'y' || e.key === 'Y')) {
+        if (isEditableTarget(e.target)) return;
+        e.preventDefault();
+        redo();
+        return;
+      }
       if (e.key === 'Escape') {
         setPending(null);
         setSelectedWireId(null);
         setSelectedInstance(null);
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (isEditableTarget(e.target)) return;
         if (selectedWireId !== null) {
           removeWire(selectedWireId);
           setSelectedWireId(null);
@@ -96,7 +119,7 @@ export function BreadboardCanvas() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedWireId, selectedInstance, removeWire, removePeripheral]);
+  }, [selectedWireId, selectedInstance, removeWire, removePeripheral, undo, redo]);
 
   const clearPending = (msg: string): void => {
     setPending(null);
