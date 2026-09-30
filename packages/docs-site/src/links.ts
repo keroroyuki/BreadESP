@@ -6,7 +6,7 @@
 // the target page (GitHub-compatible, see markdown.slugifyHeading). External
 // (scheme/protocol-relative) links pass through unchecked and are never
 // fetched — the build is offline (PRD §F-DOC-4).
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DocsSite, LinkIssue, PageSource } from './types.js';
 
@@ -95,8 +95,12 @@ export function makeLinkResolver(args: LinkResolverArgs): (target: string, line:
       }
       return relativeRoute(current.route, targetRoute) + (anchor === '' ? '' : `#${anchor}`);
     }
-    if (!existsSync(join(site.rootDir, resolved))) {
+    const targetPath = join(site.rootDir, resolved);
+    if (!existsSync(targetPath)) {
       return fail(target, line, `broken link: '${resolved}' does not exist`);
+    }
+    if (statSync(targetPath).isDirectory()) {
+      return fail(target, line, `'${resolved}' is a directory; link a specific page or file inside it`);
     }
     if (/\.md$/i.test(resolved)) {
       return fail(target, line, `'${resolved}' is not part of the docs site page set`);

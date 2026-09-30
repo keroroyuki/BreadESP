@@ -124,6 +124,15 @@ describe('makeLinkResolver', () => {
     expect(issues).toEqual([]);
   });
 
+  it('rejects links to directories (a directory cannot be copied as an asset)', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'docs', 'tutorials'), { recursive: true });
+    const { resolve, issues, assets } = resolverFor(PAGE_A, root);
+    resolve('tutorials/');
+    expect(issues[0].reason).toContain('is a directory');
+    expect(assets.size).toBe(0);
+  });
+
   it('collects multiple violations in one pass instead of failing fast', () => {
     const { resolve, issues } = resolverFor(PAGE_A, makeRoot());
     resolve('ghost.md', 3);

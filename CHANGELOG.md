@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-30
+
 ### Added
 - Project skeleton: monorepo (netlist, peripherals, sim-core, shell, ui) with PRD-driven contracts.
 - PRD.md as single source of truth (§1–§11).
@@ -115,6 +117,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 - Acceptance-fix verification (2026-09-30): `pnpm -r build` green across all six packages, `pnpm -r typecheck` 0 errors, full repo 776 tests passing + 14 gated skips on Windows (ui 182, +8 for F-BB-5); first real Electron smoke — `pnpm dev` boots, a PrintWindow capture shows the four-region layout (palette/canvas/serial/debug), and `per:catalogScan` round-trips over preload→handlers, proving the main↔renderer IPC chain. Three M1 manual items (LED blink, OLED render, button injection) still need a WSL run — they require the breadesp-dbus device QEMU whose linux-docker build rejects win32 hosts.
 - fix(shell): main.ts never passed the BrowserWindow to registerIpcHandlers, so every Bridge→UI push (`sim:status`, `sim:uart`, `per:snapshot`, `dbg:stopped/running/exit`) hit `deps.win?.webContents.send` on an undefined window and was silently dropped — the renderer could invoke the Bridge but never heard back, leaving the header stuck at `sim: idle` and the serial console empty while the QEMU process was actually running. Assembly order fixed: window created first, handlers registered with `win` before the renderer loads. Found while capturing the README run-state screenshot (blink.elf visibly printing `Hello ESP32` in the console after the fix).
 - docs: README rewritten for new users — real UI screenshots (initial four-region layout + blink project running, captured via PrintWindow, stored under `docs/images/`), a feature overview against what is actually shipped, a two-tier platform table (stock QEMU for firmware/UART/debug vs. the breadesp-dbus device build for peripheral bus actuation), a developer guide (command matrix, gating env vars, package layout, data flow), and the MIT license link.
+
+### Fixed
+- docs-site: directory-valued Markdown links (e.g. README → `docs/tutorials/`) were registered as copy assets and crashed the build with a raw EPERM from `copyFileSync` on a directory; the link resolver now rejects directory targets with a coded `[BB-241]` issue, and the README links the first tutorial page directly. Covered by a new resolver test.
 
 ### Notes
 - QEMU binary fetched on demand via scripts/fetch-qemu.mjs (no binary in repo).

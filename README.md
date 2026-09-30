@@ -97,7 +97,7 @@ pnpm dev           # 启动应用（vite dev server + Electron）
 - [docs/architecture.md](docs/architecture.md) — 架构详解
 - [docs/peripheral-sdk.md](docs/peripheral-sdk.md) — 外设 SDK 开发指南
 - [docs/dap.md](docs/dap.md) — DAP 适配器（VS Code 调试）
-- [docs/tutorials/](docs/tutorials/) — 分步教程（上手、首个工程、调试、外设参考、外设创作、VS Code）
+- [docs/tutorials/](docs/tutorials/01-getting-started.md) — 分步教程（上手、首个工程、调试、外设参考、外设创作、VS Code）
 - [CHANGELOG.md](CHANGELOG.md) — 变更记录
 
 ## AI Agent 约定（PRD §10）
