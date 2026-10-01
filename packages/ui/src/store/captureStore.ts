@@ -8,6 +8,8 @@
 import { create } from 'zustand';
 import { bridge } from '../ipc/bridge';
 import { sharedMicCapture } from '../audio/MicCapture';
+import { toast } from './toastStore';
+import { tNow } from '../i18n';
 
 interface CaptureState {
   /** instanceId -> capturing. Record (not Set) so zustand identity changes render. */
@@ -37,7 +39,11 @@ export const useCaptureStore = create<CaptureState>((set, get) => ({
       set({ capturing: { ...get().capturing, [instanceId]: true }, error: null });
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
+      // Keep the machine-readable field (unit-tested) and surface the failure
+      // globally — capture is triggered from the canvas node, which has no
+      // inline error surface.
       set({ error: `[BB-210] microphone capture failed: ${reason}` });
+      toast.error(tNow('toast.micFailed', { detail: reason }));
     }
   },
 

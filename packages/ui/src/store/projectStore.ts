@@ -253,3 +253,9 @@ export function toLayoutFile(layout: LayoutItem[]): LayoutFile {
     items: layout.map(({ instanceId, x, y, kind }) => ({ instanceId, x, y, kind })),
   };
 }
+
+/** Toolbar undo button availability (F-BB-5): true when a snapshot can be restored. */
+export const selectCanUndo = (s: Pick<ProjectState, 'past'>): boolean => s.past.length > 0;
+
+/** Toolbar redo button availability (F-BB-5): true when an undone snapshot can be re-applied. */
+export const selectCanRedo = (s: Pick<ProjectState, 'future'>): boolean => s.future.length > 0;

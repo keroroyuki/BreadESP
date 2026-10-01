@@ -324,13 +324,38 @@
 > 站点 chrome 英文、正文随源（PRD §10.7）；零新 IPC、渲染进程零改动、QEMU 设备
 > 零改动。
 
+### Phase 6 — UI/UX 工效优化（UX，2026-09-30）
+
+依据 `.trae/documents/ui-ux-optimization.md`（T0.1–T5.4 共 24 任务，5 阶段）实施；
+目标是更符合工程学、更直观易上手。范围守门：零新 IPC、QEMU 设备零改动、
+lib/shell 包不动；不做暗色主题、多选框选、MCU 移动与右键菜单。
+
+| # | 任务 | 产物 | 状态 |
+|---|---|---|---|
+| T0 | 基础设施：Tailwind v4（无 preflight，`src/styles/global.css` 仅 theme+utilities + `bb-*` design token）；轻量 i18n（en/zh 点分键字典，`Record<MessageKey,string>` 编译期键对齐）；统一 Button；toastStore | 样式/文案/反馈基座 | 已完成 2026-09-30 |
+| T1 | 反馈系统：ToastHost 全局通知；SimStatusLight；撤销/重做按钮化（canUndo/canRedo 门控，历史机制为 F-BB-5 既有实现）；工具栏按钮迁移 | 操作可感知 | 已完成 2026-09-30 |
+| T2 | 画布交互：ResizeObserver 自适应；滚轮缩放/背景平移（canvasViewStore）；网格 snap；拖放 ghost 预览；pin/连线 hover 高亮；hint→toast；空状态引导 | 画布易上手 | 已完成 2026-09-30 |
+| T3 | 布局与引导：单行 TopBar（工程组/固件 Popover/仿真组 + 语言切换 + `?` 帮助）；Palette 搜索过滤；HelpDialog；BottomDock 可折叠仪器坞（localStorage 持久化） | 信息架构重组 | 已完成 2026-09-30 |
+| T4 | 属性面板：selectionStore 选中互斥；propsSchema（显式 schema + 未知 kind 降级推导，边界复用模型 LIMITS）；PropsPanel（blur/Enter 提交防 undo 洪泛）；RightPanel Tabs | 属性可视编辑 | 已完成 2026-09-30 |
+| T5 | 收尾：i18n 全量抽取（`document.documentElement.lang` 随 locale）；死代码清理；文档契约同步；全仓验证 | 一致性 | 已完成 2026-09-30 |
+
+> UX 验证记录（2026-09-30）：`pnpm -r typecheck` 0 错误；`pnpm -r build` 全部成功；
+> 全仓测试 Windows 859 通过 + 14 跳过（门控 e2e；较 F-BB-5 修复后基线 776 净增
+> 83 项——toastStore 8、i18n 14、canvasView 20、paletteFilter 8、dockPrefs 10、
+> selectionStore 7、propsSchema 14 及 store 层补充），既有测试零修改。新增均为
+> 纯逻辑 draft/store 模块单测（无组件渲染测试）。`pnpm dev` 12 项手动交互验收
+> 清单（1280px 顶栏不溢出、固件 Popover 全流程、sht30 属性编辑一步回滚、语言
+> 切换重启保持等）待人工复跑。
+
 ---
 
 ## 4. 代码风格规范
 
 ### 4.1 总则
 - 语言：TypeScript（`strict: true`），C（QEMU 设备，遵循 QEMU 上游风格）。
-- UI 文案、日志、错误信息：英文。文档与注释：可中文。
+- UI 文案：中英双语，走 i18n 字典（`packages/ui/src/i18n/`，en/zh 点分键 +
+  `useT()`/`tNow()`；BTN/REC/LIVE/CCW/CW 等技术符号保留原文）。日志、错误码消息：
+  英文。文档与注释：可中文。
 - 一切对外可复用类型/接口放包内 `types.ts`，禁止散落。
 
 ### 4.2 命名
@@ -355,7 +380,9 @@
 - 函数组件 + Hooks，禁用 class 组件。
 - 状态：跨组件用 Zustand store；局部用 `useState`/`useReducer`。
 - 副作用：`useEffect` 依赖数组 MUST 完整，禁用空数组+闭包旧值。
-- 样式：内联 style 用于布局骨架，复用样式抽 `const`；M5 再评估 CSS-in-JS。
+- 样式：Tailwind v4 utilities（无 preflight；`src/styles/global.css` 仅引
+  theme+utilities 并定义 `bb-*` design token）。新组件优先 Tailwind class；
+  既有内联 style 不强制迁移；复用样式抽 `const`。
 - 列表 key：用业务 id（`instanceId`），禁用数组下标。
 
 ### 4.5 格式化（硬约束）

@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react';
 import type { RenderSnapshot } from '@breadesp/peripherals';
 import { useProjectStore } from '../../store/projectStore';
 import { useSimulationStore } from '../../store/simulationStore';
+import { useT } from '../../i18n';
 import { buildStepPoints, channelColor, channelGeometry, gridLines, waveformOf } from './traceBuilder';
 
 const CANVAS_W = 420;
@@ -94,6 +95,7 @@ function ScopeTile({ snap }: { snap: RenderSnapshot }) {
 
 export function Oscilloscope() {
   const snapshots = useSimulationStore((s) => s.snapshots);
+  const t = useT();
   // Select the stable peripherals array (filtering inline would return a fresh
   // array every call and re-render forever).
   const peripherals = useProjectStore((s) => s.netlist.peripherals);
@@ -104,10 +106,10 @@ export function Oscilloscope() {
     .sort((a, b) => a.instanceId.localeCompare(b.instanceId));
 
   return (
-    <div style={{ width: 440, borderLeft: '1px solid #ccc', padding: 8, overflowY: 'auto' }}>
-      <h3 style={h3}>Oscilloscope</h3>
-      {scopeIds.length === 0 && <div style={muted}>Place an Oscilloscope and wire CH1..CH4 to GPIO pins.</div>}
-      {scopeIds.length > 0 && tiles.length === 0 && <div style={muted}>Waiting for signal…</div>}
+    <div style={{ flex: 1, width: '100%', boxSizing: 'border-box', padding: 8, overflowY: 'auto' }}>
+      <h3 style={h3}>{t('scope.title')}</h3>
+      {scopeIds.length === 0 && <div style={muted}>{t('scope.empty')}</div>}
+      {scopeIds.length > 0 && tiles.length === 0 && <div style={muted}>{t('scope.waiting')}</div>}
       {tiles.map((s) => (
         <ScopeTile key={s.instanceId} snap={s} />
       ))}

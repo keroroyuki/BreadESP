@@ -7,6 +7,8 @@
 import { useEffect } from 'react';
 import type { CSSProperties } from 'react';
 import { useMarketplaceStore } from '../../store/marketplaceStore';
+import { toast } from '../../store/toastStore';
+import { useT } from '../../i18n';
 import { canLoad, catalogSummary, entrySubtitle, entryTitle, kindsLine, statusLabel } from './marketplaceDraft';
 
 const STATUS_COLORS: Record<string, { fg: string; bg: string; border: string }> = {
@@ -25,6 +27,7 @@ export function Marketplace() {
   const notice = useMarketplaceStore((s) => s.notice);
   const scan = useMarketplaceStore((s) => s.scan);
   const load = useMarketplaceStore((s) => s.load);
+  const t = useT();
 
   // Scan on mount: feeds the panel and re-mirrors kinds the Bridge session
   // already loaded (a renderer reload loses this process's registry stubs).
@@ -32,16 +35,29 @@ export function Marketplace() {
     void useMarketplaceStore.getState().scan();
   }, []);
 
+  // T1.5: the store keeps its notice/error fields (unit-tested contract), the
+  // panel drains them into the global toast channel exactly once.
+  useEffect(() => {
+    if (notice === null) return;
+    toast.info(notice);
+    useMarketplaceStore.setState({ notice: null });
+  }, [notice]);
+  useEffect(() => {
+    if (error === null) return;
+    toast.error(error);
+    useMarketplaceStore.setState({ error: null });
+  }, [error]);
+
   return (
     <section style={panel}>
       <div style={headRow}>
-        <h3 style={h3}>Peripheral catalog</h3>
+        <h3 style={h3}>{t('market.title')}</h3>
         <button style={btn} disabled={scanning} onClick={() => void scan()}>
-          {scanning ? 'Scanning…' : 'Rescan'}
+          {scanning ? t('market.scanning') : t('market.rescan')}
         </button>
       </div>
       {rootDir !== null && (
-        <div style={rootLine} title={rootDir}>in {rootDir}</div>
+        <div style={rootLine} title={rootDir}>{t('market.root', { dir: rootDir })}</div>
       )}
       {entries.map((e) => {
         const label = statusLabel(e);
@@ -64,20 +80,16 @@ export function Marketplace() {
             ))}
             {canLoad(e) && (
               <button style={loadBtn} disabled={loading[e.dir] === true} onClick={() => void load(e.dir)}>
-                {loading[e.dir] === true ? 'Loading…' : 'Load'}
+                {loading[e.dir] === true ? t('market.loading') : t('market.load')}
               </button>
             )}
           </div>
         );
       })}
       {rootDir !== null && entries.length === 0 && !scanning && (
-        <div style={emptyLine}>
-          No packages found. Drop a folder with a breadesp-peripheral.json manifest into the directory above.
-        </div>
+        <div style={emptyLine}>{t('market.empty')}</div>
       )}
       {entries.length > 0 && <div style={summaryLine}>{catalogSummary(entries)}</div>}
-      {notice !== null && <div style={noticeLine}>{notice}</div>}
-      {error !== null && <div style={errorLine}>{error}</div>}
     </section>
   );
 }
@@ -126,7 +138,5 @@ const kindsLineStyle: CSSProperties = { color: '#334155', fontFamily: 'ui-monosp
 const issueLine: CSSProperties = { color: '#991b1b', fontSize: 11 };
 const emptyLine: CSSProperties = { color: '#64748b', lineHeight: 1.4 };
 const summaryLine: CSSProperties = { color: '#64748b', marginTop: 2 };
-const noticeLine: CSSProperties = { color: '#166534', marginTop: 4 };
-const errorLine: CSSProperties = { color: '#991b1b', marginTop: 4 };
 const btn: CSSProperties = { padding: '2px 8px', fontSize: 11, cursor: 'pointer' };
 const loadBtn: CSSProperties = { ...btn, alignSelf: 'flex-start' };

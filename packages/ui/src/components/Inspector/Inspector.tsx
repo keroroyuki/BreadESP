@@ -4,9 +4,11 @@
 // in debuggerStore; this component is a thin view over it.
 import { useState } from 'react';
 import { useDebuggerStore } from '../../store/debuggerStore';
+import { useT } from '../../i18n';
 
 export function Inspector() {
   const dbg = useDebuggerStore();
+  const t = useT();
   const [at, setAt] = useState('app_main');
   const [cond, setCond] = useState('');
   const [watchExpr, setWatchExpr] = useState('');
@@ -14,42 +16,45 @@ export function Inspector() {
   const [wpMode, setWpMode] = useState<'write' | 'read' | 'access'>('write');
 
   const canRun = dbg.phase === 'attached';
+  // T4.4: the width is owned by the RightPanel column (300px).
   return (
-    <aside style={{ width: 280, borderLeft: '1px solid #ccc', padding: 8, overflow: 'auto' }}>
-      <h3 style={h3}>Debug</h3>
+    <aside style={{ width: '100%', borderLeft: '1px solid #ccc', padding: 8, overflow: 'auto' }}>
+      <h3 style={h3}>{t('debug.title')}</h3>
 
       <div style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center' }}>
         {dbg.phase === 'detached' ? (
-          <button onClick={() => dbg.connect()}>Attach</button>
+          <button onClick={() => dbg.connect()}>{t('debug.attach')}</button>
         ) : (
-          <button onClick={() => dbg.disconnect()}>Detach</button>
+          <button onClick={() => dbg.disconnect()}>{t('debug.detach')}</button>
         )}
         <span style={muted}>{dbg.phase}</span>
       </div>
 
       <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-        <button disabled={!canRun} onClick={() => dbg.run()}>Continue</button>
-        <button disabled={!canRun} onClick={() => dbg.step()}>Step In</button>
-        <button disabled={!canRun} onClick={() => dbg.stepOver()}>Step Over</button>
+        <button disabled={!canRun} onClick={() => dbg.run()}>{t('debug.continue')}</button>
+        <button disabled={!canRun} onClick={() => dbg.step()}>{t('debug.stepIn')}</button>
+        <button disabled={!canRun} onClick={() => dbg.stepOver()}>{t('debug.stepOver')}</button>
       </div>
 
       {dbg.stop && (
         <div style={muted}>
-          stopped: {dbg.stop.reason ?? '?'} @ {dbg.stop.frame?.func ?? dbg.stop.frame?.addr ?? '?'}
+          {t('debug.stopped', {
+            info: `${dbg.stop.reason ?? '?'} @ ${dbg.stop.frame?.func ?? dbg.stop.frame?.addr ?? '?'}`,
+          })}
         </div>
       )}
       {dbg.error && <div style={err}>{dbg.error}</div>}
 
-      <label style={label}>Breakpoints</label>
+      <label style={label}>{t('debug.breakpoints')}</label>
       <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
         <input value={at} onChange={(e) => setAt(e.target.value)} style={input} />
-        <button disabled={dbg.phase === 'detached'} onClick={() => dbg.addBreakpoint(at)}>Set</button>
-        {dbg.breakpoints.length > 0 && <button onClick={() => dbg.clearBreakpoints()}>Clear</button>}
+        <button disabled={dbg.phase === 'detached'} onClick={() => dbg.addBreakpoint(at)}>{t('debug.set')}</button>
+        {dbg.breakpoints.length > 0 && <button onClick={() => dbg.clearBreakpoints()}>{t('debug.clear')}</button>}
       </div>
       <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
         <input
           value={cond}
-          placeholder="condition (e.g. remaining == 0)"
+          placeholder={t('debug.condPlaceholder')}
           onChange={(e) => setCond(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && dbg.phase !== 'detached' && cond.trim() !== '') {
@@ -62,7 +67,7 @@ export function Inspector() {
           disabled={dbg.phase === 'detached' || cond.trim() === ''}
           onClick={() => { void dbg.addConditionalBreakpoint(at, cond); setCond(''); }}
         >
-          If
+          {t('debug.if')}
         </button>
       </div>
       {dbg.breakpoints.map((bp) => (
@@ -75,7 +80,7 @@ export function Inspector() {
         </div>
       ))}
 
-      <label style={label}>Watchpoints</label>
+      <label style={label}>{t('debug.watchpoints')}</label>
       <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
         <input
           value={wpExpr}
@@ -97,11 +102,11 @@ export function Inspector() {
           disabled={dbg.phase === 'detached' || wpExpr.trim() === ''}
           onClick={() => { void dbg.addWatchpoint(wpExpr, wpMode); setWpExpr(''); }}
         >
-          Add
+          {t('debug.add')}
         </button>
       </div>
 
-      <label style={label}>Watch (globals/expressions)</label>
+      <label style={label}>{t('debug.watch')}</label>
       <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
         <input
           value={watchExpr}
@@ -116,7 +121,7 @@ export function Inspector() {
           disabled={dbg.phase === 'detached'}
           onClick={() => { void dbg.addWatch(watchExpr); setWatchExpr(''); }}
         >
-          Add
+          {t('debug.add')}
         </button>
       </div>
       {dbg.watches.map((w) => (
@@ -126,8 +131,8 @@ export function Inspector() {
         </div>
       ))}
 
-      <label style={label}>Variables</label>
-      {dbg.vars.length === 0 && <div style={muted}>(no frame)</div>}
+      <label style={label}>{t('debug.variables')}</label>
+      {dbg.vars.length === 0 && <div style={muted}>{t('debug.noFrame')}</div>}
       {dbg.vars.map((v) => (
         <div key={v.name} style={{ display: 'flex', justifyContent: 'space-between' }}>
           <span>{v.name}{v.scope === 'arg' ? ' (arg)' : ''}</span>
@@ -135,7 +140,7 @@ export function Inspector() {
         </div>
       ))}
 
-      <label style={label}>Registers</label>
+      <label style={label}>{t('debug.registers')}</label>
       <div style={pre}>
         {Object.entries(dbg.regs).map(([name, value]) => `${name} = ${value}`).join('\n')}
       </div>

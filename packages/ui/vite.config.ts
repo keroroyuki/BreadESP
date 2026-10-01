@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
 
 // Electron renderer build. In dev the shell loads from VITE_DEV_SERVER_URL (PRD §4 main.ts).
@@ -7,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 // fields point at compiled dist/ for the Node/Electron runtime, while the
 // renderer bundles src directly (PRD §10 source-first rule; no stale dist).
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   base: './',
   resolve: {
     alias: {

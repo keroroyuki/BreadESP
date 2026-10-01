@@ -1,19 +1,38 @@
 // PRD: §F-BB-1, §F-BB-2, §F-BB-4 — Breadboard canvas (Konva).
-// Interactions: drop from the palette places a peripheral; dragging a node
-// moves it (layout-only edit); clicking pin -> pin wires the two endpoints
-// (netlist-only edit, applied to the Bridge by App via bb:applyNetlist);
-// clicking a wire twice (or Delete) removes it; Esc cancels the pending wire.
-import { useEffect, useRef, useState } from 'react';
+// Interactions: drop from the palette places a peripheral (snapped to the
+// grid); dragging a node moves it (layout-only edit, snapped on release);
+// clicking pin -> pin wires the two endpoints (netlist-only edit, applied to
+// the Bridge by App via bb:applyNetlist); clicking a wire twice (or Delete)
+// removes it; Esc cancels the pending wire.
+// T2.2-T2.6: the Stage is container-sized (ResizeObserver) and zooms/pans via
+// the canvasView transform (wheel = zoom at pointer, background drag = pan
+// with a 4px click threshold); a grid underlays the world; drop shows a ghost
+// preview; pins/wires highlight on hover; feedback goes through toasts.
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
-import { Circle, Group, Layer, Path, Rect, Stage, Text } from 'react-konva';
+import { Circle, Group, Layer, Path, Rect, Shape, Stage, Text } from 'react-konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import type { Stage as KonvaStage } from 'konva/lib/Stage';
 import { MCU_INSTANCE_ID, type WireEndpoint } from '@breadesp/netlist';
 import { useProjectStore } from '../../store/projectStore';
 import { useSimulationStore } from '../../store/simulationStore';
+import { useCanvasViewStore } from '../../store/canvasViewStore';
 import { useCaptureStore } from '../../store/captureStore';
+import { useSelectionStore } from '../../store/selectionStore';
+import { toast } from '../../store/toastStore';
+import { useT } from '../../i18n';
 import { bridge } from '../../ipc/bridge';
 import { wirePath } from './Wire';
+import {
+  containerToWorld,
+  gridSegments,
+  snappedPlacement,
+  visibleWorldRect,
+} from './canvasView';
+import { WORLD_W, WORLD_H } from './worldSize';
+import { CanvasToolbar } from './CanvasToolbar';
+import { EmptyGuide } from './EmptyGuide';
+import { isEditableTarget } from '../HelpDialog/shortcuts';
 import { adjustSht30 } from './sensorDraft';
 import { describeGenericSnapshot } from './genericNode';
 import { sht30ConfigFromProps, sht30FormatReading } from '@breadesp/peripherals';
@@ -22,8 +41,8 @@ import {
   MCU_NODE,
   NODE_H,
   NODE_W,
-  PIN_LABEL_GAP,
   PIN_R,
+  PIN_LABEL_GAP,
   mcuPinLayout,
   peripheralPinOffset,
   peripheralPins,
@@ -31,21 +50,23 @@ import {
   type Anchor,
 } from './pinLayout';
 
-const CANVAS_W = 960;
-const CANVAS_H = 560;
+/** Pointer travel (container px) below which a background drag counts as a click. */
+const PAN_CLICK_THRESHOLD = 4;
 
 interface PendingWire {
   endpoint: WireEndpoint;
   anchor: Anchor;
 }
 
-const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
+/** Ghost preview while dragging a palette entry over the canvas (T2.4). */
+interface Ghost {
+  kind: string;
+  x: number;
+  y: number;
+}
+
 const endpointLabel = (ep: WireEndpoint): string =>
   `${ep.instanceId === MCU_INSTANCE_ID ? 'MCU' : ep.instanceId}.${ep.pin}`;
-/** True while a text surface (serial console, wavegen fields) owns the keyboard. */
-const isEditableTarget = (t: EventTarget | null): boolean =>
-  t instanceof HTMLElement &&
-  (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
 
 /**
  * Kinds with a bespoke canvas body below. Everything else — including any
@@ -73,14 +94,41 @@ export function BreadboardCanvas() {
   const startCapture = useCaptureStore((s) => s.startCapture);
   const stopCapture = useCaptureStore((s) => s.stopCapture);
 
+  const view = useCanvasViewStore((s) => s.view);
+  const zoomAt = useCanvasViewStore((s) => s.zoomAt);
+  const panBy = useCanvasViewStore((s) => s.panBy);
+
+  const t = useT();
   const [pending, setPending] = useState<PendingWire | null>(null);
+  /** Rubber-band end — WORLD coordinates (converted from the pointer). */
   const [pointer, setPointer] = useState<Anchor>({ x: 0, y: 0 });
-  const [selectedWireId, setSelectedWireId] = useState<string | null>(null);
-  const [selectedInstance, setSelectedInstance] = useState<string | null>(null);
-  const [hint, setHint] = useState(
-    'Drag a peripheral from the palette onto the canvas; click pin -> pin to wire.',
-  );
+  // T4.1: selection lives in the selectionStore so the PropsPanel follows it.
+  const selectedWireId = useSelectionStore((s) => s.wireId);
+  const selectedInstance = useSelectionStore((s) => s.instanceId);
+  const selectInstance = useSelectionStore((s) => s.selectInstance);
+  const selectWire = useSelectionStore((s) => s.selectWire);
+  const clearSelection = useSelectionStore((s) => s.clear);
+  const [ghost, setGhost] = useState<Ghost | null>(null);
+  /** Hover keys: `${instanceId}:${pin}` for pins, wire id for wires (T2.5). */
+  const [hoverPin, setHoverPin] = useState<string | null>(null);
+  const [hoverWireId, setHoverWireId] = useState<string | null>(null);
+  const [size, setSize] = useState({ w: WORLD_W, h: WORLD_H });
+
+  const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<KonvaStage | null>(null);
+  const dragStartPointer = useRef<{ x: number; y: number } | null>(null);
+
+  // T2.2: the Stage follows its container's size (window resize, dock folds).
+  useEffect(() => {
+    const el = containerRef.current;
+    if (el === null) return;
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0].contentRect;
+      if (r.width > 0 && r.height > 0) setSize({ w: r.width, h: r.height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Esc cancels the pending wire / selections; Delete removes the selected wire
   // or instance. Ctrl+Z / Ctrl+Y (plus Ctrl+Shift+Z) drive undo/redo (F-BB-5).
@@ -102,28 +150,28 @@ export function BreadboardCanvas() {
         return;
       }
       if (e.key === 'Escape') {
+        if (isEditableTarget(e.target)) return;
         setPending(null);
-        setSelectedWireId(null);
-        setSelectedInstance(null);
+        clearSelection();
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (isEditableTarget(e.target)) return;
         if (selectedWireId !== null) {
           removeWire(selectedWireId);
-          setSelectedWireId(null);
+          selectWire(null);
         } else if (selectedInstance !== null) {
           removePeripheral(selectedInstance);
-          setSelectedInstance(null);
+          selectInstance(null);
         }
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedWireId, selectedInstance, removeWire, removePeripheral, undo, redo]);
+  }, [selectedWireId, selectedInstance, removeWire, removePeripheral, undo, redo, selectWire, selectInstance, clearSelection]);
 
-  const clearPending = (msg: string): void => {
+  const clearPending = (message?: () => void): void => {
     setPending(null);
-    setHint(msg);
+    if (message !== undefined) message();
   };
 
   const onPinClick =
@@ -132,37 +180,108 @@ export function BreadboardCanvas() {
       if (pending === null) {
         setPending({ endpoint, anchor });
         setPointer(anchor);
-        setHint(`Wiring from ${endpointLabel(endpoint)} — click a target pin (Esc cancels).`);
+        toast.info(t('canvas.wiringFrom', { pin: endpointLabel(endpoint) }));
         return;
       }
       if (pending.endpoint.instanceId === endpoint.instanceId && pending.endpoint.pin === endpoint.pin) {
-        clearPending('Wiring cancelled.');
+        clearPending(() => toast.info(t('canvas.wireCancelled')));
         return;
       }
       if (
         pending.endpoint.instanceId !== MCU_INSTANCE_ID &&
         endpoint.instanceId !== MCU_INSTANCE_ID
       ) {
-        clearPending('Peripheral-to-peripheral wires are not routable (MVP) — connect via an MCU pin.');
+        clearPending(() => toast.warning(t('canvas.wireNotRoutable')));
         return;
       }
       const id = addWire(pending.endpoint, endpoint);
-      clearPending(id !== null ? `Wire ${id} created (${endpointLabel(pending.endpoint)} <-> ${endpointLabel(endpoint)}).` : 'Wire already exists.');
+      if (id === null) {
+        clearPending(() => toast.warning(t('canvas.wireExists')));
+      } else {
+        clearPending(() =>
+          toast.success(t('canvas.wireCreated', {
+            from: endpointLabel(pending.endpoint),
+            to: endpointLabel(endpoint),
+          })),
+        );
+      }
     };
 
+  // Rubber band: the pointer is converted into world coordinates so the band
+  // stays glued to the cursor at any zoom/pan (T2.6).
   const onStageMouseMove = (e: KonvaEventObject<MouseEvent>): void => {
     if (pending === null) return;
     const p = e.target.getStage()?.getPointerPosition();
-    if (p) setPointer({ x: p.x, y: p.y });
+    if (p) setPointer(containerToWorld(view, p));
+  };
+
+  // Wheel = zoom at the pointer (ctrl held = fine steps).
+  const onWheel = (e: KonvaEventObject<WheelEvent>): void => {
+    e.evt.preventDefault();
+    const p = e.target.getStage()?.getPointerPosition();
+    if (p == null) return;
+    const step = e.evt.ctrlKey ? 1.01 : 1.1;
+    zoomAt(p, e.evt.deltaY < 0 ? step : 1 / step);
+  };
+
+  // Background pan: the drag delta is absorbed into the view each frame (the
+  // rect itself stays at the origin); releasing under PAN_CLICK_THRESHOLD px
+  // of travel is treated as a plain click (clears selection) — we do not bet
+  // on Konva's click-after-drag semantics (T2.2).
+  // A perfectly still click never starts a Konva drag (dragDistance ≈ 3px), so
+  // dragEnd alone would leave a dead zone; the Rect also tracks mouse down/up
+  // through the same ref. Whichever handler runs first consumes the ref, so a
+  // gesture is never handled twice.
+  const onBgDragStart = (e: KonvaEventObject<globalThis.DragEvent>): void => {
+    dragStartPointer.current = e.target.getStage()?.getPointerPosition() ?? null;
+  };
+  const onBgMouseDown = (e: KonvaEventObject<MouseEvent>): void => {
+    dragStartPointer.current = e.target.getStage()?.getPointerPosition() ?? null;
+  };
+  const onBgMouseUp = (e: KonvaEventObject<MouseEvent>): void => {
+    const start = dragStartPointer.current;
+    dragStartPointer.current = null;
+    const end = e.target.getStage()?.getPointerPosition();
+    if (start == null || end == null) return;
+    const dist = Math.hypot(end.x - start.x, end.y - start.y);
+    if (dist < PAN_CLICK_THRESHOLD) onBackgroundClick();
+  };
+  const onBgDragMove = (e: KonvaEventObject<globalThis.DragEvent>): void => {
+    const node = e.target;
+    const dx = node.x();
+    const dy = node.y();
+    node.position({ x: 0, y: 0 });
+    panBy(dx, dy);
+  };
+  const onBgDragEnd = (e: KonvaEventObject<globalThis.DragEvent>): void => {
+    const start = dragStartPointer.current;
+    dragStartPointer.current = null;
+    const end = e.target.getStage()?.getPointerPosition();
+    if (start == null || end == null) return;
+    const dist = Math.hypot(end.x - start.x, end.y - start.y);
+    if (dist < PAN_CLICK_THRESHOLD) onBackgroundClick();
   };
 
   const onBackgroundClick = (): void => {
     if (pending !== null) {
-      clearPending('Wiring cancelled.');
+      clearPending(() => toast.info(t('canvas.wireCancelled')));
       return;
     }
-    setSelectedWireId(null);
-    setSelectedInstance(null);
+    clearSelection();
+  };
+
+  // T2.4: ghost preview follows the drag in world coordinates (grid-snapped).
+  const onDragOver = (e: DragEvent<HTMLDivElement>): void => {
+    e.preventDefault();
+    const kind = (window as unknown as { __bb_drag_kind?: string }).__bb_drag_kind;
+    if (kind === undefined) return;
+    const rect = stageRef.current?.container().getBoundingClientRect();
+    if (rect === undefined) return;
+    const world = containerToWorld(view, { x: e.clientX - rect.left, y: e.clientY - rect.top });
+    const p = snappedPlacement(world.x, world.y, NODE_W, NODE_H);
+    setGhost((prev) =>
+      prev !== null && prev.kind === kind && prev.x === p.x && prev.y === p.y ? prev : { kind, ...p },
+    );
   };
 
   const onDrop = (e: DragEvent<HTMLDivElement>): void => {
@@ -170,37 +289,45 @@ export function BreadboardCanvas() {
     const kind = w.__bb_drag_kind;
     if (!kind) return;
     w.__bb_drag_kind = undefined;
+    setGhost(null);
     // Measure against the Stage container so internal scrolling cannot offset the drop.
     const rect = stageRef.current?.container().getBoundingClientRect();
     if (!rect) return;
-    const x = clamp(e.clientX - rect.left, 0, CANVAS_W - NODE_W);
-    const y = clamp(e.clientY - rect.top, 0, CANVAS_H - NODE_H);
-    const instanceId = addPeripheral(kind, x, y);
-    setSelectedInstance(instanceId);
-    setHint(`${kind} placed as ${instanceId}. Click its pin, then an MCU GPIO pin, to wire.`);
+    const world = containerToWorld(view, { x: e.clientX - rect.left, y: e.clientY - rect.top });
+    // Snap to the grid and keep the node fully inside the world (T2.3).
+    const p = snappedPlacement(world.x, world.y, NODE_W, NODE_H);
+    const instanceId = addPeripheral(kind, p.x, p.y);
+    selectInstance(instanceId);
+    toast.info(t('canvas.placed', { kind }));
   };
 
   const onDragMove = (instanceId: string) => (e: KonvaEventObject<globalThis.DragEvent>): void => {
     movePeripheral(instanceId, e.target.x(), e.target.y());
   };
 
+  // T2.3: release snaps the node to the grid (the drag itself stays free-form
+  // so it feels attached to the cursor) and keeps it on the board.
+  const onNodeDragEnd = (instanceId: string) => (e: KonvaEventObject<globalThis.DragEvent>): void => {
+    const p = snappedPlacement(e.target.x(), e.target.y(), NODE_W, NODE_H);
+    e.target.position({ x: p.x, y: p.y });
+    movePeripheral(instanceId, p.x, p.y);
+  };
+
   const deleteInstance = (instanceId: string): void => {
     removePeripheral(instanceId);
-    setSelectedInstance(null);
-    setSelectedWireId(null); // the selected wire may have gone with the instance
-    setHint(`Removed ${instanceId} (its wires were removed from the netlist).`);
+    clearSelection(); // the selected wire may have gone with the instance
+    toast.info(t('canvas.removedInstance', { id: instanceId }));
   };
 
   const onWireClick = (wireId: string) => (e: KonvaEventObject<MouseEvent>): void => {
     e.cancelBubble = true;
     if (selectedWireId === wireId) {
       removeWire(wireId);
-      setSelectedWireId(null);
-      setHint(`Wire ${wireId} removed.`);
+      selectWire(null);
+      toast.info(t('canvas.removedWire'));
     } else {
-      setSelectedWireId(wireId);
-      setSelectedInstance(null);
-      setHint(`Wire ${wireId} selected — click again or press Delete to remove.`);
+      selectWire(wireId);
+      toast.info(t('canvas.wireSelected'));
     }
   };
 
@@ -209,36 +336,111 @@ export function BreadboardCanvas() {
     if (c) c.style.cursor = style;
   };
 
+  // T2.3: grid lines restricted to the visible world rect; stroke widths are
+  // divided by the scale so they stay 1px on screen at any zoom.
+  const grid = useMemo(() => gridSegments(visibleWorldRect(view, size)), [view, size]);
+
   return (
     <div
+      ref={containerRef}
       onDrop={onDrop}
-      onDragOver={(e) => e.preventDefault()}
-      style={{ flex: 1, overflow: 'auto', background: '#eef2f7' }}
+      onDragOver={onDragOver}
+      onDragLeave={() => setGhost(null)}
+      style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#dfe6ef' }}
     >
-      <Stage ref={stageRef} width={CANVAS_W} height={CANVAS_H} onMouseMove={onStageMouseMove}>
+      <Stage
+        ref={stageRef}
+        width={size.w}
+        height={size.h}
+        scaleX={view.scale}
+        scaleY={view.scale}
+        x={view.x}
+        y={view.y}
+        onMouseMove={onStageMouseMove}
+        onWheel={onWheel}
+      >
         <Layer>
+          {/* The board itself — pannable background; outside it is the chrome color. */}
           <Rect
             x={0}
             y={0}
-            width={CANVAS_W}
-            height={CANVAS_H}
+            width={WORLD_W}
+            height={WORLD_H}
             fill="#eef2f7"
-            onClick={onBackgroundClick}
+            draggable
+            onMouseDown={onBgMouseDown}
+            onMouseUp={onBgMouseUp}
+            onDragStart={onBgDragStart}
+            onDragMove={onBgDragMove}
+            onDragEnd={onBgDragEnd}
           />
+
+          {/* Grid (T2.3): fine 10px lines + major 50px lines, viewport-clipped. */}
+          <Shape
+            listening={false}
+            sceneFunc={(ctx) => {
+              ctx.beginPath();
+              for (const s of grid.fine) {
+                ctx.moveTo(s.x1, s.y1);
+                ctx.lineTo(s.x2, s.y2);
+              }
+              ctx.strokeStyle = '#d9e1ec';
+              ctx.lineWidth = 1 / view.scale;
+              ctx.stroke();
+              ctx.beginPath();
+              for (const s of grid.major) {
+                ctx.moveTo(s.x1, s.y1);
+                ctx.lineTo(s.x2, s.y2);
+              }
+              ctx.strokeStyle = '#c6d1e0';
+              ctx.lineWidth = 1 / view.scale;
+              ctx.stroke();
+            }}
+          />
+
+          {/* Ghost preview of the drop position (T2.4). */}
+          {ghost !== null && (
+            <Group x={ghost.x} y={ghost.y} listening={false}>
+              <Rect
+                width={NODE_W}
+                height={NODE_H}
+                fill="#2563eb"
+                opacity={0.08}
+                stroke="#2563eb"
+                strokeWidth={1.5}
+                dash={[6, 4]}
+                cornerRadius={8}
+              />
+              <Text
+                x={8}
+                y={6}
+                width={NODE_W - 16}
+                text={ghost.kind}
+                fontSize={10}
+                fill="#2563eb"
+              />
+            </Group>
+          )}
 
           {/* Wires (netlist logic) — under the nodes, click to select, click again to remove. */}
           {netlist.wires.map((w) => {
             const a = wireAnchors(w, layout);
             if (a === null) return null; // endpoint not on the canvas (unknown instance/pin)
             const sel = selectedWireId === w.id;
+            const hovered = hoverWireId === w.id;
             return (
               <Path
                 key={w.id}
                 data={wirePath({ x1: a.from.x, y1: a.from.y, x2: a.to.x, y2: a.to.y })}
-                stroke={sel ? '#dc2626' : '#475569'}
-                strokeWidth={sel ? 3 : 2}
-                hitStrokeWidth={10}
+                stroke={sel ? '#dc2626' : hovered ? '#2563eb' : '#475569'}
+                strokeWidth={sel || hovered ? 3 : 2}
+                hitStrokeWidth={10 / Math.max(view.scale, 0.5)}
                 onClick={onWireClick(w.id)}
+                onMouseEnter={(e) => {
+                  setHoverWireId(w.id);
+                  hoverCursor('pointer')(e);
+                }}
+                onMouseLeave={() => setHoverWireId(null)}
               />
             );
           })}
@@ -270,18 +472,23 @@ export function BreadboardCanvas() {
               const l = mcuPinLayout(pin);
               if (l === null) return null;
               const labelX = l.side === 'left' ? MCU_NODE.x + 8 : MCU_NODE.x + MCU_NODE.w - 48;
+              const pinKey = `mcu:${pin}`;
+              const hovered = hoverPin === pinKey;
               return (
                 <Group key={pin}>
                   <Circle
                     x={l.anchor.x}
                     y={l.anchor.y}
-                    radius={PIN_R}
-                    fill="#94a3b8"
+                    radius={hovered ? PIN_R + 2 : PIN_R}
+                    fill={hovered ? '#2563eb' : '#94a3b8'}
                     stroke="#0f2744"
                     strokeWidth={1}
                     onClick={onPinClick({ instanceId: MCU_INSTANCE_ID, pin }, l.anchor)}
-                    onMouseEnter={hoverCursor('crosshair')}
-                    onMouseLeave={hoverCursor('default')}
+                    onMouseEnter={(e) => {
+                      setHoverPin(pinKey);
+                      hoverCursor('crosshair')(e);
+                    }}
+                    onMouseLeave={() => setHoverPin(null)}
                   />
                   <Text
                     x={labelX}
@@ -312,11 +519,10 @@ export function BreadboardCanvas() {
                 y={item.y}
                 draggable
                 onDragMove={onDragMove(item.instanceId)}
-                onDragEnd={onDragMove(item.instanceId)}
+                onDragEnd={onNodeDragEnd(item.instanceId)}
                 onClick={(e) => {
                   e.cancelBubble = true;
-                  setSelectedInstance(item.instanceId);
-                  setSelectedWireId(null);
+                  selectInstance(item.instanceId);
                 }}
               >
                 <Rect
@@ -626,21 +832,26 @@ export function BreadboardCanvas() {
                     pending !== null &&
                     pending.endpoint.instanceId === item.instanceId &&
                     pending.endpoint.pin === p.id;
+                  const pinKey = `${item.instanceId}:${p.id}`;
+                  const hovered = hoverPin === pinKey;
                   return (
                     <Group key={p.id}>
                       <Circle
                         x={off.x}
                         y={off.y}
-                        radius={PIN_R}
-                        fill={p.optional ? '#94a3b8' : '#334155'}
+                        radius={hovered ? PIN_R + 2 : PIN_R}
+                        fill={active || hovered ? '#2563eb' : p.optional ? '#94a3b8' : '#334155'}
                         stroke={active ? '#2563eb' : '#0f172a'}
                         strokeWidth={active ? 2 : 1}
                         onClick={onPinClick(
                           { instanceId: item.instanceId, pin: p.id },
                           { x: item.x + off.x, y: item.y + off.y },
                         )}
-                        onMouseEnter={hoverCursor('crosshair')}
-                        onMouseLeave={hoverCursor('default')}
+                        onMouseEnter={(e) => {
+                          setHoverPin(pinKey);
+                          hoverCursor('crosshair')(e);
+                        }}
+                        onMouseLeave={() => setHoverPin(null)}
                       />
                       <Text
                         x={off.x - 14}
@@ -684,10 +895,10 @@ export function BreadboardCanvas() {
               />
             </>
           )}
-
-          <Text x={16} y={10} width={CANVAS_W - 32} text={hint} fontSize={12} fill="#334155" listening={false} />
         </Layer>
       </Stage>
+      {layout.length === 0 && <EmptyGuide />}
+      <CanvasToolbar size={size} />
     </div>
   );
 }

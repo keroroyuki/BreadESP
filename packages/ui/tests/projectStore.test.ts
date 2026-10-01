@@ -5,7 +5,7 @@
 // and MUST retain at least 20 steps (F-BB-5).
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MCU_INSTANCE_ID, validateNetlist, type LayoutFile, type Netlist } from '@breadesp/netlist';
-import { UNDO_LIMIT, toLayoutFile, toNetlistFile, useProjectStore } from '../src/store/projectStore';
+import { UNDO_LIMIT, selectCanRedo, selectCanUndo, toLayoutFile, toNetlistFile, useProjectStore } from '../src/store/projectStore';
 
 const emptyNetlist = (): Netlist => ({ version: 1, chip: 'esp32', peripherals: [], wires: [] });
 
@@ -353,6 +353,24 @@ describe('projectStore undo/redo (PRD §F-BB-5)', () => {
     expect(after.layout).toBe(before.layout);
     expect(after.past).toEqual([]);
     expect(after.future).toEqual([]);
+  });
+
+  it('canUndo/canRedo selectors track the history stacks', () => {
+    // Fresh board: neither action is available.
+    expect(selectCanUndo(useProjectStore.getState())).toBe(false);
+    expect(selectCanRedo(useProjectStore.getState())).toBe(false);
+
+    useProjectStore.getState().addPeripheral('led', 0, 0);
+    expect(selectCanUndo(useProjectStore.getState())).toBe(true);
+    expect(selectCanRedo(useProjectStore.getState())).toBe(false);
+
+    useProjectStore.getState().undo();
+    expect(selectCanUndo(useProjectStore.getState())).toBe(false);
+    expect(selectCanRedo(useProjectStore.getState())).toBe(true);
+
+    useProjectStore.getState().resetProject(null);
+    expect(selectCanUndo(useProjectStore.getState())).toBe(false);
+    expect(selectCanRedo(useProjectStore.getState())).toBe(false);
   });
 
   it('loading or resetting a project never inherits the previous project history', () => {

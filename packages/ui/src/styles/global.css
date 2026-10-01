@@ -1,0 +1,25 @@
+/*
+ * Tailwind v4 entry WITHOUT preflight (global reset): importing
+ * tailwindcss/theme.css + utilities.css directly skips the preflight layer,
+ * so components still styled with inline React.CSSProperties keep their
+ * native look. New components use utilities exclusively.
+ * Design tokens align with the existing inline-style palette so migrated
+ * and unmigrated components sit in the same visual system.
+ */
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@theme {
+  /* Canvas + chrome colors already used across the app. */
+  --color-bb-canvas: #eef2f7;
+  --color-bb-ink: #334155;
+  --color-bb-muted: #64748b;
+  --color-bb-line: #cbd5e1;
+  --color-bb-surface: #ffffff;
+  --color-bb-primary: #2563eb;
+  --color-bb-primary-strong: #1d4ed8;
+  --color-bb-danger: #dc2626;
+  --color-bb-warn: #d97706;
+  --color-bb-ok: #16a34a;
+  --color-bb-header: #1f2937;
+}

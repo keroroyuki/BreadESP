@@ -7,6 +7,7 @@ import type { CSSProperties } from 'react';
 import type { ChipKind } from '@breadesp/netlist';
 import { bridge } from '../../ipc/bridge';
 import { useProjectStore } from '../../store/projectStore';
+import { useT } from '../../i18n';
 import {
   createWizardDraft,
   draftTemplates,
@@ -24,6 +25,7 @@ export interface ProjectWizardProps {
 }
 
 export function ProjectWizard({ initialDir, onClose }: ProjectWizardProps) {
+  const t = useT();
   const [draft, setDraft] = useState<WizardDraft>(() => createWizardDraft(initialDir));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,20 +54,20 @@ export function ProjectWizard({ initialDir, onClose }: ProjectWizardProps) {
   };
 
   return (
-    <div style={overlay} role="dialog" aria-label="New project wizard">
+    <div style={overlay} role="dialog" aria-label={t('wizard.title')}>
       <div style={modal}>
-        <h3 style={{ margin: '0 0 10px', fontSize: 15 }}>New Project</h3>
+        <h3 style={{ margin: '0 0 10px', fontSize: 15 }}>{t('wizard.title')}</h3>
 
-        <label style={label}>Project directory</label>
+        <label style={label}>{t('wizard.dir')}</label>
         <input
           style={input}
           value={draft.dir}
-          placeholder="path/to/my-project (.breadesp)"
+          placeholder={t('wizard.dirPlaceholder')}
           spellCheck={false}
           onChange={(e) => patch({ dir: e.target.value })}
         />
 
-        <label style={label}>Chip</label>
+        <label style={label}>{t('wizard.chip')}</label>
         <div style={{ display: 'flex', gap: 8 }}>
           {WIZARD_CHIPS.map((c: ChipKind) => (
             <button
@@ -78,16 +80,16 @@ export function ProjectWizard({ initialDir, onClose }: ProjectWizardProps) {
           ))}
         </div>
 
-        <label style={label}>Template</label>
+        <label style={label}>{t('wizard.template')}</label>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {draftTemplates(draft).map((t) => (
+          {draftTemplates(draft).map((tmpl) => (
             <button
-              key={t.id}
-              style={draft.templateId === t.id ? tplActive : tpl}
-              onClick={() => patch({ templateId: t.id })}
+              key={tmpl.id}
+              style={draft.templateId === tmpl.id ? tplActive : tpl}
+              onClick={() => patch({ templateId: tmpl.id })}
             >
-              <strong>{t.displayName}</strong>
-              <span style={{ fontSize: 11, color: '#64748b' }}>{t.description}</span>
+              <strong>{tmpl.displayName}</strong>
+              <span style={{ fontSize: 11, color: '#64748b' }}>{tmpl.description}</span>
             </button>
           ))}
         </div>
@@ -96,9 +98,9 @@ export function ProjectWizard({ initialDir, onClose }: ProjectWizardProps) {
         {error === null && draftError !== null && <div style={hintBox}>{draftError}</div>}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
-          <button style={btn} disabled={busy} onClick={() => onClose(false)}>Cancel</button>
+          <button style={btn} disabled={busy} onClick={() => onClose(false)}>{t('common.cancel')}</button>
           <button style={btnPrimary} disabled={busy || draftError !== null} onClick={onCreate}>
-            {busy ? 'Creating…' : 'Create'}
+            {busy ? t('wizard.creating') : t('wizard.create')}
           </button>
         </div>
       </div>

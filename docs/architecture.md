@@ -315,6 +315,19 @@ any --error--> error
 - **id 确定性**：实例与连线 id 用 `prefix-<最小可用序号>` 生成，加载已有工程后不冲突。
 - MCU 节点固定在画布左侧，暴露 ESP32 可用 GPIO（6-11/20/24/28-31 为 flash/不存在，不显示）；
   画布内 LED 由 `level` 快照实时点亮，按键按压经 `per:driveInput` 注入。
+- **UX 交互层（2026-09-30）**：Stage 经 ResizeObserver 随容器自适应；滚轮以指针为
+  中心缩放、拖拽背景平移（`canvasViewStore` 变换，网格随世界坐标绘制）；放置/移动
+  吸附网格，拖放显示 ghost 预览，pin/连线 hover 高亮；选中态经 `selectionStore`
+  （实例/连线互斥，Delete 删除、Esc 清空）；反馈走全局 ToastHost（info/error 分级），
+  空画布显示上手引导。属性/调试入口在右侧 `RightPanel`（Radix Tabs，debug 页
+  forceMount 保持输入状态）。
+
+**UI 布局（UX，2026-09-30）**：单行 TopBar（品牌 + 仿真状态灯 | 工程组 | 固件
+badge→Radix Popover | 仿真控制含撤销/重做 | 语言切换 + `?` 快捷键帮助）取代旧的
+header + 三条堆叠工具栏；左列为 Palette（带搜索过滤）+ 外设目录；中央画布；
+底部为 BottomDock（serial/scope/screen/wavegen 四仪器面板，可折叠、逐面板开关、
+localStorage 持久化）；全局 ToastHost 叠加反馈。文案中英双语（i18n 字典，
+`document.documentElement.lang` 随 locale）。
 
 ## 9. 工程持久化（P1.8）
 
@@ -336,8 +349,8 @@ any --error--> error
 - **失败语义**：目录不存在/缺 `meta.json` → `[BB-120]`；meta 损坏 → `[BB-121]`；netlist 读/校验失败 →
   `[BB-122]`；layout 读/校验失败 → `[BB-123]`；无工程打开/目录已存在工程 → `[BB-124]`。
   打开失败不改变当前已打开的工程；保存校验失败时磁盘零写入。
-- **UI 侧**：`ProjectToolbar`（new/open/save/saveAs/close，目录为 MVP 文本输入，
-  原生目录选择器 TODO(PRD §F-PROJ-2)）→ `proj:*` IPC → store `loadProject`（水合两半区，netlist
+- **UI 侧**：`TopBar/ProjectGroup`（new/open/save/saveAs/close + 新建向导入口，
+  目录为 MVP 文本输入，原生目录选择器 TODO(PRD §F-PROJ-2)）→ `proj:*` IPC → store `loadProject`（水合两半区，netlist
   对象标识变化自动触发 `bb:applyNetlist` 重建 Bridge 实例）/ `resetProject`。加载后 id 生成器从已占用
   序号续排，不会与工程内 id 冲突。
 - **往返保证（验收）**：save → close → reopen 后 `ProjectData.netlist/layout` 与保存值结构相等；

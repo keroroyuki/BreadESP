@@ -6,6 +6,7 @@ import { useEffect, useRef } from 'react';
 import { useSimulationStore } from '../../store/simulationStore';
 import { OledRenderer } from './OledRenderer';
 import { TftRenderer } from './TftRenderer';
+import { useT } from '../../i18n';
 import type { RenderSnapshot } from '@breadesp/peripherals';
 
 interface PixelsPayload {
@@ -56,14 +57,15 @@ function ScreenTile({ snap }: { snap: RenderSnapshot }) {
 
 export function ScreenView() {
   const snapshots = useSimulationStore((s) => s.snapshots);
+  const t = useT();
   const screens = Object.values(snapshots)
     .filter((s): s is RenderSnapshot => s?.type === 'pixels')
     .sort((a, b) => a.instanceId.localeCompare(b.instanceId));
 
   return (
-    <div style={{ width: 280, borderLeft: '1px solid #ccc', padding: 8, overflowY: 'auto' }}>
-      <h3 style={h3}>Screen</h3>
-      {screens.length === 0 && <div style={muted}>No screen peripheral active.</div>}
+    <div style={{ flex: 1, width: '100%', boxSizing: 'border-box', padding: 8, overflowY: 'auto' }}>
+      <h3 style={h3}>{t('screen.title')}</h3>
+      {screens.length === 0 && <div style={muted}>{t('screen.empty')}</div>}
       {screens.map((s) => (
         <ScreenTile key={s.instanceId} snap={s} />
       ))}

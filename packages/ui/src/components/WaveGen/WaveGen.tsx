@@ -11,6 +11,7 @@ import { useEffect, useRef } from 'react';
 import { MIC_LIMITS, type MicConfig, type MicWaveform } from '@breadesp/peripherals';
 import { useProjectStore } from '../../store/projectStore';
 import { useCaptureStore } from '../../store/captureStore';
+import { useT } from '../../i18n';
 import { draftFromProps, draftPatch, previewTrace, renderWavePreview } from './wavegenDraft';
 
 const PREVIEW_W = 260;
@@ -19,6 +20,7 @@ const PREVIEW_H = 56;
 function MicWavegenCard({ instanceId, props }: { instanceId: string; props?: Record<string, unknown> }) {
   const updatePeripheralProps = useProjectStore((s) => s.updatePeripheralProps);
   const capturing = useCaptureStore((s) => s.capturing[instanceId] === true);
+  const t = useT();
   const draft = draftFromProps(props);
   const samples = previewTrace(draft);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -46,10 +48,10 @@ function MicWavegenCard({ instanceId, props }: { instanceId: string; props?: Rec
         height={PREVIEW_H}
         style={{ width: PREVIEW_W, height: PREVIEW_H, display: 'block', borderRadius: 4 }}
       />
-      {capturing && <div style={note}>Live capture is overriding the synth waveform.</div>}
+      {capturing && <div style={note}>{t('wavegen.captureNote')}</div>}
 
       <label style={row}>
-        <span style={lbl}>Waveform</span>
+        <span style={lbl}>{t('wavegen.waveform')}</span>
         <select
           value={draft.waveform}
           onChange={(e) => {
@@ -64,7 +66,7 @@ function MicWavegenCard({ instanceId, props }: { instanceId: string; props?: Rec
       </label>
 
       <label style={row}>
-        <span style={lbl}>Frequency</span>
+        <span style={lbl}>{t('wavegen.frequency')}</span>
         <input
           type="number"
           min={MIC_LIMITS.freqHz.min}
@@ -77,7 +79,7 @@ function MicWavegenCard({ instanceId, props }: { instanceId: string; props?: Rec
       </label>
 
       <label style={row}>
-        <span style={lbl}>Amplitude</span>
+        <span style={lbl}>{t('wavegen.amplitude')}</span>
         <input
           type="range"
           min={MIC_LIMITS.amplitude.min}
@@ -91,7 +93,7 @@ function MicWavegenCard({ instanceId, props }: { instanceId: string; props?: Rec
       </label>
 
       <label style={row}>
-        <span style={lbl}>Sample rate</span>
+        <span style={lbl}>{t('wavegen.sampleRate')}</span>
         <input
           type="number"
           min={MIC_LIMITS.sampleRate.min}
@@ -105,7 +107,7 @@ function MicWavegenCard({ instanceId, props }: { instanceId: string; props?: Rec
       </label>
 
       <label style={row}>
-        <span style={lbl}>Bit depth</span>
+        <span style={lbl}>{t('wavegen.bitDepth')}</span>
         <select
           value={String(draft.bits)}
           onChange={(e) => apply({
@@ -120,7 +122,7 @@ function MicWavegenCard({ instanceId, props }: { instanceId: string; props?: Rec
       </label>
 
       <label style={row}>
-        <span style={lbl}>Channels</span>
+        <span style={lbl}>{t('wavegen.channels')}</span>
         <select
           value={String(draft.channels)}
           onChange={(e) => apply({
@@ -128,8 +130,8 @@ function MicWavegenCard({ instanceId, props }: { instanceId: string; props?: Rec
             channels: Number(e.target.value) as MicConfig['channels'],
           })}
         >
-          <option value={1}>Mono</option>
-          <option value={2}>Stereo</option>
+          <option value={1}>{t('wavegen.mono')}</option>
+          <option value={2}>{t('wavegen.stereo')}</option>
         </select>
       </label>
     </div>
@@ -140,11 +142,12 @@ export function WaveGen() {
   // Select the stable peripherals array (inline filter would re-render forever).
   const peripherals = useProjectStore((s) => s.netlist.peripherals);
   const mics = peripherals.filter((p) => p.kind === 'mic');
+  const t = useT();
 
   return (
-    <div style={{ width: 300, borderLeft: '1px solid #ccc', padding: 8, overflowY: 'auto' }}>
-      <h3 style={h3}>Waveform Generator</h3>
-      {mics.length === 0 && <div style={muted}>Place a Microphone to generate a waveform.</div>}
+    <div style={{ flex: 1, width: '100%', boxSizing: 'border-box', padding: 8, overflowY: 'auto' }}>
+      <h3 style={h3}>{t('wavegen.title')}</h3>
+      {mics.length === 0 && <div style={muted}>{t('wavegen.empty')}</div>}
       {mics.map((p) => (
         <MicWavegenCard key={p.instanceId} instanceId={p.instanceId} props={p.props} />
       ))}

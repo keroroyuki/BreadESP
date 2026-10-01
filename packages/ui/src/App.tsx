@@ -1,4 +1,6 @@
-// PRD: §4, §F-BB — Top-level layout. Three columns: palette | breadboard | inspector.
+// PRD: §4, §F-BB — Top-level layout. One TopBar row over a main row of three
+// columns (palette+catalog | breadboard canvas | right panel), with the
+// collapsible BottomDock beneath and a global ToastHost overlay.
 import { useEffect } from 'react';
 import type { RenderSnapshot } from '@breadesp/peripherals';
 import { useSimulationStore } from './store/simulationStore';
@@ -11,17 +13,12 @@ import { bridge } from './ipc/bridge';
 import { BreadboardCanvas } from './components/Breadboard/BreadboardCanvas';
 import { Palette } from './components/Palette/Palette';
 import { Marketplace } from './components/Marketplace/Marketplace';
-import { Inspector } from './components/Inspector/Inspector';
-import { ProjectToolbar } from './components/ProjectToolbar/ProjectToolbar';
-import { ExternalFirmware } from './components/ExternalFirmware/ExternalFirmware';
-import { SimControls } from './components/SimControls/SimControls';
-import { SerialConsole } from './components/SerialConsole/SerialConsole';
-import { ScreenView } from './components/ScreenView/ScreenView';
-import { Oscilloscope } from './components/Oscilloscope/Oscilloscope';
-import { WaveGen } from './components/WaveGen/WaveGen';
+import { RightPanel } from './components/RightPanel/RightPanel';
+import { TopBar } from './components/TopBar/TopBar';
+import { BottomDock } from './components/BottomDock/BottomDock';
+import { ToastHost } from './components/Toast/ToastHost';
 
 export function App() {
-  const status = useSimulationStore((s) => s.status);
   const netlist = useProjectStore((s) => s.netlist);
 
   useEffect(() => {
@@ -81,33 +78,25 @@ export function App() {
 
   return (
     <div style={layout}>
-      <header style={header}>
-        <strong>BreadESP</strong>
-        <span style={{ marginLeft: 12 }}>sim: {status}</span>
-      </header>
-      <ProjectToolbar />
-      <ExternalFirmware />
-      <SimControls />
+      {/* T3.2/T3.7: one TopBar row replaces the header + three stacked toolbars. */}
+      <TopBar />
       <div style={main}>
         <div style={leftCol}>
           <Palette />
           <Marketplace />
         </div>
         <BreadboardCanvas />
-        <Inspector />
+        {/* T4.4: right column = Properties / Debug tabs (Inspector inside). */}
+        <RightPanel />
       </div>
-      <div style={bottom}>
-        <SerialConsole />
-        <ScreenView />
-        <Oscilloscope />
-        <WaveGen />
-      </div>
+      {/* T3.6: toggleable, collapsible dock hosts the four instrument panels. */}
+      <BottomDock />
+      <ToastHost />
     </div>
   );
 }
 
 const layout: React.CSSProperties = { display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'system-ui, sans-serif' };
-const header: React.CSSProperties = { padding: 8, borderBottom: '1px solid #ccc', background: '#1f2937', color: '#fff' };
 const main: React.CSSProperties = { display: 'flex', flex: 1, minHeight: 0 };
 // P5.2: the left column stacks the palette over the local peripheral catalog.
 const leftCol: React.CSSProperties = {
@@ -117,4 +106,3 @@ const leftCol: React.CSSProperties = {
   minHeight: 0,
   borderRight: '1px solid #ccc',
 };
-const bottom: React.CSSProperties = { display: 'flex', height: 220, borderTop: '1px solid #ccc' };

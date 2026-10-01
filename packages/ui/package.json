@@ -12,6 +12,11 @@
   "dependencies": {
     "@breadesp/netlist": "workspace:*",
     "@breadesp/peripherals": "workspace:*",
+    "@radix-ui/react-dialog": "^1.1.23",
+    "@radix-ui/react-popover": "^1.1.23",
+    "@radix-ui/react-tabs": "^1.1.21",
+    "@radix-ui/react-toast": "^1.2.23",
+    "@radix-ui/react-tooltip": "^1.2.16",
     "konva": "^9.3.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -19,9 +24,11 @@
     "zustand": "^4.5.0"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5.4.0",
     "vite": "^5.2.0",
     "vitest": "^1.6.0"
