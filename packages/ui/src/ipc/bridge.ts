@@ -50,9 +50,18 @@ interface ProjectData {
 interface SimLoadInput {
   elfPath: string;
   chip: ChipKind;
-  qemuBin: string;
+  /** Omit (P6.1): the Bridge resolves the QEMU binary and DBus channel itself. */
+  qemuBin?: string;
   gdbPort?: number;
   dbus?: SimDbusChannel;
+}
+
+/** ExampleFirmware — mirrors shell src/project/examples.ts (P6.1). */
+export interface ExampleFirmware {
+  name: string;
+  path: string;
+  chip: ChipKind;
+  note?: string;
 }
 
 /** PeripheralPackageManifest — mirrors shell PluginCatalog (PRD §F-EXT-3, P5.2). */
@@ -184,6 +193,12 @@ interface BridgeApi {
     scanExternal: () => Promise<ExternalScanResult>;
     /** Import a discovered build as firmware.elf; no elfPath picks the newest. Returns the dest path. */
     importExternal: (p?: { elfPath?: string }) => Promise<string>;
+    /** P6.1 (PRD §F-PROJ-1): bundled example firmware (golden fixtures). */
+    listExamples: () => Promise<ExampleFirmware[]>;
+    /** Import an arbitrary .elf path (e.g. an example) as firmware.elf; arch-gated. */
+    importFirmware: (p: { elfPath: string }) => Promise<string>;
+    /** Native file picker import; null when the user canceled. */
+    importFirmwareFile: () => Promise<string | null>;
   };
   bb: { applyNetlist: (p: unknown) => Promise<void>; getNetlist: () => Promise<unknown>; };
   per: {

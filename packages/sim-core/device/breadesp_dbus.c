@@ -1978,7 +1978,7 @@ static void dbus_in_drain(BreadespDbusState *s)
  * qio_channel_write_all), and a blocking read here returns as soon as the
  * bytes the watch fired for are available, so the main loop never stalls.
  */
-static gboolean dbus_sock_watch(GIOChannel *channel, GIOCondition cond,
+static gboolean dbus_sock_watch(QIOChannel *channel, GIOCondition cond,
                                 void *opaque)
 {
     BreadespDbusState *s = opaque;

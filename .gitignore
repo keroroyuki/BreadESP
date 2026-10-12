@@ -16,3 +16,9 @@ packages/sim-core/build/
 
 # Docs site build output (PRD §F-DOC-1; rebuild with pnpm docs:build)
 docs/site/
+
+# Installer staging + output (P6.1; rebuild with pnpm pack:installer)
+build/
+
+# IDE
+.trae/

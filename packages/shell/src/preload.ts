@@ -4,6 +4,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { ChipKind, LayoutFile, Netlist } from '@breadesp/netlist';
 import type { ProjectData } from './project/ProjectManager.js';
 import type { ExternalScanResult } from './project/ExternalProject.js';
+import type { ExampleFirmware } from './project/examples.js';
 import type { PeripheralCatalogLoadResult, PeripheralCatalogScan } from './peripherals/PluginCatalog.js';
 
 /** DBus forward channel — mirrors QemuDbusChannel in sim-core (PRD §6.7). */
@@ -17,7 +18,12 @@ export interface SimDbusChannel {
 export interface SimLoadInput {
   elfPath: string;
   chip: ChipKind;
-  qemuBin: string;
+  /**
+   * Optional since P6.1: omit to let the Bridge resolve the QEMU binary
+   * (packaged bundle / BREADESP_QEMU_BIN / repo bin metadata) and auto-attach
+   * the DBus forward channel when the binary carries the breadesp-dbus device.
+   */
+  qemuBin?: string;
   gdbPort?: number;
   dbus?: SimDbusChannel;
 }
@@ -119,6 +125,10 @@ const api = {
     unlinkExternal: () => ipcRenderer.invoke('proj:unlinkExternal') as Promise<void>,
     scanExternal: () => ipcRenderer.invoke('proj:scanExternal') as Promise<ExternalScanResult>,
     importExternal: (p?: { elfPath?: string }) => ipcRenderer.invoke('proj:importExternal', p) as Promise<string>,
+    // P6.1 (PRD §F-PROJ-1): bundled examples + native file picker imports.
+    listExamples: () => ipcRenderer.invoke('proj:listExamples') as Promise<ExampleFirmware[]>,
+    importFirmware: (p: { elfPath: string }) => ipcRenderer.invoke('proj:importFirmware', p) as Promise<string>,
+    importFirmwareFile: () => ipcRenderer.invoke('proj:importFirmwareFile') as Promise<string | null>,
   },
   // bb:*
   bb: {

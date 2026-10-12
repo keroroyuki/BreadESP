@@ -9,6 +9,7 @@ import { selectCanRedo, selectCanUndo, useProjectStore } from '../../store/proje
 import { toast } from '../../store/toastStore';
 import { useT } from '../../i18n';
 import { Button } from '../ui/Button';
+import { canRunSimulation, runSimulation } from './simRun';
 
 /** PRD §F-SIM-2 range 0.1x–10x; > 1x saturates at host wall clock. */
 const SPEED_CHOICES = [0.1, 0.25, 0.5, 1, 2, 4, 10];
@@ -16,6 +17,8 @@ const SPEED_CHOICES = [0.1, 0.25, 0.5, 1, 2, 4, 10];
 export function SimGroup() {
   const status = useSimulationStore((s) => s.status);
   const speed = useSimulationStore((s) => s.speed);
+  const firmwareElf = useProjectStore((s) => s.firmwareElf);
+  const chip = useProjectStore((s) => s.netlist.chip);
   const canUndo = useProjectStore(selectCanUndo);
   const canRedo = useProjectStore(selectCanRedo);
   const undo = useProjectStore((s) => s.undo);
@@ -24,6 +27,9 @@ export function SimGroup() {
   const t = useT();
 
   const live = status === 'running' || status === 'paused';
+  // P6.1: Run owns the non-live states (idle/stopped/error) and boots the
+  // project's imported firmware.elf into a fresh VM.
+  const runnable = canRunSimulation(status);
 
   const run = (label: string, fn: () => Promise<unknown>): void => {
     setBusyAction(label);
@@ -32,6 +38,14 @@ export function SimGroup() {
         toast.error(t('toast.simFailed', { detail: err instanceof Error ? err.message : String(err) })),
       )
       .finally(() => setBusyAction(null));
+  };
+
+  const onRun = (): void => {
+    if (firmwareElf === null) {
+      toast.warning(t('toast.needFirmware'));
+      return;
+    }
+    run('run', () => runSimulation(bridge.sim, { elfPath: firmwareElf, chip }));
   };
 
   const onTogglePause = (): void => {
@@ -53,14 +67,25 @@ export function SimGroup() {
         ↪ {t('common.redo')}
       </Button>
       <span className="w-px self-stretch bg-bb-line" />
-      <Button
-        variant="primary"
-        busy={busyAction === 'pause'}
-        disabled={!live}
-        onClick={onTogglePause}
-      >
-        {status === 'running' ? `⏸ ${t('toolbar.pause')}` : `▶ ${t('toolbar.resume')}`}
-      </Button>
+      {runnable ? (
+        <Button
+          variant="primary"
+          busy={busyAction === 'run'}
+          title={firmwareElf === null ? t('toast.needFirmware') : (firmwareElf ?? undefined)}
+          onClick={onRun}
+        >
+          ▶ {t('toolbar.run')}
+        </Button>
+      ) : (
+        <Button
+          variant="primary"
+          busy={busyAction === 'pause'}
+          disabled={!live}
+          onClick={onTogglePause}
+        >
+          {status === 'running' ? `⏸ ${t('toolbar.pause')}` : `▶ ${t('toolbar.resume')}`}
+        </Button>
+      )}
       <Button disabled={status === 'idle'} onClick={() => run('reset', () => bridge.sim.reset())}>
         ⟲ {t('toolbar.reset')}
       </Button>

@@ -1,12 +1,15 @@
 // PRD: §6.6 — IPC handler registration. Bridges renderer calls to Bridge services.
-import { ipcMain, type BrowserWindow } from 'electron';
+import { ipcMain, dialog, type BrowserWindow } from 'electron';
 import { chipKindSchema } from '@breadesp/netlist';
 import type { ChipKind, LayoutFile, Netlist } from '@breadesp/netlist';
 import type { ProjectManager } from '../project/ProjectManager.js';
-import type { QemuRunner } from '../qemu/QemuRunner.js';
+import type { QemuRunner, QemuLoadInput } from '../qemu/QemuRunner.js';
 import type { GdbBridge } from '../debugger/GdbBridge.js';
 import type { PeripheralManager } from '../peripherals/PeripheralManager.js';
 import type { PluginCatalog } from '../peripherals/PluginCatalog.js';
+import type { DBusChannel } from '../qemu/DBusChannel.js';
+import { resolveQemu } from '../qemu/resolveQemu.js';
+import { listExampleFirmware } from '../project/examples.js';
 
 export interface HandlerDeps {
   project: ProjectManager;
@@ -14,17 +17,42 @@ export interface HandlerDeps {
   gdb: GdbBridge;
   peripherals: PeripheralManager;
   catalog: PluginCatalog;
+  /**
+   * Live DBus forward channel (P6.1, PRD §4.2/§6.7): when the resolved QEMU
+   * carries the breadesp-dbus device, loads pass its coordinates so bus
+   * transactions reach the peripheral models. Absent in unit tests.
+   */
+  dbus?: DBusChannel;
   win?: BrowserWindow;
 }
 
 export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   const { project, qemu, gdb, peripherals, catalog } = deps;
 
+  /**
+   * P6.1: a renderer-supplied qemuBin keeps full manual control (its dbus
+   * field included); an omitted qemuBin resolves the binary (packaged bundle /
+   * env override / repo metadata) and auto-attaches the live DBus channel when
+   * that binary carries the breadesp-dbus device.
+   */
+  function qemuLoadArgs(p: { elfPath: string; chip: ChipKind; qemuBin?: string; gdbPort?: number; dbus?: QemuLoadInput['dbus'] }): QemuLoadInput {
+    const base = { firmwareElf: p.elfPath, chip: p.chip, gdbPort: p.gdbPort };
+    if (typeof p.qemuBin === 'string' && p.qemuBin !== '') {
+      return { ...base, qemuBin: p.qemuBin, dbus: p.dbus };
+    }
+    const resolved = resolveQemu(p.chip);
+    return {
+      ...base,
+      qemuBin: resolved.qemuBin,
+      dbus: resolved.hasDevice && deps.dbus !== undefined ? { host: '127.0.0.1', port: deps.dbus.port } : undefined,
+    };
+  }
+
   // sim:*
-  ipcMain.handle('sim:load', async (_e, p: { elfPath: string; chip: ChipKind; qemuBin: string; gdbPort?: number; dbus?: { socket?: string; host?: string; port?: number } }) => {
+  ipcMain.handle('sim:load', async (_e, p: { elfPath: string; chip: ChipKind; qemuBin?: string; gdbPort?: number; dbus?: { socket?: string; host?: string; port?: number } }) => {
     // Architecture gate before spawn (dev-plan task P0.6, PRD §9).
     await project.validateFirmware(p.elfPath, p.chip);
-    return qemu.load({ firmwareElf: p.elfPath, chip: p.chip, qemuBin: p.qemuBin, gdbPort: p.gdbPort, dbus: p.dbus });
+    return qemu.load(qemuLoadArgs(p));
   });
   ipcMain.handle('sim:start', async () => qemu.start());
   ipcMain.handle('sim:pause', async () => qemu.pause());
@@ -50,10 +78,10 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
   ipcMain.handle('sim:sendUart', async (_e, p: { data: string }) => qemu.writeStdin(p.data));
 
   // fw:*
-  ipcMain.handle('fw:load', async (_e, p: { elfPath: string; chip: ChipKind }) => {
+  ipcMain.handle('fw:load', async (_e, p: { elfPath: string; chip: ChipKind; qemuBin?: string }) => {
     // Architecture gate before spawn (dev-plan task P0.6, PRD §9).
     await project.validateFirmware(p.elfPath, p.chip);
-    return qemu.load({ firmwareElf: p.elfPath, chip: p.chip, qemuBin: process.env.BREADESP_QEMU_BIN! });
+    return qemu.load(qemuLoadArgs(p));
   });
   ipcMain.handle('fw:listSymbols', async () => { /* TODO(PRD §F-FW-4): via gdb info functions */ return []; });
 
@@ -164,7 +192,29 @@ export async function registerIpcHandlers(deps: HandlerDeps): Promise<void> {
     }
     return project.importExternalFirmware(p?.elfPath);
   });
-  // TODO(PRD §F-PROJ-1): expose project.importFirmware once the firmware-picking UI lands.
+  // P6.1 (PRD §F-PROJ-1): firmware import. The arbitrary-file path opens a
+  // native picker in the main process (renderer file inputs cannot yield an
+  // absolute path under contextIsolation); both paths run the [BB-101]
+  // architecture gate inside ProjectManager.importFirmware.
+  ipcMain.handle('proj:listExamples', async () => listExampleFirmware());
+  ipcMain.handle('proj:importFirmware', async (_e, p: { elfPath: string }) => {
+    if (typeof p?.elfPath !== 'string' || p.elfPath.length === 0) {
+      throw new Error('[BB-130] invalid proj:importFirmware payload (elfPath)');
+    }
+    return project.importFirmware(p.elfPath);
+  });
+  ipcMain.handle('proj:importFirmwareFile', async () => {
+    const options = {
+      title: 'Import firmware ELF',
+      filters: [{ name: 'ESP32 firmware', extensions: ['elf'] }],
+      properties: ['openFile' as const],
+    };
+    const result = deps.win !== undefined
+      ? await dialog.showOpenDialog(deps.win, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return project.importFirmware(result.filePaths[0]);
+  });
 
   // bb:*
   ipcMain.handle('bb:applyNetlist', async (_e, p: unknown) => peripherals.applyNetlist(p as never));

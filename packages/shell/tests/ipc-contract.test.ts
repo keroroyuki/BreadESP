@@ -58,6 +58,7 @@ const EXPECTED_INVOKE_CHANNELS = [
   'dbg:continue', 'dbg:step', 'dbg:stepOver', 'dbg:vars', 'dbg:regs', 'dbg:evaluate',
   'proj:new', 'proj:open', 'proj:save', 'proj:saveAs', 'proj:close',
   'proj:linkExternal', 'proj:unlinkExternal', 'proj:scanExternal', 'proj:importExternal',
+  'proj:listExamples', 'proj:importFirmware', 'proj:importFirmwareFile',
   'bb:applyNetlist', 'bb:getNetlist',
   'per:driveInput', 'per:captureChunk', 'per:rotateKnob',
   'per:catalogScan', 'per:catalogLoad',

@@ -32,6 +32,16 @@ blink 示例工程：LED 连接到 GPIO2，仿真运行中，串口控制台实�
 
 ## 快速开始
 
+### 方式一：安装包（Windows，推荐）
+
+从 [GitHub Releases](https://github.com/keroroyuki/BreadESP/releases/latest) 下载 `BreadESP-Setup-*.exe`，
+双击安装即可——安装包已内置 breadesp-dbus 设备版 QEMU 和示例固件，**无需 Node.js、无需 clone 仓库**。
+
+装好后 30 秒跑通第一个工程：新建工程（blink-led 模板）→ 顶部「固件」面板导入示例 `blink.elf` →
+点「运行」，LED 随固件亮灭，串口打印 `Hello ESP32`。
+
+### 方式二：从源码运行
+
 环境要求：**Node.js ≥ 20**、**pnpm ≥ 9**；Windows / macOS / Linux。
 
 ```bash
@@ -54,8 +64,8 @@ pnpm dev           # 启动应用（vite dev server + Electron）
 
 | 能力 | 需要什么 | 获取方式 |
 |---|---|---|
-| 固件运行、串口、GDB 调试、工程管理 | 常规 QEMU-ESP32 | `pnpm fetch-qemu`（全平台） |
-| LED 亮灭 / OLED 渲染 / 按键注入等外设总线联动 | breadesp-dbus 设备版 QEMU | `node scripts/build-qemu-device.mjs`（Docker Linux / MSYS2 构建；Windows 经 WSL 运行） |
+| 固件运行、串口、GDB 调试、工程管理 | 常规 QEMU-ESP32 | 安装包已内置；源码：`pnpm fetch-qemu`（全平台） |
+| LED 亮灭 / OLED 渲染 / 按键注入等外设总线联动 | breadesp-dbus 设备版 QEMU | 安装包已内置；源码：`node scripts/build-qemu-device.mjs`（Docker 构建 Linux 版，MSYS2/UCRT64 构建 Windows 版，见 §开发者指南） |
 | 断点调试 | `xtensa-esp32-elf-gdb`（esp-gdb 17.x） | ESP-IDF 工具链，设 `BREADESP_GDB_BIN` |
 
 ## 开发指南

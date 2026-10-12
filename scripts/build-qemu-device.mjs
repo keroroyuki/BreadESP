@@ -328,12 +328,53 @@ function buildLinuxDocker() {
   return outTar;
 }
 
-/** Build natively under MSYS2 MINGW64 (static), mirroring espressif configure-win.sh. */
+/**
+ * The espressif postconf helper symlinks the install tree into qemu-bundle/;
+ * os.symlink on a Windows host without Developer Mode dies with OSError 1314
+ * and aborts the whole configure. Replace the helper IN THE LOCAL CHECKOUT
+ * (a gitignored build artifact) with a copy-based variant that tolerates the
+ * not-yet-installed sources. Build-harness workaround, not a device patch.
+ */
+const SYMLINK_INSTALL_TREE_PY = `#!/usr/bin/env python3
+# BreadESP build-harness variant: copy instead of symlink (no Developer Mode).
+from pathlib import PurePath
+import json, os, shlex, shutil, subprocess
+
+def destdir_join(d1, d2):
+    if not d1: return d2
+    return str(PurePath(d1, *PurePath(d2).parts[1:]))
+
+introspect = os.environ.get('MESONINTROSPECT')
+out = subprocess.run([*shlex.split(introspect), '--installed'],
+                     stdout=subprocess.PIPE, check=True).stdout
+for source, dest in json.loads(out).items():
+    bundle_dest = destdir_join('qemu-bundle', dest)
+    os.makedirs(os.path.dirname(bundle_dest), exist_ok=True)
+    if not os.path.exists(source):
+        continue  # postconf runs before ninja install; symlinks tolerate dangles, copies cannot
+    if os.path.isdir(source):
+        shutil.copytree(source, bundle_dest, dirs_exist_ok=True)
+    else:
+        shutil.copy2(source, bundle_dest)
+`;
+
+/** Build natively under MSYS2 (static), mirroring espressif configure-win.sh. */
 function buildWindowsMsys2() {
   const bash = join(MSYS2_DIR, 'usr', 'bin', 'bash.exe');
   if (!existsSync(bash)) {
-    fail(`MSYS2 not found at ${MSYS2_DIR}. Install MSYS2 (MINGW64) and set BREADESP_MSYS2_DIR.`);
+    fail(`MSYS2 not found at ${MSYS2_DIR}. Install MSYS2 and set BREADESP_MSYS2_DIR.`);
   }
+  // Current MSYS2 ships libslirp only in the UCRT64/CLANG64 repos (the legacy
+  // msvcrt MINGW64 repo is being phased out); BREADESP_MSYSTEM switches env.
+  const msystem = process.env.BREADESP_MSYSTEM ?? 'MINGW64';
+  const prefix = { UCRT64: '/ucrt64', CLANG64: '/clang64' }[msystem] ?? '/mingw64';
+  writeFileSync(join(SRC_DIR, 'scripts', 'symlink-install-tree.py'), SYMLINK_INSTALL_TREE_PY);
+  // QEMU's bundled qtest/unit suite does not compile on the current MSYS2
+  // UCRT64 toolchain (gcc 16 vs 2024-era headers: STARTUPINFOA conflicts,
+  // -Werror regressions) and is never run here — BreadESP verification lives
+  // in packages/*/tests. Stub the subdir out of the local checkout (a
+  // gitignored build artifact) so `ninja install` builds the emulator only.
+  writeFileSync(join(SRC_DIR, 'tests', 'meson.build'), '# BreadESP build-harness: QEMU test suite skipped on this host toolchain.\n');
   const script = [
     'set -euo pipefail',
     `cd "$(cygpath -u '${SRC_DIR.replace(/'/g, "'\\''")}')"`,
@@ -342,13 +383,15 @@ function buildWindowsMsys2() {
     `./configure ${CONFIGURE_COMMON.join(' ')} --static --prefix=$PWD/install/qemu`,
     // pkg-config emits dynamic import libs and MSYS-style paths for libintl and
     // libiconv; redirect them to the static archives (espressif configure-win.sh).
-    'MSYS_BASE=$(cygpath -w / | sed "s|\\\\\\\\|/|g")',
-    'sed -i "s|/mingw64/lib/libintl.dll.a|${MSYS_BASE}/mingw64/lib/libintl.a|g; s|/mingw64/lib/libiconv.dll.a|${MSYS_BASE}/mingw64/lib/libiconv.a|g" build/build.ninja',
+    // cygpath -m prints forward slashes directly — no backslash sed, whose
+    // escaping cannot survive the Node -> Cygwin argv -> bash quote chain.
+    'MSYS_BASE=$(cygpath -m /)',
+    `sed -i "s|${prefix}/lib/libintl.dll.a|\${MSYS_BASE%/}${prefix}/lib/libintl.a|g; s|${prefix}/lib/libiconv.dll.a|\${MSYS_BASE%/}${prefix}/lib/libiconv.a|g" build/build.ninja`,
     'ninja -C build install',
     'cd install && tar cf qemu-install.tar qemu',
   ].join('\n');
   run(bash, ['-lc', script], {
-    env: { ...process.env, MSYSTEM: 'MINGW64', CHERE_INVOKING: 'yes' },
+    env: { ...process.env, MSYSTEM: msystem, CHERE_INVOKING: 'yes' },
     cwd: SRC_DIR,
   });
   return join(SRC_DIR, 'install', 'qemu-install.tar');
@@ -407,6 +450,15 @@ try {
   prepareSource();
   installDevice();
   prepareVendoredSubprojects();
+  if (TARGET === 'windows-msys2') {
+    // The docker path ships the vendored wrap subprojects inside the source
+    // tar; the MSYS2 build configures in SRC_DIR directly, so place them
+    // there as directory subprojects — meson then never reaches gitlab.com.
+    for (const name of VENDORED_SUBPROJECTS) {
+      copyTree(join(BUILD_DIR, 'subprojects', name), join(SRC_DIR, 'subprojects', name));
+    }
+    log('vendored subprojects staged into the source tree (msys2 build)');
+  }
   const tar = TARGET === 'linux-docker' ? buildLinuxDocker() : buildWindowsMsys2();
   stageOutput(tar);
   log('done. Smoke check: BREADESP_QEMU_DBUS_BIN=<binary> pnpm --filter @breadesp/shell test');

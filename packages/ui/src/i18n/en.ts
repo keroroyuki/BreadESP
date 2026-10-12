@@ -28,6 +28,7 @@ export const en = {
   'toolbar.close': 'Close',
   'toolbar.pause': 'Pause',
   'toolbar.resume': 'Resume',
+  'toolbar.run': 'Run',
   'toolbar.reset': 'Reset',
   'toolbar.speed': 'speed',
   'toolbar.dirPlaceholder': 'project directory (.breadesp)',
@@ -47,6 +48,9 @@ export const en = {
   'toast.closeFailed': 'Close failed: {detail}',
   'toast.needDir': '{action} failed: enter a project directory first',
   'toast.simFailed': 'Simulation: {detail}',
+  'toast.needFirmware': 'Import a firmware .elf in the Firmware panel first',
+  'toast.importFirmwareOk': 'Firmware imported: {detail}',
+  'toast.importFirmwareFailed': 'Firmware import failed: {detail}',
   'toast.micFailed': 'Microphone capture failed: {detail}',
 
   // external firmware panel
@@ -62,6 +66,10 @@ export const en = {
   'toast.importNone': 'Import failed: no build/*.elf discovered yet',
   'firmware.current': 'firmware: {path}',
   'firmware.none': 'no firmware imported',
+  'firmware.examples': 'Example firmware (bundled golden fixtures)',
+  'firmware.importExample': 'Import example',
+  'firmware.importFile': 'Import .elf file…',
+  'firmware.noExamples': 'no bundled example firmware for {chip}',
 
   // canvas interactions
   'canvas.wiringFrom': 'Wiring from {pin} — click a target pin (Esc cancels).',

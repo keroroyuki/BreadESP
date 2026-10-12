@@ -27,6 +27,7 @@ export const zh: Record<MessageKey, string> = {
   'toolbar.close': '关闭',
   'toolbar.pause': '暂停',
   'toolbar.resume': '继续',
+  'toolbar.run': '运行',
   'toolbar.reset': '重置',
   'toolbar.speed': '速度',
   'toolbar.dirPlaceholder': '工程目录（.breadesp）',
@@ -46,6 +47,9 @@ export const zh: Record<MessageKey, string> = {
   'toast.closeFailed': '关闭失败：{detail}',
   'toast.needDir': '{action}失败：请先输入工程目录',
   'toast.simFailed': '仿真：{detail}',
+  'toast.needFirmware': '请先在“固件”面板导入固件 .elf',
+  'toast.importFirmwareOk': '固件已导入：{detail}',
+  'toast.importFirmwareFailed': '导入固件失败：{detail}',
   'toast.micFailed': '麦克风采集失败：{detail}',
 
   // external firmware panel
@@ -61,6 +65,10 @@ export const zh: Record<MessageKey, string> = {
   'toast.importNone': '导入失败：尚未发现 build/*.elf',
   'firmware.current': '固件：{path}',
   'firmware.none': '未导入固件',
+  'firmware.examples': '示例固件（内置金样）',
+  'firmware.importExample': '导入示例',
+  'firmware.importFile': '从文件导入 .elf…',
+  'firmware.noExamples': '{chip} 暂无内置示例固件',
 
   // canvas interactions
   'canvas.wiringFrom': '正在从 {pin} 连线 — 点击目标引脚（Esc 取消）。',

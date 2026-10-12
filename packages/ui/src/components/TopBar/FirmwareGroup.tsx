@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { bridge } from '../../ipc/bridge';
-import type { ExternalScanResult } from '../../ipc/bridge';
+import type { ExampleFirmware, ExternalScanResult } from '../../ipc/bridge';
 import { useProjectStore } from '../../store/projectStore';
 import { toast } from '../../store/toastStore';
 import { useT } from '../../i18n';
@@ -22,11 +22,14 @@ import {
 
 export function FirmwareGroup() {
   const dir = useProjectStore((s) => s.dir);
+  const chip = useProjectStore((s) => s.netlist.chip);
   const external = useProjectStore((s) => s.external);
   const firmwareElf = useProjectStore((s) => s.firmwareElf);
   const [input, setInput] = useState('');
   const [scan, setScan] = useState<ExternalScanResult | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [examples, setExamples] = useState<ExampleFirmware[]>([]);
+  const [examplePick, setExamplePick] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const t = useT();
 
@@ -54,6 +57,28 @@ export function FirmwareGroup() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dir, external]);
+
+  // P6.1 (PRD §F-PROJ-1): bundled example firmware, filtered to the project's
+  // chip. Refresh when a project opens (the arch gate runs again on import).
+  useEffect(() => {
+    if (dir === null) {
+      setExamples([]);
+      setExamplePick(null);
+      return;
+    }
+    let cancelled = false;
+    bridge.proj
+      .listExamples()
+      .then((list) => {
+        if (cancelled) return;
+        setExamples(list);
+        setExamplePick(null);
+      })
+      .catch(() => { if (!cancelled) setExamples([]); });
+    return () => {
+      cancelled = true;
+    };
+  }, [dir]);
 
   const run = (okKey: 'toast.linkOk' | 'toast.unlinkOk' | 'toast.rescanOk',
                failKey: 'toast.linkFailed' | 'toast.unlinkFailed' | 'toast.rescanFailed',
@@ -119,6 +144,40 @@ export function FirmwareGroup() {
   };
 
   const importPick = scan !== null ? pickImportCandidate(scan.candidates, selected) : null;
+
+  // P6.1 (PRD §F-PROJ-1): bundled examples (chip-filtered) + arbitrary file import.
+  const chipExamples = examples.filter((e) => e.chip === chip);
+
+  const onImportExample = (): void => {
+    const pick = chipExamples.find((e) => e.path === examplePick) ?? chipExamples[0];
+    if (pick === undefined) return;
+    setBusy(true);
+    bridge.proj
+      .importFirmware({ elfPath: pick.path })
+      .then((dest) => {
+        useProjectStore.getState().setFirmwareElf(dest);
+        toast.success(t('toast.importFirmwareOk', { detail: pick.name }));
+      })
+      .catch((err: unknown) =>
+        toast.error(t('toast.importFirmwareFailed', { detail: err instanceof Error ? err.message : String(err) })),
+      )
+      .finally(() => setBusy(false));
+  };
+
+  const onImportFile = (): void => {
+    setBusy(true);
+    bridge.proj
+      .importFirmwareFile()
+      .then((dest) => {
+        if (dest === null) return; // user canceled the picker
+        useProjectStore.getState().setFirmwareElf(dest);
+        toast.success(t('toast.importFirmwareOk', { detail: dest }));
+      })
+      .catch((err: unknown) =>
+        toast.error(t('toast.importFirmwareFailed', { detail: err instanceof Error ? err.message : String(err) })),
+      )
+      .finally(() => setBusy(false));
+  };
 
   return (
     <Popover.Root>
@@ -194,6 +253,32 @@ export function FirmwareGroup() {
           <p className="mt-2 truncate text-bb-muted">
             {firmwareElf !== null ? t('firmware.current', { path: firmwareElf }) : t('firmware.none')}
           </p>
+          {dir !== null && (
+            <div className="flex flex-col gap-2 border-t border-bb-line pt-2">
+              <span className="font-medium">{t('firmware.examples')}</span>
+              {chipExamples.length > 0 ? (
+                <div className="flex items-center gap-2">
+                  <select
+                    className="h-7 min-w-0 flex-1 rounded border border-bb-line bg-white px-1 text-xs"
+                    value={examplePick ?? chipExamples[0]?.path ?? ''}
+                    onChange={(e) => setExamplePick(e.target.value)}
+                  >
+                    {chipExamples.map((e) => (
+                      <option key={e.path} value={e.path} title={e.note}>
+                        {e.name}{e.note !== undefined ? ` — ${e.note}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <Button variant="primary" disabled={busy} onClick={onImportExample}>
+                    {t('firmware.importExample')}
+                  </Button>
+                </div>
+              ) : (
+                <span className="text-bb-muted">{t('firmware.noExamples', { chip })}</span>
+              )}
+              <Button disabled={busy} onClick={onImportFile}>{t('firmware.importFile')}</Button>
+            </div>
+          )}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>

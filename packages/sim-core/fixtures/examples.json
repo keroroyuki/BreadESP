@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "examples": [
+    { "file": "blink.elf", "chip": "esp32", "note": "GPIO2 blink + 'Hello ESP32' UART — pairs with the blink-led template" },
+    { "file": "s3-blink.elf", "chip": "esp32s3", "note": "GPIO2 blink for ESP32-S3 — pairs with the blink-led template" },
+    { "file": "i2c.elf", "chip": "esp32", "note": "SSD1306 init + one write on I2C0 (SDA21/SCL22) — pairs with the oled-ssd1306 template" },
+    { "file": "spi.elf", "chip": "esp32", "note": "ST7789 init + 4 RGB565 pixels on SPI2 (DC on GPIO2)" },
+    { "file": "buzzer.elf", "chip": "esp32", "note": "LEDC tone 440Hz -> 880Hz on GPIO4 (wire a buzzer)" },
+    { "file": "speaker.elf", "chip": "esp32", "note": "I2S0 DMA sine ~1042Hz (wire a speaker)" },
+    { "file": "mic.elf", "chip": "esp32", "note": "I2S0 RX: counts non-zero buffers from a mic (use the WaveGen or live capture)" },
+    { "file": "knob.elf", "chip": "esp32", "note": "Quadrature knob input (wire a knob, turn CCW/CW)" },
+    { "file": "sht.elf", "chip": "esp32", "note": "SHT30 temp/humidity read on I2C0 (wire an SHT30)" },
+    { "file": "uart-echo.elf", "chip": "esp32", "note": "UART line echo — type into the serial console" }
+  ]
+}

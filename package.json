@@ -1,6 +1,6 @@
 {
   "name": "breadesp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "ESP32 virtual breadboard simulator (PRD §1.1)",
   "license": "MIT",
@@ -11,12 +11,15 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "fetch-qemu": "node scripts/fetch-qemu.mjs",
+    "pack:installer": "node scripts/build-installer.mjs",
     "create-peripheral": "pnpm --filter @breadesp/shell exec tsx src/peripherals/scaffold-cli.ts",
     "docs:build": "pnpm --filter @breadesp/docs-site exec tsx src/cli.ts build",
     "docs:check": "pnpm --filter @breadesp/docs-site exec tsx src/cli.ts check",
     "docs:serve": "pnpm --filter @breadesp/docs-site exec tsx src/cli.ts serve"
   },
   "devDependencies": {
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
   },
