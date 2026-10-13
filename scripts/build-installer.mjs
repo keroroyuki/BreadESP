@@ -1,4 +1,4 @@
-// PRD: §5, §10.6 — Windows installer packaging (P6.1).
+// PRD: §5, §10.6 — Installer packaging (P6.1): Windows NSIS + Linux AppImage/deb.
 //
 // Assembles a self-contained Electron app dir and hands it to electron-builder:
 //
@@ -12,9 +12,11 @@
 // Bundling sidesteps pnpm's symlinked node_modules (electron-builder cannot
 // follow them) — the app dir ships zero runtime node_modules. The QEMU device
 // build is produced by `node scripts/build-qemu-device.mjs --target windows-msys2`
-// and is verified before packing; no binary is ever committed (PRD §10.6).
+// (Windows) or `--target linux-docker` (Linux) and is verified before packing;
+// no binary is ever committed (PRD §10.6).
 //
-// Usage: node scripts/build-installer.mjs [--skip-build] [--dir]   (--dir = unpacked only)
+// Usage: node scripts/build-installer.mjs [--target windows|linux] [--skip-build] [--dir]
+//   --target defaults to the host platform; --dir = unpacked only.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, cpSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,11 +30,23 @@ const APP_DIR = join(STAGE, 'app');
 const OUT_DIR = join(STAGE, 'dist');
 const QEMU_SRC = join(REPO_ROOT, 'packages', 'sim-core', 'bin', 'qemu-breadesp', 'qemu');
 
-const SKIP_BUILD = process.argv.includes('--skip-build');
-const DIR_ONLY = process.argv.includes('--dir');
+const argv = process.argv.slice(2);
+const SKIP_BUILD = argv.includes('--skip-build');
+const DIR_ONLY = argv.includes('--dir');
+const arg = (name) => {
+  const i = argv.indexOf(`--${name}`);
+  return i >= 0 ? argv[i + 1] : undefined;
+};
 
 const log = (msg) => console.log(`[build-installer] ${msg}`);
 const fail = (msg) => { throw new Error(msg); };
+
+// Packaging target: NSIS installer on Windows, AppImage + deb on Linux. QEMU
+// exe name and the device-build target id follow the target, not the host.
+const TARGET = arg('target') ?? (process.platform === 'win32' ? 'windows' : 'linux');
+if (!['windows', 'linux'].includes(TARGET)) fail(`unknown --target "${TARGET}" (windows|linux)`);
+const QEMU_EXE = TARGET === 'windows' ? 'qemu-system-xtensa.exe' : 'qemu-system-xtensa';
+const QEMU_TARGET = TARGET === 'windows' ? 'windows-msys2' : 'linux-docker';
 
 function run(bin, args, opts = {}) {
   const res = spawnSync(bin, args, { stdio: 'inherit', shell: process.platform === 'win32', ...opts });
@@ -60,11 +74,11 @@ async function bundle(entry, outfile) {
 
 async function main() {
   // 0. Preconditions.
-  const qemuBin = join(QEMU_SRC, 'bin', 'qemu-system-xtensa.exe');
+  const qemuBin = join(QEMU_SRC, 'bin', QEMU_EXE);
   if (!existsSync(qemuBin)) {
     fail(
-      `Windows breadesp-dbus QEMU missing: ${qemuBin}\n` +
-      'Build it first: node scripts/build-qemu-device.mjs --target windows-msys2',
+      `${QEMU_TARGET} breadesp-dbus QEMU missing: ${qemuBin}\n` +
+      `Build it first: node scripts/build-qemu-device.mjs --target ${QEMU_TARGET}`,
     );
   }
 
@@ -98,6 +112,7 @@ async function main() {
     description: rootPkg.description,
     author: 'BreadESP contributors',
     license: rootPkg.license,
+    homepage: 'https://github.com/keroroyuki/BreadESP',
     main: 'packages/shell/dist/main.js',
     devDependencies: { electron: electronPkg.version },
   };
@@ -107,15 +122,17 @@ async function main() {
   //    carries the breadesp-dbus device build.
   writeFileSync(
     join(QEMU_SRC, 'qemu-breadesp.json'),
-    JSON.stringify({ release: 'esp-develop-9.2.2-20260417', device: 'breadesp-dbus', dbusProtocol: 1, target: 'windows-msys2' }, null, 2) + '\n',
+    JSON.stringify({ release: 'esp-develop-9.2.2-20260417', device: 'breadesp-dbus', dbusProtocol: 1, target: QEMU_TARGET }, null, 2) + '\n',
     'utf8',
   );
 
-  // 5. electron-builder -> NSIS installer.
-  log('packing with electron-builder (downloads electron dist + nsis on first run)...');
+  // 5. electron-builder -> NSIS installer (windows) / AppImage + deb (linux).
+  log(`packing with electron-builder (target=${TARGET}; downloads electron dist + tools on first run)...`);
   const { build, Platform } = await import('electron-builder');
+  const platform = TARGET === 'windows' ? Platform.WINDOWS : Platform.LINUX;
+  const formats = TARGET === 'windows' ? ['nsis'] : ['AppImage', 'deb'];
   await build({
-    targets: Platform.WINDOWS.createTarget(DIR_ONLY ? ['dir'] : ['nsis']),
+    targets: platform.createTarget(DIR_ONLY ? ['dir'] : formats),
     projectDir: APP_DIR,
     config: {
       appId: 'com.breadesp.app',
@@ -135,6 +152,14 @@ async function main() {
         perMachine: false,
         shortcutName: 'BreadESP',
         deleteAppDataOnUninstall: false,
+      },
+      linux: {
+        category: 'Development',
+        artifactName: `BreadESP-\${version}.\${ext}`,
+        description: 'ESP32 virtual breadboard simulator',
+        // deb's control file requires a Maintainer; the bare author name carries
+        // no email, so point the field at the project instead of inventing one.
+        maintainer: 'BreadESP contributors <https://github.com/keroroyuki/BreadESP>',
       },
       publish: null,
     },
