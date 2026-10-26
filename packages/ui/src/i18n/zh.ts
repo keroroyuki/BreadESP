@@ -91,6 +91,16 @@ export const zh: Record<MessageKey, string> = {
   'canvas.view.zoomIn': '放大',
   'canvas.view.zoomOut': '缩小',
   'canvas.view.reset': '重置视图',
+  // 3D view (step 1: scene skeleton + orbit controls)
+  'canvas.view.mode': '视图模式',
+  'canvas.view.mode2d': '2D',
+  'canvas.view.mode3d': '3D',
+  'canvas3d.reset': '重置 3D 视角',
+  'canvas3d.hint': '拖拽部件移动 · 拖拽空白旋转 · 点击引脚连线 · 滚轮缩放',
+  'canvas3d.unsupported': '当前系统无法创建 WebGL 上下文，3D 视图不可用。',
+  'canvas3d.crashed': '3D 视图意外中断。',
+  'canvas3d.backTo2d': '返回 2D',
+  'canvas3d.loading': '正在加载 3D 视图…',
 
   // palette
   'palette.title': '元件库',

@@ -23,6 +23,7 @@ import { toast } from '../../store/toastStore';
 import { useT } from '../../i18n';
 import { bridge } from '../../ipc/bridge';
 import { wirePath } from './Wire';
+import { advanceWiring } from './wiringFlow';
 import {
   containerToWorld,
   gridSegments,
@@ -113,6 +114,11 @@ export function BreadboardCanvas() {
   const [hoverPin, setHoverPin] = useState<string | null>(null);
   const [hoverWireId, setHoverWireId] = useState<string | null>(null);
   const [size, setSize] = useState({ w: WORLD_W, h: WORLD_H });
+  // Drag feedback: the dragged node renders last so it floats above siblings,
+  // and a dashed outline previews the grid-snapped position it will land on
+  // (same math as the release snap).
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [snapGhost, setSnapGhost] = useState<{ x: number; y: number } | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<KonvaStage | null>(null);
@@ -177,31 +183,30 @@ export function BreadboardCanvas() {
   const onPinClick =
     (endpoint: WireEndpoint, anchor: Anchor) => (e: KonvaEventObject<MouseEvent>) => {
       e.cancelBubble = true;
-      if (pending === null) {
+      // Same decision function the 3D view uses (step 4): one rule source.
+      const outcome = advanceWiring(pending?.endpoint ?? null, endpoint);
+      if (outcome.kind === 'start') {
         setPending({ endpoint, anchor });
         setPointer(anchor);
         toast.info(t('canvas.wiringFrom', { pin: endpointLabel(endpoint) }));
         return;
       }
-      if (pending.endpoint.instanceId === endpoint.instanceId && pending.endpoint.pin === endpoint.pin) {
+      if (outcome.kind === 'cancel') {
         clearPending(() => toast.info(t('canvas.wireCancelled')));
         return;
       }
-      if (
-        pending.endpoint.instanceId !== MCU_INSTANCE_ID &&
-        endpoint.instanceId !== MCU_INSTANCE_ID
-      ) {
+      if (outcome.kind === 'not-routable') {
         clearPending(() => toast.warning(t('canvas.wireNotRoutable')));
         return;
       }
-      const id = addWire(pending.endpoint, endpoint);
+      const id = addWire(outcome.from, outcome.to);
       if (id === null) {
         clearPending(() => toast.warning(t('canvas.wireExists')));
       } else {
         clearPending(() =>
           toast.success(t('canvas.wireCreated', {
-            from: endpointLabel(pending.endpoint),
-            to: endpointLabel(endpoint),
+            from: endpointLabel(outcome.from),
+            to: endpointLabel(outcome.to),
           })),
         );
       }
@@ -301,8 +306,23 @@ export function BreadboardCanvas() {
     toast.info(t('canvas.placed', { kind }));
   };
 
+  const setCursor = (style: string): void => {
+    const c = stageRef.current?.container();
+    if (c) c.style.cursor = style;
+  };
+
+  const onNodeDragStart = (instanceId: string) => (): void => {
+    setDraggingId(instanceId);
+    selectInstance(instanceId);
+    setCursor('grabbing');
+  };
+
   const onDragMove = (instanceId: string) => (e: KonvaEventObject<globalThis.DragEvent>): void => {
     movePeripheral(instanceId, e.target.x(), e.target.y());
+    // Live snap-target preview: same snappedPlacement math as the release
+    // snap (T2.3), so the outline never disagrees with the landing spot.
+    const p = snappedPlacement(e.target.x(), e.target.y(), NODE_W, NODE_H);
+    setSnapGhost((prev) => (prev !== null && prev.x === p.x && prev.y === p.y ? prev : p));
   };
 
   // T2.3: release snaps the node to the grid (the drag itself stays free-form
@@ -311,6 +331,9 @@ export function BreadboardCanvas() {
     const p = snappedPlacement(e.target.x(), e.target.y(), NODE_W, NODE_H);
     e.target.position({ x: p.x, y: p.y });
     movePeripheral(instanceId, p.x, p.y);
+    setDraggingId(null);
+    setSnapGhost(null);
+    setCursor('default');
   };
 
   const deleteInstance = (instanceId: string): void => {
@@ -410,6 +433,9 @@ export function BreadboardCanvas() {
                 strokeWidth={1.5}
                 dash={[6, 4]}
                 cornerRadius={8}
+                shadowColor="#2563eb"
+                shadowBlur={12}
+                shadowOpacity={0.3}
               />
               <Text
                 x={8}
@@ -420,6 +446,23 @@ export function BreadboardCanvas() {
                 fill="#2563eb"
               />
             </Group>
+          )}
+
+          {/* Snap-target outline while dragging a node (landing preview). */}
+          {snapGhost !== null && draggingId !== null && (
+            <Rect
+              x={snapGhost.x}
+              y={snapGhost.y}
+              width={NODE_W}
+              height={NODE_H}
+              listening={false}
+              fill="#2563eb"
+              opacity={0.08}
+              stroke="#2563eb"
+              strokeWidth={1.5}
+              dash={[4, 4]}
+              cornerRadius={8}
+            />
           )}
 
           {/* Wires (netlist logic) — under the nodes, click to select, click again to remove. */}
@@ -505,8 +548,14 @@ export function BreadboardCanvas() {
             })}
           </Group>
 
-          {/* Peripheral instances (layout: position is visual-only, PRD §F-BB-4). */}
-          {layout.map((item) => {
+          {/* Peripheral instances (layout: position is visual-only, PRD §F-BB-4).
+              The dragged node renders last so it floats above its siblings. */}
+          {[...layout]
+            .sort(
+              (a, b) =>
+                Number(a.instanceId === draggingId) - Number(b.instanceId === draggingId),
+            )
+            .map((item) => {
             const pins = peripheralPins(item.kind);
             const sel = selectedInstance === item.instanceId;
             const snap = snapshots[item.instanceId];
@@ -518,6 +567,7 @@ export function BreadboardCanvas() {
                 x={item.x}
                 y={item.y}
                 draggable
+                onDragStart={onNodeDragStart(item.instanceId)}
                 onDragMove={onDragMove(item.instanceId)}
                 onDragEnd={onNodeDragEnd(item.instanceId)}
                 onClick={(e) => {

@@ -92,6 +92,16 @@ export const en = {
   'canvas.view.zoomIn': 'Zoom in',
   'canvas.view.zoomOut': 'Zoom out',
   'canvas.view.reset': 'Reset view',
+  // 3D view (step 1: scene skeleton + orbit controls)
+  'canvas.view.mode': 'View mode',
+  'canvas.view.mode2d': '2D',
+  'canvas.view.mode3d': '3D',
+  'canvas3d.reset': 'Reset 3D view',
+  'canvas3d.hint': 'Drag parts to move · drag empty space to rotate · click pins to wire · wheel to zoom',
+  'canvas3d.unsupported': 'This system cannot create a WebGL context, so the 3D view is unavailable.',
+  'canvas3d.crashed': 'The 3D view stopped unexpectedly.',
+  'canvas3d.backTo2d': 'Back to 2D',
+  'canvas3d.loading': 'Loading 3D view…',
 
   // palette
   'palette.title': 'Peripherals',

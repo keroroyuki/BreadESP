@@ -9,7 +9,7 @@
 │  UI 进程       │ ────────────── │  Bridge (Node)        │ ────────────── │  QEMU-ESP32    │
 │ (Electron      │  ipcRenderer   │  (Electron 主进程)     │  + QMP + DBus   │  (子进程)        │
 │   renderer)    │                │  - QemuRunner         │  socket         │  - CPU          │
-│  React+Konva   │                │  - GdbBridge          │                 │  - Flash/RAM    │
+│ React+Konva+3D │                │  - GdbBridge          │                 │  - Flash/RAM    │
 │                │                │  - PeripheralManager  │                 │  - 外设模型      │
 │                │                │  - ProjectManager     │                 │  - DBus Forward │
 │                │                │  - NetlistResolver    │                 │    Device        │
@@ -328,6 +328,26 @@ header + 三条堆叠工具栏；左列为 Palette（带搜索过滤）+ 外设�
 底部为 BottomDock（serial/scope/screen/wavegen 四仪器面板，可折叠、逐面板开关、
 localStorage 持久化）；全局 ToastHost 叠加反馈。文案中英双语（i18n 字典，
 `document.documentElement.lang` 随 locale）。
+
+### 8.1 3D 视图（2026-10-23，`components/Breadboard3D/`）
+
+与 2D 画布并列的可切换视图（`viewModeStore`，默认 3D；`BreadboardHost` 按模式挂载
+`BreadboardCanvas` 或懒加载的 `Canvas3D`），共用同一份网表、布局、选中态与快照：
+
+| 关注点 | 实现 | 不变量 |
+|---|---|---|
+| 工程格式 | `boardSpace.ts`：世界 `(x,y)` → 板面 `(x, 0, y)`，+Y 朝上 | `layout.json` 仍是 2D 坐标，两种视图互开 |
+| 部件建模 | `models/*`：程序化几何，底面坐在 y=0；`modelCatalog`/`modelRegistry` 以 `Record<ModelKey, …>` 保证穷尽 | 未建模 kind 落到 `generic`，不阻塞第三方外设 |
+| 引脚 | `wiring/pinRows3d.ts` 从 `factory.pins` 取身份，摆放落在模型自身排针；MCU 焊盘来自 `mcuPinLayout` | 引脚身份单一来源，3D 摆放不污染 2D 锚点 |
+| 连线 | `WiresLayer`（弧高随跨度）；`Breadboard/wiringFlow.ts` 决策函数被 2D/3D 共用 | 两视图连线规则不可能分叉 |
+| 实时态 | 快照 → LED 亮度 / 蜂鸣器占空比 / 扬声器活动 / 麦克风 LIVE；屏幕经 `CanvasTexture` 复用 `OledRenderer`/`TftRenderer` | 3D 玻璃与侧栏屏幕像素一致 |
+| 交互 | 拖部件=移动（拖拽期间禁用轨道旋转）、拖空白=旋转、滚轮=缩放、右键=平移；面板拖入经 ray 桥 + 虚线 ghost；引脚按"点击射线到锚点的三维距离"拾取（避开模型自身遮挡） | 吸附/夹取/撤销合并与 2D 完全一致 |
+| 健壮性 | WebGL 探测缓存（模式切换会重挂载）、错误边界（可返回 2D）、`WebGL2 · GPU · FPS` 徽标；dev-only 探针 `__bb_scene/__bb_project/__bb_pick` 在生产构建中被剔除 | 无 WebGL 时不会留下空白列 |
+
+- **依赖**：`three@0.170`、`@react-three/fiber@8`、`@react-three/drei@9`（r3f v9/drei v10 要求 React 19，
+  故锁 React 18 分支）；3D 单独成 chunk，2D 会话不解析该代码（Vite `chunkSizeWarningLimit` 注释说明原因）。
+- **验证**：`boardSpace` / `modelCatalog` / `pinRows3d` / `wiringFlow` / `wiring3dStore` 均为纯逻辑并被单测覆盖；
+  视觉与交互在 Electron 中用合成输入验收（面板拖入、拖拽吸附、引脚连线、连线删除、Delete、2D 回归）。
 
 ## 9. 工程持久化（P1.8）
 

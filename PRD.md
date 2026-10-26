@@ -88,6 +88,8 @@
 - F-BB-4 MUST 连线以"网表"持久化，与 UI 布局分离（布局仅视觉，网表是逻辑）。
 - F-BB-5 MUST 支持撤销/重做（至少 20 步）。
 - F-BB-6 MUST 支持保存/加载工程（`.breadesp` 目录）。
+- F-BB-7 SHOULD 提供可切换的 3D 建模视图：轨道旋转/缩放/平移、部件拖拽移动与网格吸附、引脚连线、
+  实时状态呈现；与 2D 画布共用同一份网表与布局，工程文件不引入 3D 坐标。
 
 ### 3.5 外设交互（F-PER）
 - F-PER-1 LED：根据所连 GPIO 电平实时亮灭，支持 PWM 调亮度（占空比→亮度）。
@@ -212,7 +214,8 @@
 | 渲染框架 | React 18 + TypeScript | 生态、AI 训练充分 |
 | 构建工具 | Vite 5 | 快、AI 熟悉 |
 | 状态管理 | Zustand | 轻量、易测 |
-| 画布 | Konva.js（react-konva） | 2D 图元与命中检测完备 |
+| 画布（2D） | Konva.js（react-konva） | 2D 图元与命中检测完备；仍是编辑主视图 |
+| 3D 视图（附加） | three.js + `@react-three/fiber` v8 + drei v9 | 程序化部件建模、轨道旋转、raycast 拾取；与 2D 共用网表/布局，不改变工程格式 |
 | 音频 | WebAudio API | 内置、无依赖 |
 | 仿真核心 | QEMU-ESP32（`espressif/qemu`） | 真实指令执行、JTAG/GDB 现成 |
 | 调试器 | `xtensa-esp32-elf-gdb` + GDB/MI | 官方工具链 |
@@ -598,4 +601,5 @@ MVP 显式不做（标记 TODO，后续里程碑）：
 
 | 日期 | 版本 | 摘要 | 作者 |
 |---|---|---|---|
+| 2026-10-23 | v0.1.x | 新增可切换 3D 建模视图：程序化部件模型、3D 内拖拽/连线/旋转、实时状态，与 2D 共用网表与布局（工程格式不含 3D 坐标），3D 为懒加载 chunk；§5 在 Konva 之外增列 3D 渲染栈（附加而非替换）；§3.4 增补 F-BB-7 | AI-assisted |
 | v0.1 | 初始 PRD，定义 MVP 与目录骨架 | AI-assisted draft |

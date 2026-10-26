@@ -10,7 +10,7 @@ import { useProjectStore } from './store/projectStore';
 import { useDebuggerStore } from './store/debuggerStore';
 import { useCaptureStore } from './store/captureStore';
 import { bridge } from './ipc/bridge';
-import { BreadboardCanvas } from './components/Breadboard/BreadboardCanvas';
+import { BreadboardHost } from './components/Breadboard/BreadboardHost';
 import { Palette } from './components/Palette/Palette';
 import { Marketplace } from './components/Marketplace/Marketplace';
 import { RightPanel } from './components/RightPanel/RightPanel';
@@ -85,7 +85,7 @@ export function App() {
           <Palette />
           <Marketplace />
         </div>
-        <BreadboardCanvas />
+        <BreadboardHost />
         {/* T4.4: right column = Properties / Debug tabs (Inspector inside). */}
         <RightPanel />
       </div>

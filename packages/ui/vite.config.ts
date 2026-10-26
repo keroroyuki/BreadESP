@@ -16,6 +16,10 @@ export default defineConfig({
       '@breadesp/peripherals': fileURLToPath(new URL('../peripherals/src/index.ts', import.meta.url)),
     },
   },
-  build: { outDir: 'dist', emptyOutDir: true },
+  // The 3D view is a lazy chunk (three.js + drei, ~1 MB minified) that only a 3D
+  // session downloads; the 2D editor's initial bundle stays small. The default
+  // 500 kB warning would fire on that chunk on every build, so the limit is raised
+  // to just above it instead of splitting the renderer library itself.
+  build: { outDir: 'dist', emptyOutDir: true, chunkSizeWarningLimit: 1400 },
   server: { port: 5173, strictPort: true },
 });
