@@ -29,13 +29,18 @@ function pipe(tag, child) {
 
 async function waitForPort(port, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const ok = await new Promise((res) => {
-      const sock = connect(port, '127.0.0.1');
+  // Vite binds `localhost`, which may resolve to only ::1 (IPv6) or only
+  // 127.0.0.1 depending on the host — probe both so a healthy server is
+  // never reported as a timeout.
+  const probe = (host) =>
+    new Promise((res) => {
+      const sock = connect(port, host);
       sock.once('connect', () => { sock.destroy(); res(true); });
       sock.once('error', () => res(false));
     });
-    if (ok) return;
+  while (Date.now() < deadline) {
+    const [v6, v4] = await Promise.all([probe('::1'), probe('127.0.0.1')]);
+    if (v6 || v4) return;
     await new Promise((res) => setTimeout(res, 300));
   }
   throw new Error(`vite dev server did not open :${port} within ${timeoutMs / 1000}s`);
@@ -64,9 +69,14 @@ await waitForPort(PORT);
 const require = createRequire(join(shellDir, 'package.json'));
 const electronPath = require('electron'); // npm pkg exports the binary path outside Electron
 console.log(`[dev] vite ready on ${DEV_URL} — launching electron`);
+// Terminals hosted inside Electron apps (Trae/IDE integrated shells) leak
+// ELECTRON_RUN_AS_NODE=1, which turns the spawned binary back into plain Node
+// and crashes main with `app.whenReady` undefined — never pass it through.
+const electronEnv = { ...process.env, VITE_DEV_SERVER_URL: DEV_URL };
+delete electronEnv.ELECTRON_RUN_AS_NODE;
 electron = spawn(electronPath, ['.'], {
   cwd: shellDir,
-  env: { ...process.env, VITE_DEV_SERVER_URL: DEV_URL },
+  env: electronEnv,
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 pipe('electron', electron);
