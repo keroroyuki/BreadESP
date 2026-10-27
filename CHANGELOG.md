@@ -3,7 +3,7 @@
 All notable changes to BreadESP are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0] - 2026-10-27
 
 ### Added
 - **Linux installer (P6.1)**: `scripts/build-installer.mjs` is now target-aware (`--target windows|linux`, defaulting to the host platform — `pnpm pack:installer` on Linux/WSL packs Linux). The Linux build produces an **AppImage** and a **deb** via electron-builder from the same self-contained app dir, bundling the `linux-docker` breadesp-dbus QEMU build (`resources/qemu/`) and the example firmwares (`resources/examples/`); the QEMU exe-name/precondition/marker now follow the target instead of being Windows-hardcoded. The staged app manifest gains `homepage`, and the deb sets an explicit `maintainer` (deb control-file requirement — the bare author name carries no email). Smoke (CDP against linux-unpacked under WSLg): bridge exposed → 20 bundled examples listed from `resources/examples` → `sim.load` auto-resolves `resources/qemu` → `sim.start` → status `running`, blink.elf UART streams "Hello ESP32"; AppImage `--appimage-extract` integrity + desktop entry verified. Note: the Windows path of the script is unchanged but was not re-run on Windows in this pass.
