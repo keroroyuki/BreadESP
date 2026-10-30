@@ -113,6 +113,17 @@ pnpm dev           # 启动应用（vite dev server + Electron）
 - [docs/tutorials/](docs/tutorials/01-getting-started.md) — 分步教程（上手、首个工程、调试、外设参考、外设创作、VS Code）
 - [CHANGELOG.md](CHANGELOG.md) — 变更记录
 
+## 贡献流程
+
+`main` 受保护：新功能、bug 修复、文档等任何改动都必须从 `main` 切分支、开 PR，不能直推。
+
+1. `git switch -c feat/ui-3d-snap`（从最新 `main`）
+2. 提交信息遵循 Conventional Commits；本地钩子由 `pnpm install` 自动安装
+3. 推送并开 PR：**PR 标题就是 squash 后的 commit message**，CI `verify` 必须绿
+4. Squash merge，分支自动删除
+
+详见 `CONTRIBUTING.md` 与 [docs/dev-plan.md](docs/dev-plan.md) §6（分支与发布流程）。
+
 ## AI Agent 约定（PRD §10）
 
 - 代码改动前先读对应 PRD 章节，文件头注释 `// PRD: §X.Y`。

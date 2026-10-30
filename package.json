@@ -15,7 +15,11 @@
     "create-peripheral": "pnpm --filter @breadesp/shell exec tsx src/peripherals/scaffold-cli.ts",
     "docs:build": "pnpm --filter @breadesp/docs-site exec tsx src/cli.ts build",
     "docs:check": "pnpm --filter @breadesp/docs-site exec tsx src/cli.ts check",
-    "docs:serve": "pnpm --filter @breadesp/docs-site exec tsx src/cli.ts serve"
+    "docs:serve": "pnpm --filter @breadesp/docs-site exec tsx src/cli.ts serve",
+    "verify": "pnpm typecheck && pnpm test && pnpm test:scripts",
+    "test:scripts": "vitest run --root scripts",
+    "setup:hooks": "node scripts/setup-hooks.mjs",
+    "prepare": "node scripts/setup-hooks.mjs"
   },
   "devDependencies": {
     "electron-builder": "^26.15.3",
