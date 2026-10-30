@@ -3,6 +3,11 @@
 All notable changes to BreadESP are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Repository workflow (ADR 0001)**: `main` is protected — every change lands through a branch + PR, gated by a single `verify` CI job (typecheck + tests + PR-title lint), squash-only merges and linear history. Adds `.github/workflows/ci.yml`, `.github/pull_request_template.md`, `.githooks/` (`commit-msg`, `pre-push`, installed by `pnpm install` via `prepare`), `scripts/check-commit-message.mjs` (Conventional Commits validator shared by the hook and CI, with vitest coverage), `CONTRIBUTING.md` and `docs/decisions.md`. PRD §7/§10 and `docs/dev-plan.md` §5/§6/§9 updated to the trunk-based model; the planned `dev` branch is dropped.
+
 ## [0.2.0] - 2026-10-27
 
 ### Added
