@@ -424,12 +424,21 @@ my-idea/
 ├── pnpm-workspace.yaml
 ├── tsconfig.base.json
 ├── .gitignore
+├── CONTRIBUTING.md             # 贡献流程入口（§10）
+├── .github/
+│   ├── workflows/ci.yml        # 唯一合并门禁（typecheck + test + PR 标题）
+│   └── pull_request_template.md
+├── .githooks/
+│   ├── commit-msg              # Conventional Commit 校验
+│   └── pre-push                # 禁止直推 main
 ├── scripts/
 │   ├── dev.mjs                 # 开发编排：vite dev server + Electron 主进程（pnpm dev）
 │   ├── fetch-qemu.mjs          # 按需下载 QEMU-ESP32 二进制
 │   ├── build-qemu-device.mjs   # 构建 breadesp-dbus 设备版 QEMU（Docker Linux / MSYS2）
 │   ├── make-blink-elf.mjs      # 生成 blink.elf 金样固件
 │   ├── make-i2c-elf.mjs        # 生成 i2c.elf 固件（GPIO+I2C 事务）
+│   ├── check-commit-message.mjs # 提交信息校验（hook 与 CI 共用）
+│   ├── setup-hooks.mjs         # 安装 .githooks（pnpm install 自动执行）
 │   └── lib/
 │       └── xtensa-elf.mjs      # 共享 Xtensa 汇编器 + ELF32 写入器
 ├── docs/
@@ -437,6 +446,7 @@ my-idea/
 │   ├── dap.md                  # DAP 适配器使用指南（§F-DBG-6）
 │   ├── peripheral-sdk.md
 │   ├── dev-plan.md
+│   ├── decisions.md            # 流程/架构决策记录（ADR）
 │   ├── site/                   # 文档站构建产物（§F-DOC-1, P5.4；gitignored，pnpm docs:build 生成）
 │   └── tutorials/              # 分步教程（§F-DOC-2, P5.4；文件名序即顺序）
 │       ├── 01-getting-started.md
@@ -594,6 +604,7 @@ MVP 显式不做（标记 TODO，后续里程碑）：
 5. TODO 标注格式统一：`// TODO(PRD §X.Y): <一句话>`，便于后续检索。
 6. 不得放置任何二进制文件；QEMU 通过 `scripts/fetch-qemu.mjs` 拉取。
 7. UI 文案中英双语（i18n 字典驱动，技术符号保留英文）；日志与错误码消息使用英文；中文限文档与注释。
+8. 任何改动 MUST 从 `main` 切分支并经 Pull Request 合并；MUST NOT 直接 push `main`、MUST NOT 使用 `git commit --no-verify` 跳过校验。提交信息与 PR 标题 MUST 符合 `docs/dev-plan.md` §5.2。
 
 ---
 
@@ -601,5 +612,6 @@ MVP 显式不做（标记 TODO，后续里程碑）：
 
 | 日期 | 版本 | 摘要 | 作者 |
 |---|---|---|---|
+| 2026-10-30 | v0.2.x | 开发流程加固：主干开发（不设 `dev`）+ 分支保护（PR-only、squash、required check `verify`）+ Conventional Commits 校验；§7 增补 `.github/`、`.githooks/`、`CONTRIBUTING.md`、`docs/decisions.md`；§10 增补 PR 流程硬约束 | AI-assisted |
 | 2026-10-23 | v0.1.x | 新增可切换 3D 建模视图：程序化部件模型、3D 内拖拽/连线/旋转、实时状态，与 2D 共用网表与布局（工程格式不含 3D 坐标），3D 为懒加载 chunk；§5 在 Konva 之外增列 3D 渲染栈（附加而非替换）；§3.4 增补 F-BB-7 | AI-assisted |
 | v0.1 | 初始 PRD，定义 MVP 与目录骨架 | AI-assisted draft |

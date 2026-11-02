@@ -1,0 +1,5 @@
+#!/bin/sh
+# PRD: §10 — 提交信息校验（docs/dev-plan.md §5.2）。
+set -e
+repository_root=$(git rev-parse --show-toplevel)
+exec node "$repository_root/scripts/check-commit-message.mjs" --file "$1"

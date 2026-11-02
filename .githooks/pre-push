@@ -1,0 +1,12 @@
+#!/bin/sh
+# PRD: §10 — 禁止直接推送到 main（docs/dev-plan.md §6.3）。
+status=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/main)
+      echo "ERROR: direct push to main is blocked; push a branch and open a pull request (docs/dev-plan.md §6)." >&2
+      status=1
+      ;;
+  esac
+done
+exit $status

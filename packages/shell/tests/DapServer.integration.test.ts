@@ -235,7 +235,10 @@ describe('DapServer (mock GDB subprocess)', () => {
   it('runs the launch flow against mock QEMU and tears the VM down on disconnect', async () => {
     const { client } = makeServer();
     await client.request('initialize', { adapterID: 'breadesp' });
-    const launch = await client.request('launch', { elfPath: 'mock://blink.elf', chip: 'esp32' });
+    // The mock backend supplies its own argv through qemuArgsBuilder, so the
+    // QEMU binary is never spawned; pass node explicitly so launch does not
+    // depend on a locally fetched QEMU manifest (CI has none).
+    const launch = await client.request('launch', { elfPath: 'mock://blink.elf', chip: 'esp32', qemuBin: NODE });
     expect(launch.success).toBe(true);
     await client.waitEvent('initialized');
     await client.request('setFunctionBreakpoints', { breakpoints: [{ name: 'app_main' }] });

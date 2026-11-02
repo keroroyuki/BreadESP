@@ -424,11 +424,12 @@ lib/shell 包不动；不做暗色主题、多选框选、MCU 移动与右键菜
 <footer 可选>
 ```
 
-- **type**：`feat | fix | refactor | docs | test | chore | build | ci | perf`
-- **scope**：包名或模块，如 `shell`、`ui`、`peripherals`、`sim-core`、`netlist`、`prd`、`docs`
-- **subject**：祈使句、英文、≤50 字符、首字母小写、末尾无句号
+- **type**：`feat | fix | refactor | docs | test | chore | build | ci | perf | revert`
+- **scope**：可选。已知值 `shell`、`ui`、`peripherals`、`sim-core`、`netlist`、`docs-site`、`docs`、`prd`、`release`、`dev`、`build`、`ci`、`deps`、`repo`、`test`；未知 scope 仅告警
+- **subject**：祈使句、英文、首字母小写、末尾无句号；首行硬上限 **72** 字符，subject 建议 ≤50（超出仅告警）
 - **body**：说明"为什么"（非"做了什么"），每行 ≤72 字符
 - **footer**：`Refs: PRD §X.Y`、`Breaking:`、`Closes #N`
+- **强制**：`scripts/check-commit-message.mjs`（本地 `.githooks/commit-msg` + CI 的 PR 标题）；squash 合并后 **PR 标题即最终 commit message**，同样受本节约束
 
 **示例**：
 ```
@@ -459,26 +460,28 @@ Previously applyNetlist leaked old instances on re-apply.
 
 ## 6. 分支与发布流程
 
-### 6.1 分支模型
-- `main`：稳定主干，始终可构建可演示。
-- `dev`：集成分支，PR 目标。
-- `feat/<scope>-<short>`：功能分支。
-- `fix/<scope>-<short>`：修复分支。
-- `release/vX.Y.Z`：发布分支。
+### 6.1 分支模型（主干开发）
+- `main`：唯一长期分支，受保护，始终可构建、可演示；只能经 PR 进入。
+- `<type>/<scope>-<short>`：短期工作分支，从最新 `main` 切出，合并后自动删除；生命周期 ≤3 天。
+- `release/vX.Y.Z`：可选，仅发布冻结窗口使用，发布后合回 `main` 并删除。
+- **不设 `dev` 长期集成分支**（2026-10-30 决策，背景与复审条件见 `docs/decisions.md` 0001）。
 
 ### 6.2 流程
-1. 从 `dev` 切功能分支。
-2. 每个任务一个或多个 commit，推送前本地跑 `pnpm typecheck && pnpm test`。
-3. PR 到 `dev`，CI 必须绿。
-4. 里程碑达成：`dev` → `main` 的 PR，打 tag `vX.Y.Z`（里程碑号）。
+1. `git switch main && git pull --ff-only`，再 `git switch -c feat/ui-3d-snap`。
+2. 小步提交；每个 commit 过 `.githooks/commit-msg`；推送前本地跑 `pnpm verify`。
+3. `git push -u origin <branch>`，开 PR（目标 `main`），标题符合 §5.2。
+4. CI `verify` 绿 + 自查清单勾完 → **Squash and merge**。
+5. 合并后删除分支；`main` 保持线性，PR 标题成为唯一 commit message。
 
-### 6.3 版本号
-- 遵循 SemVer。
-- 0.x 期间：M0–M1 为 `0.1.x`，M2 为 `0.2.x`，依此类推。
-- 1.0：M4 完成、文档齐全、有集成测试覆盖。
+### 6.3 保护规则（GitHub ruleset `protect-main`）
+- 禁止直推 / 强推 / 删除；必须开 PR；required approvals = 0（单人维护，见 decisions 0001）。
+- 必须通过 `verify` status check；必须线性历史；只允许 squash 合并；服务端校验 commit message 格式。
+- 紧急通道：仅当 GitHub Actions 全局故障时，临时把 ruleset 置为 `Evaluate`；修复后 24 小时内恢复，并在 PR / CHANGELOG 记录。
 
-### 6.4 Tag 命名
-- `v0.1.0-m1`、`v0.2.0-m2`...里程碑发布用 `-mN` 后缀。
+### 6.4 版本号与 Tag
+- 遵循 SemVer；0.x 期间里程碑对应次版本（M0–M1 `0.1.x`、M2 `0.2.x`，依此类推）。
+- tag 统一 `vX.Y.Z`（不再使用 `-mN` 后缀），只从 `main` 打，不允许移动或删除。
+- 发布 PR：`chore(release): vX.Y.Z`（版本号 + CHANGELOG）→ 合并 → `git tag vX.Y.Z && git push origin vX.Y.Z`。
 
 ---
 
@@ -534,6 +537,7 @@ Previously applyNetlist leaked old instances on re-apply.
 - [ ] 无二进制入库
 - [ ] 有对应测试或标注 `TODO`
 - [ ] commit message 符合 §5.2
+- [ ] 通过分支 + PR 合并，未直推 `main`（PR 标题同样符合 §5.2）
 - [ ] 改动 PRD 的同步更新 PRD
 
 ### 9.3 禁止行为
@@ -542,6 +546,7 @@ Previously applyNetlist leaked old instances on re-apply.
 - 禁止删除既有测试以让其通过。
 - 禁止在 commit 中混入多个无关变更。
 - 禁止用 `console.log` 留调试输出（用 `log()` 通道）。
+- 禁止直接 `push` `main`、禁止 `--no-verify`、禁止绕过 PR 合并。
 
 ### 9.4 不确定时
 - 接口含糊 → 停下，先在 PRD 提 issue（注释 `// TODO(PRD §X.Y): 接口待澄清`），交付最小可运行实现。
