@@ -475,7 +475,7 @@ Previously applyNetlist leaked old instances on re-apply.
 
 ### 6.3 保护规则（GitHub ruleset `protect-main`）
 - 禁止直推 / 强推 / 删除；必须开 PR；required approvals = 0（单人维护，见 decisions 0001）。
-- 必须通过 `verify` status check；必须线性历史；只允许 squash 合并；服务端校验 commit message 格式。
+- 必须通过 `verify` status check；必须线性历史；只允许 squash 合并；PR 标题格式由 CI 的 `verify` 校验。
 - 紧急通道：仅当 GitHub Actions 全局故障时，临时把 ruleset 置为 `Evaluate`；修复后 24 小时内恢复，并在 PR / CHANGELOG 记录。
 
 ### 6.4 版本号与 Tag

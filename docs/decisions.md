@@ -27,6 +27,7 @@
 - 质量门禁从"人工 review"转为"CI + 可审计证据"，PR 描述与 CHANGELOG 的重要性上升。
 - 每个 PR 的 squash commit 标题必须规范，因为它就是 `main` 的历史。
 - 本地钩子可被 `--no-verify` 绕过（明令禁止），但服务端 ruleset 与 CI 仍会拦截不合规的 PR。
+- 服务端 `commit_message_pattern` 规则当前被 GitHub API 拒绝（422），因此消息格式只由 CI 的 PR 标题检查把关；若后续 API 支持，再补进 `protect-main`。
 
 ### 复审条件
 
