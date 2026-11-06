@@ -5,6 +5,7 @@
 > 面向 AI Agent 编写：结构编号化、路径精确化、每个待办测试项有稳定 ID 与验收标准。
 > 生成基线：commit `06c604c`（P5.4 完成），全仓 783 个 `it()` 用例，Windows 全量绿（769 通过 + 14 门控跳过）。
 > 2026-09-30 更新：F-BB-5 撤销/重做入账（ui +8），实测全仓 790 个 `it()` 用例，Windows 全量绿（776 通过 + 14 门控跳过）。
+> 2026-11-05 更新：commit `ffa15bb`（v0.2.x，含 3D 视图与 UX 加固），实测全仓 926 个 `it()` 用例，Windows 全量绿（923 通过 + 3 门控跳过）；`sim-speed.e2e` 改为虚拟时钟比例断言（见 §7）。
 
 ---
 
@@ -34,28 +35,30 @@ packages/docs-site (离线文档站构建器，纯工具链)
 scripts/ (fetch-qemu / build-qemu-device / 10 个 make-*-elf 固件生成器)
 ```
 
-### 1.2 测试规模基线（783 用例）
+### 1.2 测试规模基线（926 用例）
 
 | 包 | src 文件 | 测试文件 | 用例数 | 测试类型构成 |
 |---|---|---|---|---|
-| `packages/shell` | 20 (~3990 行） | 34 vitest + 2 冒烟 + 2 helpers | **317** | 13 单元（271) + 5 集成（26) + 16 e2e(20，全部门控） |
-| `packages/ui` | 46 (.ts+.tsx) | 18 | **182** | 全部单元（纯逻辑/store/渲染器绑定，含 F-BB-5 撤销重做契约 8 例），.tsx 组件零测试（dev-plan §7.2 策略） |
+| `packages/shell` | 22 (~5028 行） | 37 vitest + 2 冒烟 + 2 helpers | **338** | 16 单元（292) + 5 集成（26) + 16 e2e(20，全部门控） |
+| `packages/ui` | 97 (.ts+.tsx) | 31 | **296** | 全部单元（store/纯逻辑/3D 几何/交互辅助/渲染器绑定，含 F-BB-5 撤销重做契约 8 例），52 个 .tsx 组件零测试（dev-plan §7.2 策略） |
 | `packages/peripherals` | 13 | 10 | **163** | 全部单元（模型 + 注册表） |
-| `packages/docs-site` | 9 | 6 + helpers | **81** | 单元为主 + 真实 HTTP（serve) + 真实仓构建 |
+| `packages/docs-site` | 9 | 6 + helpers | **82** | 单元为主 + 真实 HTTP（serve) + 真实仓构建 |
 | `packages/sim-core` | 3 (+2235 行 C) | 3 | **28** | 单元 + 金样固件不变量 |
 | `packages/netlist` | 5 | 2 | **19** | 单元 |
 | `scripts/` | 14 个 .mjs | 0 | **0** | **无任何自动化测试**（`dev.mjs` 为开发编排脚本，纯 spawn/端口轮询） |
 
-### 1.3 最近基线运行（本次分析实测）
+### 1.3 最近基线运行（2026-11-05 实测）
 
 ```
-corepack pnpm -r test   → exit 0
-shell: 303 passed + 14 skipped (13 门控文件)   ui: 182 passed   sim-core: 28 passed
-docs-site / netlist / peripherals: 全绿         总计 ≈776 passed + 14 skipped
+pnpm test   → exit 0（commit ffa15bb）
+shell: 335 passed + 3 skipped (37 文件，2 个文件整体门控跳过)
+ui: 296 passed   sim-core: 28 passed   docs-site: 82 passed
+peripherals: 163 passed   netlist: 19 passed
+总计 923 passed + 3 skipped（926 用例，89 个测试文件）
 ```
 
-- 本机已具备 `BREADESP_QEMU_BIN`（qemu-uart×2、s3-machine×3、gdb-breakpoint×1 真实执行）。
-- 14 个 skip = 11 个 breadesp-dbus 设备版 e2e（缺 `BREADESP_QEMU_DBUS_BIN`）+ dap-launch、debug-panel、gdb-breakpoint 第 2 例（缺 `BREADESP_GDB_BIN`）。
+- 本机已具备 `BREADESP_QEMU_BIN` 与 `BREADESP_QEMU_DBUS_BIN`：11 个 breadesp-dbus 设备版 e2e 全部真实执行。
+- 3 个 skip = dap-launch、debug-panel、gdb-breakpoint 第 2 例（缺 `BREADESP_GDB_BIN`）。
 
 ---
 
@@ -166,10 +169,10 @@ docs-site / netlist / peripherals: 全绿         总计 ≈776 passed + 14 skip
 - G5: **`led.ts`（40 行）与 `button.ts`（33 行）无专属单元测试**——两个 MVP 外设（F-PER-1/F-PER-2）仅靠 e2e/集成间接覆盖。见 TP-002。
 - G6: led 的 PWM 亮度路径是 TODO（`// TODO(PRD §F-PER-1)`），实现时需同步补测试。
 
-### 3.4 packages/shell（317 用例，主干充分，边缘有缺口）
+### 3.4 packages/shell（338 用例，主干充分，边缘有缺口）
 
 **现有覆盖**（详见 §6 错误码索引）：
-- 单元 13 文件 271 例：QemuRunner(12)、QmpClient(6)、DBusChannel(14)、MiParser(9)、GdbBridge(24)、DapProtocol(9)、NetlistResolver(28+3)、PeripheralManager(25)、PluginCatalog(23)、PeripheralScaffold(24)、ProjectManager(41)、ExternalProject(18)、ipc-contract(38)。
+- 单元 16 文件 292 例：QemuRunner(12)、QmpClient(6)、DBusChannel(14)、MiParser(9)、GdbBridge(24)、DapProtocol(9)、NetlistResolver(28)、PeripheralManager(25)、PluginCatalog(23)、PeripheralScaffold(24)、ProjectManager(41)、ExternalProject(18)、ipc-contract(38)、examples(7)、resolveQemu(11)、handlers-qemu-resolve(3)。
 - 集成 5 文件 26 例：DapServer(12)、catalog(5)、external-firmware(3)、project-roundtrip(5)、dbus-throttle(1)。
 - e2e 16 文件 20 例（全部门控，见 §4 矩阵）。
 - 冒烟 2 个：manual-smoke-p52/p53（纯 Node tsx）。
@@ -180,25 +183,27 @@ docs-site / netlist / peripherals: 全绿         总计 ≈776 passed + 14 skip
 - G9: `preload.ts` 仅通道清单被钉死；`onXxx` 解订阅闭包与参数透传无行为测试。
 - G10: `QemuGdbBackend` 无直接单测——attach 重试窗口（200ms/10s deadline）、断点集替换语义仅经 DapServer 集成间接覆盖。
 - G11: `ProjectManager` 写盘非原子（无 tmp+rename），中途崩溃可留半文件，无测试钉住该行为（设计决策待 PRD 澄清）。
-- G12: 已知 flake——`DapServer.integration.test.ts` launch-flow 计时敏感（dev-plan P5.2 记录，曾单条瞬态失败，复测绿）；`sim-speed.e2e` 的 0.25x 占空比带在负载高的机器上有余量风险。
+- G12: 已知 flake——`DapServer.integration.test.ts` launch-flow 计时敏感（dev-plan P5.2 记录，曾单条瞬态失败，复测绿）；`gpio-scope.e2e` 的沿间距带在宿主负载高时仍可能超 10%（2026-11-05 全量跑失败一次、单跑绿）；`sim-speed.e2e` 已改为虚拟时钟比例断言（2026-11-05，5 连跑绿，不再受 tx/s 绝对值漂移影响）。
 
-### 3.5 packages/ui（182 用例，纯逻辑全覆盖，组件层按策略裸奔）
+### 3.5 packages/ui（296 用例，纯逻辑全覆盖，组件层按策略裸奔）
 
-**现有覆盖**（18 文件全单元）：
-- store 5 件：projectStore(29，网表/布局分离不变式+外部固件态+F-BB-5 撤销/重做契约：≥20 步保留、混合编辑全链撤销、redo/新编辑清 future、拖拽逐帧合并、无效操作不入栈、空栈 no-op、load/reset 清栈)、debuggerStore(15，状态机+P4.4)、marketplaceStore(8)、captureStore(6)、simulationStore(3)。
-- 纯逻辑 6 件：wizardDraft(6)、externalDraft(11)、marketplaceDraft(7)、sensorDraft(7)、wavegenDraft(13)、paletteEntries(4)。
-- 渲染/几何 3 件：pinLayout(6)、genericNode(9)、traceBuilder(13)、TftRenderer(13)。
+**现有覆盖**（31 文件全单元）：
+- store 8 件：projectStore(29，网表/布局分离不变式+外部固件态+F-BB-5 撤销/重做契约：≥20 步保留、混合编辑全链撤销、redo/新编辑清 future、拖拽逐帧合并、无效操作不入栈、空栈 no-op、load/reset 清栈)、debuggerStore(15)、marketplaceStore(8)、captureStore(6)、simulationStore(3)、dockPrefs(10)、selectionStore(7)、toastStore(8)。
+- 草稿/纯逻辑 9 件：wizardDraft(6)、externalDraft(11)、marketplaceDraft(7)、sensorDraft(7)、wavegenDraft(13)、paletteEntries(4)、paletteFilter(8)、propsSchema(14)、modelCatalog(4)。
+- 几何/渲染 6 件：pinLayout(6)、pinRows3d(8)、boardSpace(7)、genericNode(9)、traceBuilder(13)、TftRenderer(13)。
+- 交互辅助 3 件：canvasView(20)、wiringFlow(5)、wiring3dStore(5)。
 - 音频 3 件：BuzzerAudio(14)、SpeakerAudio(11)、MicCapture(8)。
+- 其他 2 件：i18n(14)、simRun(3)。
 
 **缺口**：
 - G13: **`OledRenderer.ts`（17 行 mono→Canvas）无测试**——TftRenderer 有 13 例而它裸奔，明显不对称。见 TP-003。
 - G14: `ipc/bridge.ts`（190 行类型化封装）无专属测试——仅经 store 测试的 mock 间接对齐。见 TP-005。
-- G15: 全部 28 个 .tsx 组件零测试（dev-plan §7.2 明确"M5 再评估"，现已过 M5——应重新评估）。最大风险文件：`BreadboardCanvas.tsx`（拖拽/连线交互状态机与渲染耦合；撤销/重做栈已于 2026-09-30 落到 projectStore 层并有 8 例契约测试，组件仅剩 Ctrl+Z/Y 快捷键绑定与输入焦点保护未钉）。见 TP-006。
+- G15: 全部 52 个 .tsx 组件零测试（dev-plan §7.2 明确"M5 再评估"，现已过 M5——应重新评估）。最大风险文件：`BreadboardCanvas.tsx`（954 行，拖拽/连线交互状态机与渲染耦合；撤销/重做栈已于 2026-09-30 落到 projectStore 层并有 8 例契约测试，组件仅剩 Ctrl+Z/Y 快捷键绑定与输入焦点保护未钉）。见 TP-006。
 - G16: `App.tsx`/`main.tsx` 装配无冒烟。
 
-### 3.6 packages/docs-site（81 用例，充分）
+### 3.6 packages/docs-site（82 用例，充分）
 
-**现有覆盖**：markdown(34)、site(11)、links(11)、build(10，含双构建字节可复现+真实仓构建)、cli(9，真实构建+serve)、serve(5，真实 HTTP+穿越拒绝+MIME+no-store)。
+**现有覆盖**：markdown(35)、links(12)、site(11)、build(10，含双构建字节可复现+真实仓构建)、cli(9，真实构建+serve)、serve(5，真实 HTTP+穿越拒绝+MIME+no-store)。
 
 **缺口**：
 - G17: `theme.ts`（214 行 HTML 壳+CSS）无专属单测——标题转义、active 标记、toc-h3 层级、无 TOC 布局分支仅经 build.test.ts 间接断言。
@@ -377,8 +382,8 @@ docs-site / netlist / peripherals: 全绿         总计 ≈776 passed + 14 skip
 | 用例 | 症状 | 现状 | 处置 |
 |---|---|---|---|
 | DapServer.integration "launch flow against mock QEMU" | 计时敏感，曾单条瞬态失败 | 复测多轮全绿 | TP-013 加固；单发失败先重跑确认，连续失败才算回归 |
-| sim-speed.e2e 0.25x 占空比带 (5%–60%) | 高负载机器上余量风险 | shell 单线程串行已缓解 | 失败时先检查宿主负载 |
-| gpio-scope.e2e 沿间距 10% 带 | 与其他 e2e 并行时抖动 | 已由串行配置根除 | 禁止改回并行 |
+| sim-speed.e2e 0.25x 占空比带 | 宿主机 TCG 吞吐波动，tx/s 绝对值在单次 1x 运行内由 25 掉到 9 | 2026-11-05 改为虚拟时钟 span/wall 比例断言（1x ≥0.7、0.25x 0.15–0.4）、5 连跑绿 | 保持时钟比例断言；勿退回 tx/s 计数断言 |
+| gpio-scope.e2e 沿间距 10% 带 | 宿主负载高时偶发超带（2026-11-05 全量跑失败一次、单跑绿） | 串行配置已降低概率，但仍有余量风险 | 失败先复跑 3 次定界；如复现，改为边沿序列/时间戳断言 |
 | Windows stdio 丢 `\r`（QEMU char-win-stdio） | UART 回显断言差异 | 测试统一 `\n` 结尾注入 | 已知平台差异，非 bug |
 
 **flake 处理铁律**：禁止删除/放宽断言让它过；先复跑 3 次定界，再定位时序根因，修复经 ≥5 连跑验证。
@@ -388,7 +393,7 @@ docs-site / netlist / peripherals: 全绿         总计 ≈776 passed + 14 skip
 ## 8. 附录 C：提交前自检清单（与 dev-plan §9.2 合并使用）
 
 - [ ] `pnpm typecheck` 0 错误
-- [ ] `pnpm test` 全绿（门控 skip 数 = 14，变动需解释）
+- [ ] `pnpm test` 全绿（门控 skip 数与本机环境一致：已装 DBus QEMU、无 GDB 时为 3，变动需解释）
 - [ ] 新测试遵守 §2.4（文件头 PRD 注、错误码精确断言、边界未触达下游）
 - [ ] 改了 `scripts/lib/xtensa-elf.mjs` → 跑过全部 `make-*-elf.mjs --check`（TP-001 落地前手动）
 - [ ] 改了 PRD §6 契约 → 同步改 ipc-contract/registry/schema 对应测试 + 本文件 §6 索引
