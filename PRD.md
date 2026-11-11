@@ -210,7 +210,7 @@
 
 | 层 | 选型 | 理由 |
 |---|---|---|
-| 桌面壳 | Electron 28+ | IPC 直达、生态成熟、AI 熟悉 |
+| 桌面壳 | Electron 42+ | IPC 直达、生态成熟、AI 熟悉 |
 | 渲染框架 | React 18 + TypeScript | 生态、AI 训练充分 |
 | 构建工具 | Vite 5 | 快、AI 熟悉 |
 | 状态管理 | Zustand | 轻量、易测 |

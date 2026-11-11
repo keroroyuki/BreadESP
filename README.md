@@ -45,7 +45,7 @@ blink 示例工程：LED 连接到 GPIO2，仿真运行中，串口控制台实�
 
 ### 方式二：从源码运行
 
-环境要求：**Node.js ≥ 20**、**pnpm ≥ 9**；Windows / macOS / Linux。
+环境要求：**Node.js ≥ 22.12**、**pnpm ≥ 9**；Windows / macOS / Linux。
 
 ```bash
 pnpm install       # 安装 workspace 依赖

@@ -585,7 +585,7 @@ Previously applyNetlist leaked old instances on re-apply.
 ## 11. 环境与工具链
 
 ### 11.1 开发依赖
-- Node ≥20，pnpm ≥9。
+- Node ≥22.12，pnpm ≥9。
 - QEMU-ESP32：`scripts/fetch-qemu.mjs` 拉取。
 - GDB：`xtensa-esp32-elf-gdb`（随 ESP-IDF 提供，或单独安装）。
 - 编译固件：Arduino CLI 或 ESP-IDF（用户侧，非仓库依赖）。

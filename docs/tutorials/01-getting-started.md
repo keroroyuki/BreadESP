@@ -9,7 +9,7 @@ description: 安装 BreadESP、拉取 QEMU 二进制、启动应用并认识界�
 
 ## 环境要求
 
-- **Node.js ≥ 20**、**pnpm ≥ 9**。
+- **Node.js ≥ 22.12**、**pnpm ≥ 9**。
 - 桌面平台：Windows / macOS / Linux。
 - 可选：`xtensa-esp-elf-gdb`（esp-gdb 17.x，调试功能用，见 [调试工作流](03-debugging.md)）。
 

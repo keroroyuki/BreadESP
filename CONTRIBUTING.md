@@ -6,7 +6,7 @@
 ## 一次性准备
 
 ```bash
-# Node >= 20、pnpm 9
+# Node >= 22.12、pnpm 9
 pnpm install          # 会自动把 core.hooksPath 指向 .githooks
 pnpm setup:hooks      # 若 hooks 未生效，手动重跑一次
 ```
