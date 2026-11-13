@@ -8,6 +8,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 ### Added
 - **Repository workflow (ADR 0001)**: `main` is protected — every change lands through a branch + PR, gated by a single `verify` CI job (typecheck + tests + PR-title lint), squash-only merges and linear history. Adds `.github/workflows/ci.yml`, `.github/pull_request_template.md`, `.githooks/` (`commit-msg`, `pre-push`, installed by `pnpm install` via `prepare`), `scripts/check-commit-message.mjs` (Conventional Commits validator shared by the hook and CI, with vitest coverage), `CONTRIBUTING.md` and `docs/decisions.md`. PRD §7/§10 and `docs/dev-plan.md` §5/§6/§9 updated to the trunk-based model; the planned `dev` branch is dropped.
 
+### Changed
+- **Electron 42 upgrade**: the desktop shell moves off Electron 28.3.3 (EOL — no Chromium/Node security patches) to `^42.11.16` (lockfile: 42.11.18). The shell only uses stable APIs (`app`/`BrowserWindow`, `contextBridge`/`ipcRenderer`, `ipcMain`/`dialog`), so no application code changed. The npm package now requires **Node ≥22.12** and fetches its binary lazily on the first `require('electron')`, so `engines.node` and the documented dev requirement move from ≥20 to ≥22.12 alongside `@types/node` ^24; PRD §5, README, CONTRIBUTING, the tutorial and dev-plan §11.1 are synced. Verified: `pnpm verify` (943 tests passed, 3 skipped), `pnpm dev` boot (Vite + Electron 42 + React + WebGL2 3D on Intel UHD 770), and `pnpm pack:installer --dir` + CDP smoke against `win-unpacked` (bridge exposed → 20 examples from `resources/examples` → blink-led project → blink.elf import → `sim.load` resolves `resources/qemu` → `sim.start` → UART `Hello ESP32`, status `running`). Note: the Linux AppImage/deb packaging path was not re-run in this pass.
+
 ## [0.2.0] - 2026-10-27
 
 ### Added
