@@ -1,135 +1,148 @@
-# BreadESP — ESP32 虚拟面包板仿真器
+# BreadESP — ESP32 Virtual Breadboard Simulator
 
-> 本地运行的 ESP32 功能级仿真器：图形化外设搭建、真实固件运行、GDB 调试、串口控制台，全流程离线完成。
-> 本仓库**全部由 AI 生成**（PRD 驱动开发）。MIT License。
+**English** | [简体中文](https://github.com/keroroyuki/BreadESP/blob/main/README.zh-CN.md)
 
-![主界面](docs/images/ui-overview.png)
+> A local-first functional simulator for the ESP32: build circuits graphically, run real firmware,
+> debug with GDB and watch the serial console — the whole loop stays offline.
+> This repository is **generated entirely by AI** (PRD-driven development). MIT License.
 
-主界面一览：左列为器件面板（内建 Palette + 本地外设目录），中央是面包板画布（拖放器件、
-pin→pin 连线，MCU 节点暴露所选芯片的全部可用 GPIO），右侧为调试面板，底部为串口控制台、
-屏幕视图、示波器与波形发生器。
+![Main window](docs/images/ui-overview.png)
 
-![blink 示例运行中](docs/images/ui-blink-running.png)
+The main window at a glance: the left column is the parts panel (built-in palette plus the local
+peripheral directory), the centre is the breadboard canvas (drop parts, wire pin to pin, and the MCU
+node exposes every usable GPIO of the selected chip), the right side is the debug panel, and the
+bottom row holds the serial console, screen view, oscilloscope and waveform generator.
 
-blink 示例工程：LED 连接到 GPIO2，仿真运行中，串口控制台实时输出固件打印的 `Hello ESP32`。
+![blink example running](docs/images/ui-blink-running.png)
 
-## 功能一览
+The blink example project: an LED on GPIO2 while the simulation runs, with the serial console
+printing the firmware's `Hello ESP32` in real time.
 
-- **虚拟面包板**：拖放放置外设、pin→pin 连线、删除与清理，撤销/重做（20 步），
-  网表（逻辑）与布局（视觉）分离持久化，工程保存/打开/另存为。
-- **3D 建模视图**：同一块板可切换 2D/3D；每个器件都有可辨识的程序化 3D 模型，
-  支持拖拽旋转视角、拖拽移动器件（网格吸附）、3D 内引脚连线与实时状态（LED 发光、
-  屏幕画面、麦克风 LIVE），与 2D 共用同一份网表与布局。
-- **真实仿真**：QEMU-ESP32 执行真实 Xtensa 固件，支持 ESP32 / ESP32-S3 / ESP32-C3 / ESP32-C6；
-  逻辑时钟可 0.1x–10x 调速。
-- **调试**：GDB 断点（函数/地址/条件断点/硬件观察点）、单步、变量与寄存器查看；
-  另有 DAP 适配器可接入 VS Code。
-- **串口**：UART0 输出实时显示（ANSI 兼容），支持向固件注入输入。
-- **内建外设**：LED、按键、SSD1306 OLED、ST7789 TFT、蜂鸣器、喇叭（I2S）、
-  麦克风（I2S/波形注入）、旋钮、SHT30 温湿度、示波器。
-- **外设 SDK**：第三方以独立包形式注册新外设，本地目录扫描加载，
-  `pnpm create-peripheral` 脚手架一步生成可发布的外设包。
-- **工程关联**：PlatformIO / ESP-IDF 工程目录可整体关联，自动发现 `build/*.elf` 并导入。
-- **离线文档站**：`pnpm docs:build` 构建静态文档站（零外部资源，断网可用），
-  含 6 篇分步教程。
+## Features
 
-## 快速开始
+- **Virtual breadboard**: drag to place parts, wire pin to pin, delete and clear, undo/redo (20 steps);
+  the netlist (logic) and the layout (visual) persist separately; save / open / save-as projects.
+- **3D modelled view**: the same board switches between 2D and 3D; every part has a recognisable
+  procedural 3D model, with drag-to-rotate camera, drag-to-move parts (grid snapping), in-3D pin
+  wiring and live state (LED glow, screen contents, microphone LIVE) — sharing one netlist and
+  layout with 2D.
+- **Real simulation**: QEMU-ESP32 executes real Xtensa firmware for ESP32 / ESP32-S3 / ESP32-C3 / ESP32-C6;
+  the logical clock scales from 0.1x to 10x.
+- **Debugging**: GDB breakpoints (function / address / conditional / hardware watchpoints), stepping,
+  variables and registers; a DAP adapter plugs the same session into VS Code.
+- **Serial**: live UART0 output (ANSI-aware), and you can inject input into the firmware.
+- **Built-in peripherals**: LED, push button, SSD1306 OLED, ST7789 TFT, buzzer, speaker (I2S),
+  microphone (I2S / waveform injection), rotary knob, SHT30 temperature and humidity, oscilloscope.
+- **Peripheral SDK**: third parties register new peripherals as standalone packages loaded from local
+  directories; the `pnpm create-peripheral` scaffold generates a publishable package in one step.
+- **Project linking**: link a PlatformIO / ESP-IDF project directory as a whole, and `build/*.elf` is
+  discovered and imported automatically.
+- **Offline docs site**: `pnpm docs:build` produces a static docs site (zero external assets, works
+  disconnected) with six step-by-step tutorials.
 
-### 方式一：安装包（Windows，推荐）
+## Quick start
 
-从 [GitHub Releases](https://github.com/keroroyuki/BreadESP/releases/latest) 下载 `BreadESP-Setup-*.exe`，
-双击安装即可——安装包已内置 breadesp-dbus 设备版 QEMU 和示例固件，**无需 Node.js、无需 clone 仓库**。
+### Option 1: Installer (Windows, recommended)
 
-装好后 30 秒跑通第一个工程：新建工程（blink-led 模板）→ 顶部「固件」面板导入示例 `blink.elf` →
-点「运行」，LED 随固件亮灭，串口打印 `Hello ESP32`。
+Download `BreadESP-Setup-*.exe` from [GitHub Releases](https://github.com/keroroyuki/BreadESP/releases/latest)
+and double-click to install — the installer bundles the breadesp-dbus device build of QEMU and the
+example firmware, so **no Node.js and no repository clone are needed**.
 
-### 方式二：从源码运行
+Run your first project in 30 seconds: create a project (blink-led template) → import the example
+`blink.elf` from the "Firmware" panel at the top → press "Run"; the LED blinks with the firmware and
+the serial console prints `Hello ESP32`.
 
-环境要求：**Node.js ≥ 22.12**、**pnpm ≥ 9**；Windows / macOS / Linux。
+### Option 2: Run from source
+
+Requirements: **Node.js ≥ 22.12**, **pnpm ≥ 9**; Windows / macOS / Linux.
 
 ```bash
-pnpm install       # 安装 workspace 依赖
-pnpm fetch-qemu    # 按需下载 QEMU-ESP32 二进制（SHA-256 校验，不入库）
-pnpm dev           # 启动应用（vite dev server + Electron）
+pnpm install       # install workspace dependencies
+pnpm fetch-qemu    # download the QEMU-ESP32 binaries on demand (SHA-256 verified, not committed)
+pnpm dev           # launch the app (vite dev server + Electron)
 ```
 
-启动后跟着教程走第一个工程（从新建工程到 LED 随固件亮灭）：
+Then follow the tutorials for your first project (from creating it to the LED blinking with the firmware):
 
-- [01 · 快速上手](docs/tutorials/01-getting-started.md) — 安装、启动与界面导览
-- [02 · 首个工程：点亮的 LED](docs/tutorials/02-first-project.md) — 新建工程、连线、导入固件、运行仿真
+- [01 · Getting started](docs/tutorials/01-getting-started.md) — install, launch and a UI tour
+- [02 · First project: a blinking LED](docs/tutorials/02-first-project.md) — create a project, wire it, import firmware, run the simulation
 
-没有现成固件时，仓库自带确定性生成的金样固件（`packages/sim-core/fixtures/`，
-如打印 `Hello ESP32` 并翻转 GPIO2 的 `blink.elf`），无需 ESP-IDF 工具链即可体验全流程。
+The repository ships deterministic golden firmware (`packages/sim-core/fixtures/`, e.g. `blink.elf`,
+which prints `Hello ESP32` and toggles GPIO2), so the whole flow works without an ESP-IDF toolchain.
 
-### 平台说明
+### Platform notes
 
-仿真核心分两档，按需准备：
+The simulation core has two tiers, prepared as needed:
 
-| 能力 | 需要什么 | 获取方式 |
+| Capability | What you need | How to get it |
 |---|---|---|
-| 固件运行、串口、GDB 调试、工程管理 | 常规 QEMU-ESP32 | 安装包已内置；源码：`pnpm fetch-qemu`（全平台） |
-| LED 亮灭 / OLED 渲染 / 按键注入等外设总线联动 | breadesp-dbus 设备版 QEMU | 安装包已内置；源码：`node scripts/build-qemu-device.mjs`（Docker 构建 Linux 版，MSYS2/UCRT64 构建 Windows 版，见 §开发者指南） |
-| 断点调试 | `xtensa-esp32-elf-gdb`（esp-gdb 17.x） | ESP-IDF 工具链，设 `BREADESP_GDB_BIN` |
+| Firmware execution, serial, GDB debugging, project management | Regular QEMU-ESP32 | Bundled in the installer; from source: `pnpm fetch-qemu` (all platforms) |
+| Peripheral bus interaction (LED on/off, OLED rendering, button injection, ...) | breadesp-dbus device build of QEMU | Bundled in the installer; from source: `node scripts/build-qemu-device.mjs` (Docker for the Linux build, MSYS2/UCRT64 for the Windows build — see §Development) |
+| Breakpoint debugging | `xtensa-esp32-elf-gdb` (esp-gdb 17.x) | ESP-IDF toolchain; point `BREADESP_GDB_BIN` at it |
 
-## 开发指南
+## Development
 
-常用命令：
+Common commands:
 
-| 命令 | 作用 |
+| Command | What it does |
 |---|---|
-| `pnpm dev` | 开发模式：vite dev server + Electron 主进程（`scripts/dev.mjs` 编排） |
-| `pnpm build` | 全仓构建（lib 包 tsc → dist，shell tsc，ui tsc + vite） |
-| `pnpm test` | 全仓 vitest（需要真实 QEMU/GDB 的 e2e 自动按环境变量门控，缺二进制时跳过） |
-| `pnpm typecheck` | 全仓 TypeScript strict 检查 |
-| `pnpm docs:build` / `docs:serve` / `docs:check` | 离线文档站构建 / 预览 / 链接完整性校验 |
-| `pnpm --filter @breadesp/<pkg> test` | 单包测试 |
+| `pnpm dev` | Dev mode: vite dev server + Electron main process (orchestrated by `scripts/dev.mjs`) |
+| `pnpm build` | Build everything (tsc for the lib packages → dist, shell tsc, ui tsc + vite) |
+| `pnpm test` | vitest across the repository (e2e tests that need real QEMU/GDB are gated by env vars and skipped when the binaries are missing) |
+| `pnpm typecheck` | TypeScript strict check across the repository |
+| `pnpm docs:build` / `docs:serve` / `docs:check` | Build / preview / link-check the offline docs site |
+| `pnpm --filter @breadesp/<pkg> test` | Test a single package |
 
-测试门控环境变量：`BREADESP_QEMU_BIN`（常规 QEMU）、`BREADESP_QEMU_DBUS_BIN`（设备版）、
-`BREADESP_GDB_BIN`（GDB）。缺省时相关 e2e 自动跳过，不算失败。
+Test-gating environment variables: `BREADESP_QEMU_BIN` (regular QEMU), `BREADESP_QEMU_DBUS_BIN`
+(device build), `BREADESP_GDB_BIN` (GDB). When unset, the related e2e tests are skipped rather than failed.
 
-包结构（pnpm monorepo，六包分层）：
+Package layout (pnpm monorepo, six layered packages):
 
-| 包 | 职责 |
+| Package | Responsibility |
 |---|---|
-| `packages/ui` | React 渲染进程（面包板、调试面板、串口、屏幕、示波器） |
-| `packages/shell` | Electron 主进程 / Bridge（QEMU、GDB、外设管理、IPC） |
-| `packages/peripherals` | 外设设备模型（运行于 Bridge） |
-| `packages/netlist` | 网表 schema、校验与工程模板 |
-| `packages/sim-core` | QEMU 参数构造、ELF 解析校验、dbus 设备 C 源码、金样固件 |
-| `packages/docs-site` | 离线文档站构建器 |
+| `packages/ui` | React renderer (breadboard, debug panel, serial, screen, oscilloscope) |
+| `packages/shell` | Electron main process / bridge (QEMU, GDB, peripheral management, IPC) |
+| `packages/peripherals` | Peripheral device models (run inside the bridge) |
+| `packages/netlist` | Netlist schema, validation and project templates |
+| `packages/sim-core` | QEMU argument construction, ELF parsing and validation, dbus device C sources, golden firmware |
+| `packages/docs-site` | Offline docs-site builder |
 
-数据流：UI 编辑网表 → IPC 下发 → Bridge 重建外设实例与路由 → QEMU 执行固件 →
-总线事务经 dbus 设备转发回 Bridge → 外设模型更新 → 渲染快照推回 UI。详见
-[docs/architecture.md](docs/architecture.md)。
+Data flow: the UI edits the netlist → IPC → the bridge rebuilds peripheral instances and routing →
+QEMU executes the firmware → bus transactions are forwarded back to the bridge through the dbus
+device → peripheral models update → render snapshots are pushed back to the UI. See
+[docs/architecture.md](docs/architecture.md) for details.
 
-## 文档
+## Documentation
 
-- [PRD.md](PRD.md) — 唯一真相源（需求、接口契约、目录约定）
-- [docs/dev-plan.md](docs/dev-plan.md) — 开发计划、里程碑、代码风格、提交规范
-- `docs/test-plan.md` — 测试方案与现状清单（不进文档站页面集）
-- [docs/architecture.md](docs/architecture.md) — 架构详解
-- [docs/peripheral-sdk.md](docs/peripheral-sdk.md) — 外设 SDK 开发指南
-- [docs/dap.md](docs/dap.md) — DAP 适配器（VS Code 调试）
-- [docs/tutorials/](docs/tutorials/01-getting-started.md) — 分步教程（上手、首个工程、调试、外设参考、外设创作、VS Code）
-- [CHANGELOG.md](CHANGELOG.md) — 变更记录
+The in-repository documentation is written in Chinese.
 
-## 贡献流程
+- [PRD.md](PRD.md) — single source of truth (requirements, interface contracts, directory conventions)
+- [docs/dev-plan.md](docs/dev-plan.md) — development plan, milestones, code style, commit conventions
+- `docs/test-plan.md` — test approach and current status (not part of the docs-site page set)
+- [docs/architecture.md](docs/architecture.md) — architecture deep dive
+- [docs/peripheral-sdk.md](docs/peripheral-sdk.md) — peripheral SDK guide
+- [docs/dap.md](docs/dap.md) — DAP adapter (VS Code debugging)
+- [docs/tutorials/](docs/tutorials/01-getting-started.md) — step-by-step tutorials (getting started, first project, debugging, peripheral reference, authoring peripherals, VS Code)
+- [CHANGELOG.md](CHANGELOG.md) — changelog
 
-`main` 受保护：新功能、bug 修复、文档等任何改动都必须从 `main` 切分支、开 PR，不能直推。
+## Contributing
 
-1. `git switch -c feat/ui-3d-snap`（从最新 `main`）
-2. 提交信息遵循 Conventional Commits；本地钩子由 `pnpm install` 自动安装
-3. 推送并开 PR：**PR 标题就是 squash 后的 commit message**，CI `verify` 必须绿
-4. Squash merge，分支自动删除
+`main` is protected: any change — features, bug fixes, docs — must come from a branch off `main` and
+land through a PR; direct pushes are rejected.
 
-详见 `CONTRIBUTING.md` 与 [docs/dev-plan.md](docs/dev-plan.md) §6（分支与发布流程）。
+1. `git switch -c feat/ui-3d-snap` (from the latest `main`)
+2. Commit messages follow Conventional Commits; local hooks are installed by `pnpm install`
+3. Push and open a PR: **the PR title becomes the squashed commit message**, and the `verify` CI job must be green
+4. Squash merge; the branch is deleted automatically
 
-## AI Agent 约定（PRD §10）
+See `CONTRIBUTING.md` and [docs/dev-plan.md](docs/dev-plan.md) §6 (branch and release workflow) for details.
 
-- 代码改动前先读对应 PRD 章节，文件头注释 `// PRD: §X.Y`。
-- 不得引入未列在 PRD §5 的运行时依赖；接口（PRD §6）改动须向后兼容。
-- 文件 MUST 落在 PRD §7 路径下；不得放置二进制（QEMU 由 `scripts/fetch-qemu.mjs` 拉取）。
+## AI agent conventions (PRD §10)
+
+- Read the relevant PRD section before changing code, and tag file headers with `// PRD: §X.Y`.
+- Do not introduce runtime dependencies that are not listed in PRD §5; interface changes (PRD §6) must stay backward compatible.
+- Files MUST live under the paths in PRD §7; do not commit binaries (QEMU is fetched by `scripts/fetch-qemu.mjs`).
 
 ## License
 
-MIT — 见 [LICENSE](LICENSE)。
+MIT — see [LICENSE](LICENSE).
