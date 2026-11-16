@@ -18,9 +18,9 @@ function makeRoot(): string {
   return dir;
 }
 
-const PAGE_A: PageSource = { sourcePath: 'docs/a.md', route: 'guides/a.html', section: 'guides' };
-const PAGE_B: PageSource = { sourcePath: 'docs/sub/b.md', route: 'guides/b.html', section: 'guides' };
-const PAGE_C: PageSource = { sourcePath: 'PRD.md', route: 'reference/prd.html', section: 'reference' };
+const PAGE_A: PageSource = { sourcePath: 'docs/a.md', route: 'guides/a.html', section: 'guides', lang: 'zh' };
+const PAGE_B: PageSource = { sourcePath: 'docs/sub/b.md', route: 'guides/b.html', section: 'guides', lang: 'zh' };
+const PAGE_C: PageSource = { sourcePath: 'PRD.md', route: 'reference/prd.html', section: 'reference', lang: 'zh' };
 
 /** Resolver fixture: three pages, b has the 'details' anchor, c has 's-6'. */
 function resolverFor(current: PageSource, root: string): { resolve: (t: string, line?: number) => string; issues: LinkIssue[]; assets: Map<string, string> } {

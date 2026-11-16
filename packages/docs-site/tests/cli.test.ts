@@ -16,13 +16,19 @@ let seq = 0;
 function makeRoot(): string {
   const dir = join(tmp, `root-${seq++}`);
   mkdirSync(join(dir, 'docs', 'tutorials'), { recursive: true });
+  mkdirSync(join(dir, 'docs', 'en', 'tutorials'), { recursive: true });
   writeFileSync(join(dir, 'docs', 'tutorials', '01-a.md'), '---\ntitle: Alpha\n---\n# Alpha\n', 'utf8');
+  writeFileSync(join(dir, 'docs', 'en', 'tutorials', '01-a.md'), '---\ntitle: Alpha EN\n---\n# Alpha\n', 'utf8');
+  writeFileSync(join(dir, 'docs', 'README.zh-CN.md'), '# 概览\n', 'utf8');
   writeFileSync(join(dir, 'README.md'), '# R\n', 'utf8');
   writeFileSync(join(dir, 'PRD.md'), '# P\n', 'utf8');
   writeFileSync(join(dir, 'CHANGELOG.md'), '# C\n', 'utf8');
   for (const doc of ['architecture', 'dap', 'peripheral-sdk', 'dev-plan']) {
     writeFileSync(join(dir, 'docs', `${doc}.md`), `# ${doc}\n`, 'utf8');
+    writeFileSync(join(dir, 'docs', 'en', `${doc}.md`), `# ${doc}\n`, 'utf8');
   }
+  writeFileSync(join(dir, 'docs', 'en', 'PRD.md'), '# P\n', 'utf8');
+  writeFileSync(join(dir, 'docs', 'en', 'CHANGELOG.md'), '# C\n', 'utf8');
   return dir;
 }
 
@@ -85,7 +91,7 @@ describe('runDocsCli', () => {
     const root = makeRoot();
     const io = captureIo(root);
     expect(await runDocsCli(['build'], io)).toBe(0);
-    expect(io.outLines[0]).toMatch(/^Built 8 pages \+ index \(10 files, \d+ links checked\) into /);
+    expect(io.outLines[0]).toMatch(/^Built 16 pages \+ 2 indexes \(19 files, \d+ links checked\) into /);
     expect(existsSync(join(root, 'docs', 'site', 'index.html'))).toBe(true);
     expect(existsSync(join(root, 'docs', 'site', 'tutorials', '01-a.html'))).toBe(true);
   });
@@ -101,7 +107,7 @@ describe('runDocsCli', () => {
   it('check passes a valid repo and fails a broken one with [BB-241] on stderr', async () => {
     const good = captureIo(makeRoot());
     expect(await runDocsCli(['check'], good)).toBe(0);
-    expect(good.outLines[0]).toMatch(/^OK: 8 pages, \d+ links checked\.$/);
+    expect(good.outLines[0]).toMatch(/^OK: 16 pages, \d+ links checked\.$/);
 
     const badRoot = makeRoot();
     writeFileSync(join(badRoot, 'docs', 'tutorials', '01-a.md'), '# Alpha\n\n[ghost](missing.md)\n', 'utf8');

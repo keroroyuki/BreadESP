@@ -10,11 +10,16 @@ export interface PageSource {
   route: string;
   /** Navigation section id. */
   section: SiteSectionId;
+  /** Content language; English pages live under the `en/` route prefix. */
+  lang: SiteLang;
   /** Manifest-level nav title override (front matter wins over this). */
   navTitle?: string;
   /** Manifest-level description for the index cards (front matter wins). */
   description?: string;
 }
+
+/** Content language of a page. `README.md` (root) is the English overview. */
+export type SiteLang = 'zh' | 'en';
 
 export type SiteSectionId = 'tutorials' | 'guides' | 'reference';
 

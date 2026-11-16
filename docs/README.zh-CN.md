@@ -1,17 +1,17 @@
 # BreadESP — ESP32 虚拟面包板仿真器
 
-[English](https://github.com/keroroyuki/BreadESP/blob/main/README.md) | **简体中文**
+[English](../README.md) | **简体中文**
 
 > 本地运行的 ESP32 功能级仿真器：图形化外设搭建、真实固件运行、GDB 调试、串口控制台，全流程离线完成。
 > 本仓库**全部由 AI 生成**（PRD 驱动开发）。MIT License。
 
-![主界面](docs/images/ui-overview.png)
+![主界面](images/ui-overview.png)
 
 主界面一览：左列为器件面板（内建 Palette + 本地外设目录），中央是面包板画布（拖放器件、
 pin→pin 连线，MCU 节点暴露所选芯片的全部可用 GPIO），右侧为调试面板，底部为串口控制台、
 屏幕视图、示波器与波形发生器。
 
-![blink 示例运行中](docs/images/ui-blink-running.png)
+![blink 示例运行中](images/ui-blink-running.png)
 
 blink 示例工程：LED 连接到 GPIO2，仿真运行中，串口控制台实时输出固件打印的 `Hello ESP32`。
 
@@ -32,8 +32,8 @@ blink 示例工程：LED 连接到 GPIO2，仿真运行中，串口控制台实�
 - **外设 SDK**：第三方以独立包形式注册新外设，本地目录扫描加载，
   `pnpm create-peripheral` 脚手架一步生成可发布的外设包。
 - **工程关联**：PlatformIO / ESP-IDF 工程目录可整体关联，自动发现 `build/*.elf` 并导入。
-- **离线文档站**：`pnpm docs:build` 构建静态文档站（零外部资源，断网可用），
-  含 6 篇分步教程。
+- **离线文档站**：`pnpm docs:build` 构建中英双语静态文档站（零外部资源，断网可用），
+  含中英各 6 篇分步教程，页面顶栏可一键切换语言。
 
 ## 快速开始
 
@@ -57,8 +57,8 @@ pnpm dev           # 启动应用（vite dev server + Electron）
 
 启动后跟着教程走第一个工程（从新建工程到 LED 随固件亮灭）：
 
-- [01 · 快速上手](docs/tutorials/01-getting-started.md) — 安装、启动与界面导览
-- [02 · 首个工程：点亮的 LED](docs/tutorials/02-first-project.md) — 新建工程、连线、导入固件、运行仿真
+- [01 · 快速上手](tutorials/01-getting-started.md) — 安装、启动与界面导览
+- [02 · 首个工程：点亮的 LED](tutorials/02-first-project.md) — 新建工程、连线、导入固件、运行仿真
 
 没有现成固件时，仓库自带确定性生成的金样固件（`packages/sim-core/fixtures/`，
 如打印 `Hello ESP32` 并翻转 GPIO2 的 `blink.elf`），无需 ESP-IDF 工具链即可体验全流程。
@@ -102,18 +102,20 @@ pnpm dev           # 启动应用（vite dev server + Electron）
 
 数据流：UI 编辑网表 → IPC 下发 → Bridge 重建外设实例与路由 → QEMU 执行固件 →
 总线事务经 dbus 设备转发回 Bridge → 外设模型更新 → 渲染快照推回 UI。详见
-[docs/architecture.md](docs/architecture.md)。
+[docs/architecture.md](architecture.md)。
 
 ## 文档
 
-- [PRD.md](PRD.md) — 唯一真相源（需求、接口契约、目录约定）
-- [docs/dev-plan.md](docs/dev-plan.md) — 开发计划、里程碑、代码风格、提交规范
-- `docs/test-plan.md` — 测试方案与现状清单（不进文档站页面集）
-- [docs/architecture.md](docs/architecture.md) — 架构详解
-- [docs/peripheral-sdk.md](docs/peripheral-sdk.md) — 外设 SDK 开发指南
-- [docs/dap.md](docs/dap.md) — DAP 适配器（VS Code 调试）
-- [docs/tutorials/](docs/tutorials/01-getting-started.md) — 分步教程（上手、首个工程、调试、外设参考、外设创作、VS Code）
-- [CHANGELOG.md](CHANGELOG.md) — 变更记录
+英文版文档镜像在 `docs/en/`（含 PRD、开发计划、架构、教程与变更记录），文档站支持中英切换。
+
+- [PRD.md](../PRD.md) — 唯一真相源（需求、接口契约、目录约定）
+- [开发计划](dev-plan.md) — 里程碑、代码风格、提交规范
+- `test-plan.md` — 测试方案与现状清单（不进文档站页面集）
+- [架构详解](architecture.md)
+- [外设 SDK 开发指南](peripheral-sdk.md)
+- [DAP 适配器（VS Code 调试）](dap.md)
+- [分步教程](tutorials/01-getting-started.md) — 上手、首个工程、调试、外设参考、外设创作、VS Code
+- [CHANGELOG.md](../CHANGELOG.md) — 变更记录
 
 ## 贡献流程
 
@@ -124,7 +126,7 @@ pnpm dev           # 启动应用（vite dev server + Electron）
 3. 推送并开 PR：**PR 标题就是 squash 后的 commit message**，CI `verify` 必须绿
 4. Squash merge，分支自动删除
 
-详见 `CONTRIBUTING.md` 与 [docs/dev-plan.md](docs/dev-plan.md) §6（分支与发布流程）。
+详见 `CONTRIBUTING.md` 与 [开发计划](dev-plan.md) §6（分支与发布流程）。
 
 ## AI Agent 约定（PRD §10）
 
@@ -134,4 +136,4 @@ pnpm dev           # 启动应用（vite dev server + Electron）
 
 ## License
 
-MIT — 见 [LICENSE](LICENSE)。
+MIT — 见 [LICENSE](../LICENSE)。

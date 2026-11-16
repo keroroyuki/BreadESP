@@ -7,7 +7,7 @@
 import { escapeHtml } from './markdown.js';
 import { relativeRoute } from './links.js';
 import type { NavModel } from './site.js';
-import type { HeadingInfo } from './types.js';
+import type { HeadingInfo, SiteLang } from './types.js';
 
 export const SITE_TITLE = 'BreadESP Docs';
 
@@ -31,6 +31,11 @@ body {
 .topbar .brand { color: var(--fg); font-weight: 700; font-size: 18px; text-decoration: none; }
 .topbar .brand span { color: var(--accent); }
 .topbar .env { color: var(--fg-dim); font-size: 12.5px; }
+.topbar .langs { margin-left: auto; font-size: 13px; display: flex; align-items: baseline; gap: 6px; }
+.topbar .langs a { color: var(--fg-dim); text-decoration: none; }
+.topbar .langs a:hover { color: var(--accent); }
+.topbar .langs a.active { color: var(--fg); font-weight: 600; }
+.topbar .langs .sep { color: var(--border); }
 .layout {
   display: grid; grid-template-columns: 250px minmax(0, 1fr) 220px;
   gap: 32px; max-width: 1440px; margin: 0 auto; padding: 28px 24px 64px;
@@ -112,9 +117,49 @@ export interface PageRenderArgs {
   contentHtml: string;
   headings: HeadingInfo[];
   nav: NavModel;
-  /** Total rendered page count (footer stat). */
+  /** Total rendered page count in this language (footer stat). */
   pageCount: number;
+  /** Content language: drives <html lang>, chrome strings and the language switch. */
+  lang: SiteLang;
+  /** Route of the same page in the other language. */
+  altHref: string;
 }
+
+/** Site chrome strings per content language (page content itself is authored). */
+const CHROME: Record<SiteLang, {
+  htmlLang: string;
+  env: string;
+  toc: string;
+  home: string;
+  hero: string;
+  langLabel: string;
+  otherLangLabel: string;
+  otherHreflang: string;
+  footer: (pages: number) => string;
+}> = {
+  zh: {
+    htmlLang: 'zh-CN',
+    env: '离线构建 · 零外部资源',
+    toc: '本页目录',
+    home: '首页',
+    hero: 'BreadESP — ESP32 虚拟面包板仿真器的离线文档站：教程、指南与契约参考，全部从仓库 Markdown 源构建。',
+    langLabel: '中文',
+    otherLangLabel: 'English',
+    otherHreflang: 'en',
+    footer: (pages) => `BreadESP 离线文档站 · 由仓库 Markdown 源构建 · ${pages} 页`,
+  },
+  en: {
+    htmlLang: 'en',
+    env: 'offline build · zero external resources',
+    toc: 'On this page',
+    home: 'Home',
+    hero: 'BreadESP — the offline documentation site for the ESP32 virtual breadboard simulator: tutorials, guides and contract references, all built from the repository Markdown sources.',
+    langLabel: 'English',
+    otherLangLabel: '中文',
+    otherHreflang: 'zh-CN',
+    footer: (pages) => `BreadESP offline documentation · generated from the repository Markdown sources · ${pages} pages`,
+  },
+};
 
 function navHtml(nav: NavModel, currentRoute: string): string {
   return nav.sections
@@ -131,20 +176,22 @@ function navHtml(nav: NavModel, currentRoute: string): string {
     .join('\n');
 }
 
-function tocHtml(headings: HeadingInfo[]): string {
+function tocHtml(headings: HeadingInfo[], lang: SiteLang): string {
   const entries = headings.filter((h) => h.level === 2 || h.level === 3);
   if (entries.length === 0) return '';
   const items = entries
     .map((h) => `<li><a class="toc-h${h.level}" href="#${escapeHtml(h.slug)}">${escapeHtml(h.text)}</a></li>`)
     .join('\n');
-  return `<h2>On this page</h2>\n<ul>\n${items}\n</ul>`;
+  return `<h2>${CHROME[lang].toc}</h2>\n<ul>\n${items}\n</ul>`;
 }
 
 function shell(args: PageRenderArgs & { mainHtml: string }): string {
+  const chrome = CHROME[args.lang];
   const homeHref = relativeRoute(args.route, 'index.html');
-  const toc = tocHtml(args.headings);
+  const selfHref = relativeRoute(args.route, args.route);
+  const toc = tocHtml(args.headings, args.lang);
   return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="${chrome.htmlLang}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -152,7 +199,7 @@ function shell(args: PageRenderArgs & { mainHtml: string }): string {
 <style>${SITE_CSS}</style>
 </head>
 <body>
-<header class="topbar"><a class="brand" href="${escapeHtml(homeHref)}">BreadESP <span>Docs</span></a><span class="env">offline build · zero external resources</span></header>
+<header class="topbar"><a class="brand" href="${escapeHtml(homeHref)}">BreadESP <span>Docs</span></a><span class="env">${chrome.env}</span><span class="langs"><a class="active" href="${escapeHtml(selfHref)}" lang="${chrome.htmlLang}" aria-current="true">${chrome.langLabel}</a><span class="sep">/</span><a href="${escapeHtml(relativeRoute(args.route, args.altHref))}" hreflang="${chrome.otherHreflang}" lang="${chrome.otherHreflang}">${chrome.otherLangLabel}</a></span></header>
 <div class="layout${toc === '' ? ' no-toc' : ''}">
 <nav class="sidebar" aria-label="Site">
 ${navHtml(args.nav, args.route)}
@@ -160,9 +207,9 @@ ${navHtml(args.nav, args.route)}
 <main class="content">
 ${args.mainHtml}
 </main>
-${toc === '' ? '' : `<aside class="toc" aria-label="On this page">\n${toc}\n</aside>`}
+${toc === '' ? '' : `<aside class="toc" aria-label="${chrome.toc}">\n${toc}\n</aside>`}
 </div>
-<footer class="foot">BreadESP offline documentation · generated from the repository Markdown sources · ${args.pageCount} pages</footer>
+<footer class="foot">${chrome.footer(args.pageCount)}</footer>
 </body>
 </html>
 `;
@@ -174,15 +221,20 @@ export function renderPage(args: PageRenderArgs): string {
 }
 
 export interface IndexRenderArgs {
-  route: string; // 'index.html'
+  route: string; // 'index.html' or 'en/index.html'
   nav: NavModel;
   pageCount: number;
+  /** Content language of this index. */
+  lang: SiteLang;
+  /** Route of the index in the other language. */
+  altHref: string;
   /** Cards per section, in nav order. */
   cards: { sectionTitle: string; pages: { route: string; title: string; description: string }[] }[];
 }
 
 /** Render the landing page: hero + per-section page cards. */
 export function renderIndex(args: IndexRenderArgs): string {
+  const chrome = CHROME[args.lang];
   const sections = args.cards
     .map((section) => {
       const cards = section.pages
@@ -198,17 +250,19 @@ export function renderIndex(args: IndexRenderArgs): string {
   const mainHtml = `<article>
 <div class="hero">
 <h1>${SITE_TITLE}</h1>
-<p>BreadESP — ESP32 虚拟面包板仿真器的离线文档站：教程、指南与契约参考，全部从仓库 Markdown 源构建。</p>
+<p>${chrome.hero}</p>
 </div>
 ${sections}
 </article>`;
   return shell({
-    title: 'Home',
+    title: chrome.home,
     route: args.route,
     contentHtml: '',
     headings: [],
     nav: args.nav,
     pageCount: args.pageCount,
+    lang: args.lang,
+    altHref: args.altHref,
     mainHtml,
   });
 }

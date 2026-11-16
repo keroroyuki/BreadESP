@@ -141,7 +141,8 @@ export async function runDocsCli(argv: string[], io: DocsCliIO): Promise<number>
       return 0;
     }
     const report = buildSite(site, outDir);
-    io.out(`Built ${report.pageCount} pages + index (${report.files.length} files, ${report.linkCount} links checked) into ${outDir}`);
+    const indexCount = report.files.filter((file) => file.endsWith('index.html')).length;
+    io.out(`Built ${report.pageCount} pages + ${indexCount} indexes (${report.files.length} files, ${report.linkCount} links checked) into ${outDir}`);
     if (parsed.command === 'build') return 0;
     const server = await serveDocs(outDir, { ...(parsed.port !== undefined ? { port: parsed.port } : {}) });
     io.out(`Serving BreadESP docs at ${server.url} (Ctrl+C to stop)`);

@@ -1,6 +1,6 @@
 # BreadESP — ESP32 Virtual Breadboard Simulator
 
-**English** | [简体中文](https://github.com/keroroyuki/BreadESP/blob/main/README.zh-CN.md)
+**English** | [简体中文](docs/README.zh-CN.md)
 
 > A local-first functional simulator for the ESP32: build circuits graphically, run real firmware,
 > debug with GDB and watch the serial console — the whole loop stays offline.
@@ -37,8 +37,8 @@ printing the firmware's `Hello ESP32` in real time.
   directories; the `pnpm create-peripheral` scaffold generates a publishable package in one step.
 - **Project linking**: link a PlatformIO / ESP-IDF project directory as a whole, and `build/*.elf` is
   discovered and imported automatically.
-- **Offline docs site**: `pnpm docs:build` produces a static docs site (zero external assets, works
-  disconnected) with six step-by-step tutorials.
+- **Offline docs site**: `pnpm docs:build` produces a bilingual static docs site (zero external assets,
+  works disconnected) with six step-by-step tutorials in Chinese and English.
 
 ## Quick start
 
@@ -64,8 +64,8 @@ pnpm dev           # launch the app (vite dev server + Electron)
 
 Then follow the tutorials for your first project (from creating it to the LED blinking with the firmware):
 
-- [01 · Getting started](docs/tutorials/01-getting-started.md) — install, launch and a UI tour
-- [02 · First project: a blinking LED](docs/tutorials/02-first-project.md) — create a project, wire it, import firmware, run the simulation
+- [01 · Getting started](docs/en/tutorials/01-getting-started.md) — install, launch and a UI tour
+- [02 · First project: a blinking LED](docs/en/tutorials/02-first-project.md) — create a project, wire it, import firmware, run the simulation
 
 The repository ships deterministic golden firmware (`packages/sim-core/fixtures/`, e.g. `blink.elf`,
 which prints `Hello ESP32` and toggles GPIO2), so the whole flow works without an ESP-IDF toolchain.
@@ -114,16 +114,16 @@ device → peripheral models update → render snapshots are pushed back to the 
 
 ## Documentation
 
-The in-repository documentation is written in Chinese.
+Source docs are authored in Chinese; every page below has an English mirror under [`docs/en/`](docs/en/PRD.md), and the offline docs site ships both languages with a switcher.
 
-- [PRD.md](PRD.md) — single source of truth (requirements, interface contracts, directory conventions)
-- [docs/dev-plan.md](docs/dev-plan.md) — development plan, milestones, code style, commit conventions
+- [PRD.md](PRD.md) — single source of truth (requirements, interface contracts, directory conventions) · [EN](docs/en/PRD.md)
+- [docs/dev-plan.md](docs/dev-plan.md) — development plan, milestones, code style, commit conventions · [EN](docs/en/dev-plan.md)
 - `docs/test-plan.md` — test approach and current status (not part of the docs-site page set)
-- [docs/architecture.md](docs/architecture.md) — architecture deep dive
-- [docs/peripheral-sdk.md](docs/peripheral-sdk.md) — peripheral SDK guide
-- [docs/dap.md](docs/dap.md) — DAP adapter (VS Code debugging)
-- [docs/tutorials/](docs/tutorials/01-getting-started.md) — step-by-step tutorials (getting started, first project, debugging, peripheral reference, authoring peripherals, VS Code)
-- [CHANGELOG.md](CHANGELOG.md) — changelog
+- [docs/architecture.md](docs/architecture.md) — architecture deep dive · [EN](docs/en/architecture.md)
+- [docs/peripheral-sdk.md](docs/peripheral-sdk.md) — peripheral SDK guide · [EN](docs/en/peripheral-sdk.md)
+- [docs/dap.md](docs/dap.md) — DAP adapter (VS Code debugging) · [EN](docs/en/dap.md)
+- [docs/tutorials/](docs/tutorials/01-getting-started.md) — step-by-step tutorials (getting started, first project, debugging, peripheral reference, authoring peripherals, VS Code) · [EN](docs/en/tutorials/01-getting-started.md)
+- [CHANGELOG.md](CHANGELOG.md) — changelog · [EN](docs/en/CHANGELOG.md)
 
 ## Contributing
 

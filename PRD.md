@@ -145,13 +145,16 @@
     覆盖既有文件；已存在的空目录允许写入）。写入中途失败时清理已创建的部分文件。
 
 ### 3.9 文档与教程（F-DOC）
-- F-DOC-1 MUST 提供离线文档站：仓库内 Markdown 源（`README.md`/`PRD.md`/`CHANGELOG.md`/
-  `docs/*.md`/`docs/tutorials/*.md`）经 `pnpm docs:build` 构建为静态 HTML，输出到
-  `docs/site/`（gitignored）；产物零外部资源（无 CDN 字体/脚本/样式、零 JavaScript），
-  断网可用。
-- F-DOC-2 MUST 提供分步教程（`docs/tutorials/`，文件名序即教程顺序，front-matter 携带
-  `title`/`description`）：上手安装与首跑、首个工程（blink LED）、调试工作流、内建外设
-  参考、外设创作（SDK + 本地目录 + 脚手架）、DAP/VS Code 接入。
+- F-DOC-1 MUST 提供离线文档站：仓库内 Markdown 源（`README.md`/`docs/README.zh-CN.md`/
+  `PRD.md`/`CHANGELOG.md`/`docs/*.md`/`docs/tutorials/*.md` 及其 `docs/en/` 英文镜像）经
+  `pnpm docs:build` 构建为静态 HTML，输出到 `docs/site/`（gitignored）；产物零外部资源
+  （无 CDN 字体/脚本/样式、零 JavaScript），断网可用。站点为中英双语：中文页面在根路由，
+  英文页面统一挂在 `en/` 路由前缀下；每个页面顶栏提供语言切换，指向同页面的另一种语言
+  版本（`README.md` ↔ `docs/README.zh-CN.md`）。
+- F-DOC-2 MUST 提供分步教程（`docs/tutorials/` 与 `docs/en/tutorials/`，文件名序即教程顺序，
+  front-matter 携带 `title`/`description`；两份目录 MUST 同名同序、均非空）：上手安装与首跑、
+  首个工程（blink LED）、调试工作流、内建外设参考、外设创作（SDK + 本地目录 + 脚手架）、
+  DAP/VS Code 接入。
 - F-DOC-3 MUST 构建期校验站内链接完整性：相对链接的目标页必须在站点清单内并被重写为
   产物相对路径，`#anchor` 必须命中目标页标题锚点（GitHub 兼容 slug：小写、去除标点、
   空格转连字符、重名追加 `-N` 序号）；全部断链/坏锚一次列全并以 `[BB-241]` 使构建失败。
@@ -419,7 +422,7 @@ i2c-out := {"kind":"i2c-out","bus":0,"target":68,"data":[byte,...]} (P3.4 追加
 ```
 my-idea/
 ├── PRD.md                      # 本文件，唯一真相源
-├── README.md
+├── README.md                   # 英文概览（默认语言，§F-DOC-1）
 ├── package.json                # 根 workspace
 ├── pnpm-workspace.yaml
 ├── tsconfig.base.json
@@ -442,12 +445,22 @@ my-idea/
 │   └── lib/
 │       └── xtensa-elf.mjs      # 共享 Xtensa 汇编器 + ELF32 写入器
 ├── docs/
+│   ├── README.zh-CN.md         # 中文概览（英文 README.md 的镜像页）
 │   ├── architecture.md
 │   ├── dap.md                  # DAP 适配器使用指南（§F-DBG-6）
 │   ├── peripheral-sdk.md
 │   ├── dev-plan.md
 │   ├── decisions.md            # 流程/架构决策记录（ADR）
 │   ├── site/                   # 文档站构建产物（§F-DOC-1, P5.4；gitignored，pnpm docs:build 生成）
+│   ├── en/                     # 英文文档镜像（§F-DOC-1；站点路由前缀 en/）
+│   │   ├── PRD.md
+│   │   ├── architecture.md
+│   │   ├── dap.md
+│   │   ├── peripheral-sdk.md
+│   │   ├── dev-plan.md
+│   │   ├── CHANGELOG.md
+│   │   └── tutorials/          # 英文教程镜像（与 tutorials/ 同名同序）
+│   │       └── 01-getting-started.md … 06-vscode-dap.md
 │   └── tutorials/              # 分步教程（§F-DOC-2, P5.4；文件名序即顺序）
 │       ├── 01-getting-started.md
 │       ├── 02-first-project.md
