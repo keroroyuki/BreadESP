@@ -11,9 +11,9 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, wri
 import { dirname, join } from 'node:path';
 import { renderMarkdown } from './markdown.js';
 import { makeLinkResolver } from './links.js';
-import { loadSite, pageDescription, pageTitle, siteNav } from './site.js';
+import { loadSite, pageDescription, pageTitle, siteNav, counterpartRoute, EN_PREFIX, type NavModel } from './site.js';
 import { renderIndex, renderPage } from './theme.js';
-import type { BuildReport, DocsSite, LinkIssue, LoadedPage } from './types.js';
+import type { BuildReport, DocsSite, LinkIssue, LoadedPage, SiteLang } from './types.js';
 
 /**
  * Marker written into the output directory. prepareOutDir refuses to clean a
@@ -27,7 +27,10 @@ const MARKER_CONTENT =
 /** Everything the build computes before the first write (throw point = gate). */
 interface PreparedSite {
   pages: LoadedPage[];
-  nav: ReturnType<typeof siteNav>;
+  /** Navigation model per content language. */
+  navs: Record<SiteLang, NavModel>;
+  /** Page count per content language (footer stat). */
+  pageCounts: Record<SiteLang, number>;
   /** Repo-relative asset source → site asset route. */
   assets: Map<string, string>;
   linkCount: number;
@@ -55,8 +58,11 @@ function prepareSite(site: DocsSite): PreparedSite {
   for (const [sourcePath, count] of sourceOwners) {
     if (count > 1) issues.push({ page: sourcePath, target: sourcePath, line: 0, reason: 'source listed more than once in the manifest' });
   }
-  if (!pages.some((p) => p.source.section === 'tutorials')) {
-    issues.push({ page: '(manifest)', target: 'docs/tutorials', line: 0, reason: 'no tutorial pages discovered under docs/tutorials (PRD §F-DOC-2)' });
+  for (const lang of ['zh', 'en'] as const) {
+    const tutorialDir = lang === 'zh' ? 'docs/tutorials' : 'docs/en/tutorials';
+    if (!pages.some((p) => p.source.section === 'tutorials' && p.source.lang === lang)) {
+      issues.push({ page: '(manifest)', target: tutorialDir, line: 0, reason: `no tutorial pages discovered under ${tutorialDir} (PRD §F-DOC-2)` });
+    }
   }
 
   const anchorsByRoute = new Map<string, Set<string>>(
@@ -82,7 +88,16 @@ function prepareSite(site: DocsSite): PreparedSite {
     ];
     throw new Error(`[BB-241] docs site content validation failed (${lines.length} issue${lines.length === 1 ? '' : 's'}):\n${lines.join('\n')}`);
   }
-  return { pages: resolvedPages, nav: siteNav(resolvedPages), assets, linkCount };
+  return {
+    pages: resolvedPages,
+    navs: { zh: siteNav(resolvedPages, 'zh'), en: siteNav(resolvedPages, 'en') },
+    pageCounts: {
+      zh: resolvedPages.filter((p) => p.source.lang === 'zh').length,
+      en: resolvedPages.filter((p) => p.source.lang === 'en').length,
+    },
+    assets,
+    linkCount,
+  };
 }
 
 /** Validate-only entry (`pnpm docs:check`): the full gate, zero writes. */
@@ -122,6 +137,7 @@ export function buildSite(site: DocsSite, outDir: string): BuildReport {
 
   const writes: { route: string; html?: string; copyFrom?: string }[] = [];
   for (const page of prepared.pages) {
+    const lang = page.source.lang;
     writes.push({
       route: page.source.route,
       html: renderPage({
@@ -129,26 +145,34 @@ export function buildSite(site: DocsSite, outDir: string): BuildReport {
         route: page.source.route,
         contentHtml: page.rendered.html,
         headings: page.rendered.headings,
-        nav: prepared.nav,
-        pageCount: prepared.pages.length,
+        nav: prepared.navs[lang],
+        pageCount: prepared.pageCounts[lang],
+        lang,
+        altHref: counterpartRoute(page.source.route, lang),
       }),
     });
   }
-  writes.push({
-    route: 'index.html',
-    html: renderIndex({
-      route: 'index.html',
-      nav: prepared.nav,
-      pageCount: prepared.pages.length,
-      cards: prepared.nav.sections.map((section) => ({
-        sectionTitle: section.title,
-        pages: section.pages.map((navPage) => {
-          const loaded = prepared.pages.find((p) => p.source.route === navPage.route);
-          return { route: navPage.route, title: navPage.title, description: loaded ? pageDescription(loaded) : '' };
-        }),
-      })),
-    }),
-  });
+  for (const lang of ['zh', 'en'] as const) {
+    const route = lang === 'zh' ? 'index.html' : `${EN_PREFIX}/index.html`;
+    const nav = prepared.navs[lang];
+    writes.push({
+      route,
+      html: renderIndex({
+        route,
+        nav,
+        pageCount: prepared.pageCounts[lang],
+        lang,
+        altHref: counterpartRoute(route, lang),
+        cards: nav.sections.map((section) => ({
+          sectionTitle: section.title,
+          pages: section.pages.map((navPage) => {
+            const loaded = prepared.pages.find((p) => p.source.route === navPage.route);
+            return { route: navPage.route, title: navPage.title, description: loaded ? pageDescription(loaded) : '' };
+          }),
+        })),
+      }),
+    });
+  }
   const assetRoutes = [...prepared.assets.entries()].sort((a, b) => (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
   for (const [sourcePath, assetRoute] of assetRoutes) {
     writes.push({ route: assetRoute, copyFrom: join(site.rootDir, sourcePath) });

@@ -29,13 +29,19 @@ describe('serveDocs', () => {
     // Build a minimal fixture site (one tutorial + all pinned sources).
     const root = join(tmp, 'repo');
     mkdirSync(join(root, 'docs', 'tutorials'), { recursive: true });
+    mkdirSync(join(root, 'docs', 'en', 'tutorials'), { recursive: true });
     writeFileSync(join(root, 'docs', 'tutorials', '01-a.md'), '# Alpha\n\nhello\n', 'utf8');
+    writeFileSync(join(root, 'docs', 'en', 'tutorials', '01-a.md'), '# Alpha\n\nhello\n', 'utf8');
+    writeFileSync(join(root, 'docs', 'README.zh-CN.md'), '# 概览\n', 'utf8');
     writeFileSync(join(root, 'README.md'), '# R\n', 'utf8');
     writeFileSync(join(root, 'PRD.md'), '# P\n', 'utf8');
     writeFileSync(join(root, 'CHANGELOG.md'), '# C\n', 'utf8');
     for (const doc of ['architecture', 'dap', 'peripheral-sdk', 'dev-plan']) {
       writeFileSync(join(root, 'docs', `${doc}.md`), `# ${doc}\n`, 'utf8');
+      writeFileSync(join(root, 'docs', 'en', `${doc}.md`), `# ${doc}\n`, 'utf8');
     }
+    writeFileSync(join(root, 'docs', 'en', 'PRD.md'), '# P\n', 'utf8');
+    writeFileSync(join(root, 'docs', 'en', 'CHANGELOG.md'), '# C\n', 'utf8');
     const outDir = join(root, 'out');
     writeFileSync(join(root, 'marker.css'), 'body{}', 'utf8'); // not served: outside outDir
     buildSite(breadespSite(root), outDir);

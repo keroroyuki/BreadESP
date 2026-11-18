@@ -1066,7 +1066,8 @@ Previously applyNetlist leaked old instances on re-apply.
 ### M5 清单
 - [x] 第三方包 `registerPeripheral()` 后 UI 自动出现新器件
 - [x] 外设打包脚手架可生成可发布包
-- [x] 文档站与教程上线（`pnpm docs:build` / `docs:serve`，6 篇教程，链接完整性门控）
+- [x] 文档站与教程上线（`pnpm docs:build` / `docs:serve`，中英双语：中文页在根路由、英文页在 `en/` 前缀，
+  中文 6 篇 + 英文 6 篇教程、各 13 页共 26 页，链接完整性门控）
 
 ---
 

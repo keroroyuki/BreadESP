@@ -39,11 +39,21 @@ function makeFixtureRepo(overrides: { aExtra?: string; prdExtra?: string; withIm
     `---\ntitle: Next steps\ndescription: Second card.\n---\n# Next\n\n## Details\n\nBack to [start](01-start.md).\n`,
     'utf8',
   );
-  writeFileSync(join(root, 'README.md'), '# Fixture Repo\n\nSee [PRD](PRD.md).\n', 'utf8');
+  writeFileSync(join(root, 'README.md'), '# Fixture Repo\n\nSee [PRD](docs/en/PRD.md).\n', 'utf8');
+  writeFileSync(join(root, 'docs', 'README.zh-CN.md'), '# 仓库概览\n\n见 [PRD](../PRD.md)。\n', 'utf8');
   writeFileSync(join(root, 'PRD.md'), `# PRD\n\n## 6. Contracts\n\nBody.\n${overrides.prdExtra ?? ''}`, 'utf8');
   writeFileSync(join(root, 'CHANGELOG.md'), '# Changelog\n\n- entry\n', 'utf8');
   for (const doc of ['architecture', 'dap', 'peripheral-sdk', 'dev-plan']) {
     writeFileSync(join(root, 'docs', `${doc}.md`), `# ${doc}\n\nBody with [PRD](../PRD.md#6-contracts) link.\n`, 'utf8');
+  }
+  // English mirrors: every pinned page plus two tutorials (docs/en/).
+  mkdirSync(join(root, 'docs', 'en', 'tutorials'), { recursive: true });
+  writeFileSync(join(root, 'docs', 'en', 'tutorials', '01-start.md'), '# Start EN\n\nGo to [guide](../peripheral-sdk.md).\n', 'utf8');
+  writeFileSync(join(root, 'docs', 'en', 'tutorials', '02-next.md'), '# Next EN\n\nBack to [start](01-start.md).\n', 'utf8');
+  writeFileSync(join(root, 'docs', 'en', 'PRD.md'), '# PRD\n\n## 6. Contracts\n\nBody.\n', 'utf8');
+  writeFileSync(join(root, 'docs', 'en', 'CHANGELOG.md'), '# Changelog\n\n- entry\n', 'utf8');
+  for (const doc of ['architecture', 'dap', 'peripheral-sdk', 'dev-plan']) {
+    writeFileSync(join(root, 'docs', 'en', `${doc}.md`), `# ${doc}\n\nBody.\n`, 'utf8');
   }
   if (overrides.withImage) {
     mkdirSync(join(root, 'docs', 'images'), { recursive: true });
@@ -61,7 +71,7 @@ describe('buildSite on a fixture repo', () => {
     const outDir = join(root, 'out');
     const report = buildSite(breadespSite(root), outDir);
 
-    expect(report.pageCount).toBe(9); // 2 tutorials + 3 guides + 4 reference
+    expect(report.pageCount).toBe(18); // 9 zh pages + 9 English mirrors
     expect(report.files).toContain('index.html');
     expect(report.files).toContain('tutorials/01-start.html');
     expect(report.files).toContain('reference/prd.html');
@@ -87,12 +97,14 @@ describe('buildSite on a fixture repo', () => {
     buildSite(breadespSite(root), outDir);
     const html = readFileSync(join(outDir, 'tutorials', '02-next.html'), 'utf8');
     expect(html).toContain('class="active" aria-current="page"');
-    expect(html).toContain('On this page');
+    expect(html).toContain('本页目录');
     expect(html).toContain('href="#details"');
     // The nav links out of a nested route are relative (../reference/...).
     expect(html).toContain('href="../reference/prd.html"');
     // Front-matter title is used in the nav and the <title>.
     expect(html).toContain('<title>Next steps · BreadESP Docs</title>');
+    // The language switch points at the English mirror of this page.
+    expect(html).toContain('href="../en/tutorials/02-next.html"');
   });
 
   it('builds a landing index with section cards and descriptions', () => {
@@ -100,12 +112,17 @@ describe('buildSite on a fixture repo', () => {
     const outDir = join(root, 'out');
     buildSite(breadespSite(root), outDir);
     const index = readFileSync(join(outDir, 'index.html'), 'utf8');
-    expect(index).toContain('Tutorials');
-    expect(index).toContain('Guides');
-    expect(index).toContain('Reference');
+    expect(index).toContain('教程');
+    expect(index).toContain('指南');
+    expect(index).toContain('参考');
     expect(index).toContain('href="tutorials/01-start.html"');
     expect(index).toContain('First card.');
     expect(index).toContain('BreadESP Docs');
+    // The English index lives under en/ and links its own page set.
+    const enIndex = readFileSync(join(outDir, 'en', 'index.html'), 'utf8');
+    expect(enIndex).toContain('Tutorials');
+    expect(enIndex).toContain('href="tutorials/01-start.html"');
+    expect(enIndex).toContain('href="../index.html"'); // language switch back to zh
   });
 
   it('is byte-reproducible across two builds (F-DOC-4)', () => {
@@ -160,7 +177,7 @@ describe('buildSite on a fixture repo', () => {
   it('checkSite validates without writing anything', () => {
     const root = makeFixtureRepo();
     const result = checkSite(breadespSite(root));
-    expect(result.pageCount).toBe(9);
+    expect(result.pageCount).toBe(18);
     expect(result.linkCount).toBeGreaterThan(0);
     expect(readdirSync(root)).not.toContain('out');
   });
@@ -171,19 +188,20 @@ describe('whole-repo build (the real BreadESP docs)', () => {
 
   it('passes the link gate with zero violations', () => {
     const result = checkSite(realSite);
-    // 6 tutorials + 3 guides + 4 reference (PRD §F-DOC-1/2 page set).
-    expect(result.pageCount).toBe(13);
-    expect(result.linkCount).toBeGreaterThan(40);
+    // 13 Chinese pages + 13 English mirrors (PRD §F-DOC-1/2 page set).
+    expect(result.pageCount).toBe(26);
+    expect(result.linkCount).toBeGreaterThan(80);
   });
 
   it('builds every page and rewrites the known cross-document links', () => {
     const outDir = join(tmp, 'real-site');
     const report = buildSite(realSite, outDir);
-    expect(report.pageCount).toBe(13);
+    expect(report.pageCount).toBe(26);
     expect(report.files).toEqual(
       expect.arrayContaining([
         SITE_MARKER,
         'index.html',
+        'en/index.html',
         'tutorials/01-getting-started.html',
         'tutorials/06-vscode-dap.html',
         'guides/readme.html',
@@ -193,12 +211,19 @@ describe('whole-repo build (the real BreadESP docs)', () => {
         'reference/architecture.html',
         'reference/dev-plan.html',
         'reference/changelog.html',
+        'en/tutorials/01-getting-started.html',
+        'en/guides/readme.html',
+        'en/reference/prd.html',
       ]),
     );
     // README's ./docs/dev-plan.md becomes a route href, not a repo path.
     const readme = readFileSync(join(outDir, 'guides', 'readme.html'), 'utf8');
     expect(readme).toContain('href="../reference/dev-plan.html"');
     expect(readme).not.toContain('href="./docs/dev-plan.md"');
+    // The English overview is the repo README and links the English page set.
+    const enReadme = readFileSync(join(outDir, 'en', 'guides', 'readme.html'), 'utf8');
+    expect(enReadme).toContain('href="../../reference/dev-plan.html"');
+    expect(enReadme).toContain('href="../../tutorials/01-getting-started.html"');
     // dev-plan's TOC self-anchors survived the GitHub-compatible slugger.
     const devplan = readFileSync(join(outDir, 'reference', 'dev-plan.html'), 'utf8');
     expect(devplan).toContain('id="12-验收检查清单"');

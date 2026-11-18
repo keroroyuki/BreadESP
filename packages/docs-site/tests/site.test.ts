@@ -36,10 +36,10 @@ describe('breadespSite manifest', () => {
     expect(tutorials[0].sourcePath).toBe('docs/tutorials/01-first.md');
   });
 
-  it('pins the guides and reference pages in a stable order with unique routes', () => {
+  it('pins every guide and reference page in both languages with unique routes', () => {
     const site = breadespSite(makeRoot());
-    const pinned = site.pages.filter((p) => p.section !== 'tutorials');
-    expect(pinned.map((p) => p.route)).toEqual([
+    const zh = site.pages.filter((p) => p.section !== 'tutorials' && p.lang === 'zh');
+    expect(zh.map((p) => p.route)).toEqual([
       'guides/readme.html',
       'guides/peripheral-sdk.html',
       'guides/dap.html',
@@ -48,6 +48,9 @@ describe('breadespSite manifest', () => {
       'reference/dev-plan.html',
       'reference/changelog.html',
     ]);
+    const en = site.pages.filter((p) => p.section !== 'tutorials' && p.lang === 'en');
+    expect(en.map((p) => p.route)).toEqual(zh.map((p) => `en/${p.route}`));
+    expect(en[0].sourcePath).toBe('README.md'); // the English overview is the repo README
     const routes = site.pages.map((p) => p.route);
     expect(new Set(routes).size).toBe(routes.length);
   });
@@ -91,6 +94,8 @@ describe('loadSite + title/description resolution', () => {
     writeTutorial(root, '01-a.md', '---\ntitle: From Matter\ndescription: Card text\n---\n# Heading Title\n');
     writeTutorial(root, '02-b.md', '# Heading Only\n');
     writeFileSync(join(root, 'README.md'), '# Repo Heading\n', 'utf8');
+    mkdirSync(join(root, 'docs'), { recursive: true });
+    writeFileSync(join(root, 'docs', 'README.zh-CN.md'), '# 仓库概览\n', 'utf8');
     const { pages, issues } = loadSite(breadespSite(root));
     const a = pages.find((p) => p.source.route === 'tutorials/01-a.html')!;
     const b = pages.find((p) => p.source.route === 'tutorials/02-b.html')!;
@@ -100,15 +105,16 @@ describe('loadSite + title/description resolution', () => {
     expect(pageTitle(b)).toBe('Heading Only');
     // The fixture lacks the other pinned sources; their absence is reported.
     expect(issues.some((i) => i.includes('PRD.md: source file not found'))).toBe(true);
-    expect(pageTitle(readme)).toBe('Project overview'); // manifest navTitle beats the H1
+    expect(pageTitle(readme)).toBe('仓库概览'); // manifest navTitle beats the H1
   });
 
   it('manifest navTitle wins over the first H1 when front matter is absent', () => {
     const root = makeRoot();
-    writeFileSync(join(root, 'README.md'), '# BreadESP — ESP32 虚拟面包板仿真器\n', 'utf8');
+    mkdirSync(join(root, 'docs'), { recursive: true });
+    writeFileSync(join(root, 'docs', 'README.zh-CN.md'), '# BreadESP — ESP32 虚拟面包板仿真器\n', 'utf8');
     const { pages } = loadSite(breadespSite(root));
     const readme = pages.find((p) => p.source.route === 'guides/readme.html')!;
-    expect(pageTitle(readme)).toBe('Project overview');
+    expect(pageTitle(readme)).toBe('仓库概览');
     expect(pageDescription(readme)).toContain('仓库导览');
   });
 
@@ -127,8 +133,20 @@ describe('siteNav', () => {
     writeFileSync(join(root, 'PRD.md'), '# PRD\n', 'utf8');
     const { pages } = loadSite(breadespSite(root));
     const nav = siteNav(pages);
-    expect(nav.sections.map((s) => s.title)).toEqual(['Tutorials', 'Reference']);
+    expect(nav.sections.map((s) => s.title)).toEqual(['教程', '参考']);
     expect(nav.sections[0].pages).toEqual([{ route: 'tutorials/01-a.html', title: 'Alpha' }]);
-    expect(nav.sections[1].pages).toEqual([{ route: 'reference/prd.html', title: 'PRD (source of truth)' }]);
+    expect(nav.sections[1].pages).toEqual([{ route: 'reference/prd.html', title: 'PRD（唯一真相源）' }]);
+  });
+
+  it('builds a separate English nav and falls back to zh when asked for zh', () => {
+    const root = makeRoot();
+    writeTutorial(root, '01-a.md', '---\ntitle: Alpha\n---\n# A\n');
+    mkdirSync(join(root, 'docs', 'en', 'tutorials'), { recursive: true });
+    writeFileSync(join(root, 'docs', 'en', 'tutorials', '01-a.md'), '---\ntitle: Alpha EN\n---\n# A\n', 'utf8');
+    writeFileSync(join(root, 'PRD.md'), '# PRD\n', 'utf8');
+    const { pages } = loadSite(breadespSite(root));
+    const en = siteNav(pages, 'en');
+    expect(en.sections[0]).toEqual({ id: 'tutorials', title: 'Tutorials', pages: [{ route: 'en/tutorials/01-a.html', title: 'Alpha EN' }] });
+    expect(siteNav(pages, 'zh').sections[0].pages.map((p) => p.route)).toEqual(['tutorials/01-a.html']);
   });
 });
