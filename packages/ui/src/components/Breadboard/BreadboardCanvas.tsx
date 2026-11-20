@@ -36,6 +36,7 @@ import { EmptyGuide } from './EmptyGuide';
 import { isEditableTarget } from '../HelpDialog/shortcuts';
 import { adjustSht30 } from './sensorDraft';
 import { describeGenericSnapshot } from './genericNode';
+import { CATEGORY_ACCENT, PART_COPY, partVisual } from '../parts/partVisuals';
 import { sht30ConfigFromProps, sht30FormatReading } from '@breadesp/peripherals';
 import {
   MCU_GPIO_PINS,
@@ -561,6 +562,10 @@ export function BreadboardCanvas() {
             const snap = snapshots[item.instanceId];
             const level = snap?.type === 'level' ? (snap.payload as { level: number }).level : 0;
             const inputPin = pins.find((p) => p.role === 'gpio-in')?.id;
+            // Visual identity (shared with the palette and the 3D nameplates).
+            const visual = partVisual(item.kind);
+            const copy = PART_COPY[item.kind];
+            const partLabel = copy === undefined ? item.kind : t(copy.name);
             return (
               <Group
                 key={item.instanceId}
@@ -586,13 +591,44 @@ export function BreadboardCanvas() {
                   shadowBlur={6}
                   shadowOpacity={0.12}
                 />
+                {/* Category strip + glyph + localized name: the part is readable
+                    at a glance, before the tiny kind id. */}
+                <Rect
+                  width={NODE_W}
+                  height={3}
+                  fill={CATEGORY_ACCENT[visual.category]}
+                  cornerRadius={[8, 8, 0, 0]}
+                  listening={false}
+                />
+                <Path
+                  data={visual.icon}
+                  x={9}
+                  y={9}
+                  scaleX={13 / 24}
+                  scaleY={13 / 24}
+                  stroke={CATEGORY_ACCENT[visual.category]}
+                  strokeWidth={1.8}
+                  strokeScaleEnabled={false}
+                  listening={false}
+                />
                 <Text
-                  x={8}
-                  y={6}
-                  width={NODE_W - 16}
-                  text={`${item.kind} ${item.instanceId}`}
-                  fontSize={10}
-                  fill="#334155"
+                  x={27}
+                  y={7}
+                  width={NODE_W - 70}
+                  text={partLabel}
+                  fontSize={9.5}
+                  fontStyle="bold"
+                  fill="#1e293b"
+                  listening={false}
+                />
+                <Text
+                  x={NODE_W - 48}
+                  y={8.5}
+                  width={40}
+                  align="right"
+                  text={item.instanceId}
+                  fontSize={7.5}
+                  fill="#94a3b8"
                   listening={false}
                 />
                 {item.kind === 'led' && (

@@ -32,6 +32,14 @@ const PANEL_MIN_WIDTH: Record<DockPanelId, number> = {
 /** Dock content height below the 28px strip (matches the old 220px + strip). */
 const CONTENT_HEIGHT = 192;
 
+/** Tab glyphs: shape carries the meaning, the label stays for precision. */
+const DOCK_ICONS: Record<DockPanelId, string> = {
+  serial: 'M4 6h16v12H4zM7.5 10.5l2 1.5-2 1.5M12 14h4',
+  scope: 'M3 12h3l2.2-4.5L11 16l2.5-6 1.8 3H21',
+  screen: 'M3 5h18v11H3zM9 20h6M12 16v4',
+  wavegen: 'M3 12c2.4-6 5.1-6 7.5 0s5.1 6 7.5 0',
+};
+
 function readStored(): DockPanelId[] {
   try {
     return parseDockVisible(localStorage.getItem(DOCK_STORAGE_KEY));
@@ -86,6 +94,20 @@ export function BottomDock() {
                   : 'border-bb-line bg-white text-bb-muted hover:bg-slate-50'
               }`}
             >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="mr-1 shrink-0"
+                aria-hidden
+              >
+                <path d={DOCK_ICONS[id]} />
+              </svg>
               {t(labelKey)}
             </button>
           );

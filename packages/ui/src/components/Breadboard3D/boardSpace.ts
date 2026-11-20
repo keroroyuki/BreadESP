@@ -24,9 +24,12 @@ export function boardCenter(): [number, number, number] {
   return [WORLD_W / 2, 0, WORLD_H / 2];
 }
 
-/** Default camera: elevated above the viewer-side edge, looking at the board. */
+/** Default camera: elevated above the viewer-side edge, looking at the board.
+ *  Slightly higher than the first pass (38° → ~46°) so the board reads as a
+ *  surface seen from above rather than a wall, and leaves headroom for the
+ *  nameplates that sit above each part. */
 export function defaultCameraPosition(): [number, number, number] {
-  return [WORLD_W / 2, 560, WORLD_H + 430];
+  return [WORLD_W / 2, 760, WORLD_H + 440];
 }
 
 /** Orbit distance limits (world units) — close enough to inspect a part,

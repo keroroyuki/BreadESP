@@ -9,8 +9,9 @@
 ![Main window](docs/images/ui-overview.png)
 
 The main window at a glance: the left column is the parts panel (built-in palette plus the local
-peripheral directory), the centre is the breadboard canvas (drop parts, wire pin to pin, and the MCU
-node exposes every usable GPIO of the selected chip), the right side is the debug panel, and the
+peripheral directory, grouped by signal family), the centre is the breadboard — a modelled 3D view by
+default, switchable to the 2D canvas — where you drop parts and wire pin to pin; the MCU node exposes
+every usable GPIO of the selected chip. The right column holds the properties and debug tabs, and the
 bottom row holds the serial console, screen view, oscilloscope and waveform generator.
 
 ![blink example running](docs/images/ui-blink-running.png)

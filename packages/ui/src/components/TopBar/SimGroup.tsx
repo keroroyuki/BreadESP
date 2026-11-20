@@ -14,6 +14,18 @@ import { canRunSimulation, runSimulation } from './simRun';
 /** PRD §F-SIM-2 range 0.1x–10x; > 1x saturates at host wall clock. */
 const SPEED_CHOICES = [0.1, 0.25, 0.5, 1, 2, 4, 10];
 
+const PlayIcon = () => (
+  <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden>
+    <path d="M2 1.4v7.2l6.2-3.6z" fill="currentColor" />
+  </svg>
+);
+
+const PauseIcon = () => (
+  <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden>
+    <path d="M2.2 1.6h2v6.8h-2zM5.8 1.6h2v6.8h-2z" fill="currentColor" />
+  </svg>
+);
+
 export function SimGroup() {
   const status = useSimulationStore((s) => s.status);
   const speed = useSimulationStore((s) => s.speed);
@@ -60,34 +72,54 @@ export function SimGroup() {
 
   return (
     <div className="flex items-center gap-1.5">
-      <Button title={`${t('common.undo')} (Ctrl+Z)`} disabled={!canUndo} onClick={undo}>
-        ↩ {t('common.undo')}
+      {/* Icon-only history controls: the bar has to fit the primary Run action
+          on a 1080 px window. The tooltip keeps the label discoverable. */}
+      <Button
+        className="w-7 px-0 text-sm"
+        title={`${t('common.undo')} (Ctrl+Z)`}
+        disabled={!canUndo}
+        onClick={undo}
+      >
+        ↶
       </Button>
-      <Button title={`${t('common.redo')} (Ctrl+Y)`} disabled={!canRedo} onClick={redo}>
-        ↪ {t('common.redo')}
+      <Button
+        className="w-7 px-0 text-sm"
+        title={`${t('common.redo')} (Ctrl+Y)`}
+        disabled={!canRedo}
+        onClick={redo}
+      >
+        ↷
       </Button>
       <span className="w-px self-stretch bg-bb-line" />
       {runnable ? (
         <Button
           variant="primary"
+          className="h-8 rounded-md px-3 font-semibold shadow-sm"
           busy={busyAction === 'run'}
           title={firmwareElf === null ? t('toast.needFirmware') : (firmwareElf ?? undefined)}
           onClick={onRun}
         >
-          ▶ {t('toolbar.run')}
+          <PlayIcon /> {t('toolbar.run')}
         </Button>
       ) : (
         <Button
           variant="primary"
+          className="h-8 rounded-md px-3 font-semibold shadow-sm"
           busy={busyAction === 'pause'}
           disabled={!live}
           onClick={onTogglePause}
         >
-          {status === 'running' ? `⏸ ${t('toolbar.pause')}` : `▶ ${t('toolbar.resume')}`}
+          {status === 'running' ? <PauseIcon /> : <PlayIcon />}
+          {status === 'running' ? t('toolbar.pause') : t('toolbar.resume')}
         </Button>
       )}
-      <Button disabled={status === 'idle'} onClick={() => run('reset', () => bridge.sim.reset())}>
-        ⟲ {t('toolbar.reset')}
+      <Button
+        className="w-7 px-0 text-sm"
+        title={t('toolbar.reset')}
+        disabled={status === 'idle'}
+        onClick={() => run('reset', () => bridge.sim.reset())}
+      >
+        ⟲
       </Button>
       <label className="flex items-center gap-1 text-xs text-bb-ink">
         {t('toolbar.speed')}

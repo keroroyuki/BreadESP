@@ -9,7 +9,7 @@
 // them. Overlays (hint, badge, reset) stay in the DOM rather than in WebGL:
 // crisp text at any zoom, and no dependency on troika's CDN-hosted default font
 // (an offline desktop app must not fetch a font to draw a label).
-import { Component, useCallback, useEffect, useRef, useState } from 'react';
+import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CSSProperties,
   DragEvent as ReactDragEvent,
@@ -18,9 +18,18 @@ import type {
 } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import type { ThreeEvent } from '@react-three/fiber';
-import { Grid, Line, OrbitControls, RoundedBox } from '@react-three/drei';
-import { DoubleSide, Plane, Raycaster, Vector2, Vector3 } from 'three';
-import type { Camera } from 'three';
+import { Line, OrbitControls, RoundedBox } from '@react-three/drei';
+import {
+  ACESFilmicToneMapping,
+  DoubleSide,
+  Object3D,
+  PCFSoftShadowMap,
+  Plane,
+  Raycaster,
+  Vector2,
+  Vector3,
+} from 'three';
+import type { Camera, DirectionalLight } from 'three';
 import { MCU_INSTANCE_ID } from '@breadesp/netlist';
 import { tNow, useT } from '../../i18n';
 import { useDropGhostStore } from '../../store/dropGhostStore';
@@ -29,7 +38,7 @@ import { useSelectionStore } from '../../store/selectionStore';
 import { useViewModeStore } from '../../store/viewModeStore';
 import { useWiring3DStore } from '../../store/wiring3dStore';
 import { toast } from '../../store/toastStore';
-import { GRID, GRID_MAJOR, snappedPlacement } from '../Breadboard/canvasView';
+import { snappedPlacement } from '../Breadboard/canvasView';
 import { NODE_H, NODE_W } from '../Breadboard/pinLayout';
 import { isEditableTarget } from '../HelpDialog/shortcuts';
 import { WORLD_H, WORLD_W } from '../Breadboard/worldSize';
@@ -44,8 +53,13 @@ import { canvas3DInput, clearCanvas3DInput, setCanvas3DInput } from './interacti
 import { mcuPinAnchors, partPinAnchors, PIN_ROWS_3D, type PinAnchor3D } from './wiring/pinRows3d';
 import { modelKeyFor } from './modelCatalog';
 import { PartsLayer } from './PartsLayer';
+import { PartLabels } from './PartLabels';
 import { PinsLayer } from './PinsLayer';
 import { WiresLayer } from './WiresLayer';
+import { createBoardTexture } from './boardTexture';
+
+/** Edge bevel of the board slab (world units). */
+const BOARD_RADIUS = 2;
 import { describeRenderer, detectWebGL, type WebGLVersion } from './webglSupport';
 
 /** The subset of OrbitControls this file drives (keeps drei internals out of our types). */
@@ -240,9 +254,56 @@ function clearSelectionOrPendingWire(): void {
   useSelectionStore.getState().clear();
 }
 
+/**
+ * Key light with an explicit target. three's directional light aims at the world
+ * origin by default; the board starts at the origin but extends 960×560, so an
+ * untargeted light would clip half the casting volume and leave the right-hand
+ * part of the board shadowless. The target sits on the board centre and is added
+ * to the scene so its matrix is updated.
+ */
+function KeyLight() {
+  const light = useRef<DirectionalLight | null>(null);
+  const target = useMemo(() => new Object3D(), []);
+  useEffect(() => {
+    target.position.set(WORLD_W / 2, 0, WORLD_H / 2);
+    target.updateMatrixWorld();
+    if (light.current !== null) {
+      light.current.target = target;
+      light.current.target.updateMatrixWorld();
+    }
+  }, [target]);
+  return (
+    <>
+      <primitive object={target} />
+      <directionalLight
+        ref={light}
+        castShadow
+        position={[WORLD_W * 0.18, 720, -430]}
+        color="#fff6ea"
+        intensity={1.45}
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
+        shadow-camera-near={200}
+        shadow-camera-far={2600}
+        shadow-camera-left={-780}
+        shadow-camera-right={780}
+        shadow-camera-top={780}
+        shadow-camera-bottom={-780}
+        shadow-bias={-0.0004}
+        shadow-normalBias={0.02}
+      />
+    </>
+  );
+}
+
 /** Board slab, grid, lighting, wiring and the project's modelled parts. */
 function BoardScene() {
   const downAt = useRef<{ x: number; y: number } | null>(null);
+
+  // Procedural breadboard surface (holes + silkscreen). Disposed with the scene
+  // so a 2D↔3D toggle does not leak a texture per mount.
+  const boardTexture = useMemo(() => createBoardTexture(), []);
+  useEffect(() => () => boardTexture.dispose(), [boardTexture]);
 
   const onBoardPointerDown = (e: ThreeEvent<PointerEvent>): void => {
     if (e.nativeEvent.button === 0) downAt.current = { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY };
@@ -259,64 +320,67 @@ function BoardScene() {
 
   return (
     <>
-      <hemisphereLight args={['#ffffff', '#aebccd', 0.55]} />
-      <ambientLight intensity={0.35} />
-      {/* Key light: high and behind the viewer-side edge so part shadows fall
-          towards the far edge instead of under the camera. */}
-      <directionalLight
-        castShadow
-        position={[WORLD_W * 0.75, 620, -260]}
-        intensity={1.15}
-        shadow-mapSize-width={1024}
-        shadow-mapSize-height={1024}
-        shadow-camera-near={100}
-        shadow-camera-far={2200}
-        shadow-camera-left={-700}
-        shadow-camera-right={700}
-        shadow-camera-top={700}
-        shadow-camera-bottom={-700}
-        shadow-bias={-0.0006}
-      />
+      <hemisphereLight args={['#ffffff', '#aebccd', 0.5]} />
+      <ambientLight intensity={0.26} />
+      <KeyLight />
       {/* Fill light: keeps the shadow side readable instead of black. */}
-      <directionalLight position={[-360, 420, 900]} intensity={0.3} />
+      <directionalLight position={[-360, 420, 900]} color="#dbeafe" intensity={0.36} />
+      {/* Rim light: separates the silhouettes from the background. */}
+      <directionalLight position={[-220, 300, -760]} color="#e0f2fe" intensity={0.45} />
+
+      {/* Fog + a bench plane under the slab: the board reads as a physical object
+          standing on a surface rather than a floating rectangle. */}
+      <fog attach="fog" args={['#e3ebf5', 1500, 4200]} />
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[WORLD_W / 2, -BOARD_THICKNESS - 70, WORLD_H / 2]}
+        receiveShadow
+      >
+        <planeGeometry args={[6000, 6000]} />
+        <meshStandardMaterial color="#e8eef6" roughness={1} metalness={0} />
+      </mesh>
 
       {/* The board itself: the same 960×560 surface the 2D canvas draws, sunk by
           its thickness so the top surface every part sits on is exactly y = 0. */}
       <RoundedBox
-        args={[WORLD_W, BOARD_THICKNESS, WORLD_H]}
-        radius={10}
+        // RoundedBox extrudes a rounded XY shape and bevels outward by `radius`
+        // on every side, so the outer size is args + 2×radius. Subtracting the
+        // bevel keeps the slab exactly WORLD_W × BOARD_THICKNESS × WORLD_H and,
+        // with the position below, puts its top surface at y = 0 — the plane
+        // every part and pin anchor is authored against.
+        args={[WORLD_W - 2 * BOARD_RADIUS, BOARD_THICKNESS - 2 * BOARD_RADIUS, WORLD_H - 2 * BOARD_RADIUS]}
+        radius={BOARD_RADIUS}
         smoothness={4}
         position={[WORLD_W / 2, -BOARD_THICKNESS / 2, WORLD_H / 2]}
+        castShadow
         receiveShadow
         onPointerDown={onBoardPointerDown}
         onPointerUp={onBoardPointerUp}
       >
-        <meshStandardMaterial color="#eef2f7" roughness={0.85} metalness={0.04} />
+        <meshStandardMaterial color="#eef2f7" roughness={0.9} metalness={0.02} />
       </RoundedBox>
 
-      {/* Fine 10 / major 50 grid, matching the 2D canvas grid exactly. The grid is
-          decorative: it must not swallow the board's click events. */}
-      <Grid
-        position={[WORLD_W / 2, 0.15, WORLD_H / 2]}
-        args={[WORLD_W, WORLD_H]}
-        cellSize={GRID}
-        cellThickness={0.5}
-        cellColor="#d9e1ec"
-        sectionSize={GRID_MAJOR}
-        sectionThickness={1}
-        sectionColor="#c6d1e0"
-        fadeDistance={3400}
-        fadeStrength={1}
-        followCamera={false}
-        infiniteGrid={false}
+      {/* The printed surface is its own plane: RoundedBoxGeometry does not carry
+          0–1 UVs per face, so a map applied to it samples as a blur. A plane
+          slightly above the slab keeps the texture crisp and the bevel clean.
+          It is decoration only — `raycast` is disabled so clicks fall through to
+          the slab's pointer handlers. */}
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[WORLD_W / 2, 0.06, WORLD_H / 2]}
+        receiveShadow
         raycast={() => null}
-      />
+      >
+        <planeGeometry args={[WORLD_W - 4, WORLD_H - 4]} />
+        <meshStandardMaterial map={boardTexture} roughness={0.94} metalness={0} />
+      </mesh>
 
       {/* Wiring: cables under the parts, then the parts, then the pin endpoints
           (caps sit on top of the headers they mark). */}
       <WiresLayer />
       <PartsLayer />
       <PinsLayer />
+      <PartLabels />
       <DropGhostLayer />
     </>
   );
@@ -597,7 +661,9 @@ export function Canvas3D() {
         )}
       >
         <Canvas
-          shadows
+          // Soft PCF shadows: hard-edged shadow maps read as "flat sticker" and
+          // are the single biggest cue that a scene is not a photograph.
+          shadows={{ type: PCFSoftShadowMap }}
           // Capping the pixel ratio at 1.75 keeps the fill rate sane on HiDPI
           // panels; `high-performance` asks the compositor for the discrete GPU on
           // laptops that have one.
@@ -605,6 +671,10 @@ export function Canvas3D() {
           gl={{ antialias: true, powerPreference: 'high-performance' }}
           camera={{ position: defaultCameraPosition(), fov: 45, near: 1, far: 9000 }}
           onCreated={(state) => {
+            // Filmic tone mapping keeps highlights on the steel/epoxy parts from
+            // clipping to white, which is what makes the models read as materials.
+            state.gl.toneMapping = ACESFilmicToneMapping;
+            state.gl.toneMappingExposure = 1.12;
             const gl = state.gl.getContext();
             const renderer = describeRenderer(gl);
             setGpu(renderer);
@@ -613,7 +683,7 @@ export function Canvas3D() {
             console.info('[BB-3D] renderer:', renderer, '|', String(gl.getParameter(gl.VERSION)));
           }}
         >
-          <color attach="background" args={['#e9eff7']} />
+          <color attach="background" args={['#eaf0f8']} />
           <BoardScene />
           {/* Left-drag rotates, wheel dollies, right-drag pans (three's defaults).
               Damping keeps the rotation feeling weighted rather than stepped. */}
@@ -636,7 +706,7 @@ export function Canvas3D() {
       <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded border border-bb-line bg-white/85 px-2 py-1 text-[10px] text-bb-muted">
         {t('canvas3d.hint')}
       </div>
-      <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded border border-bb-line bg-white/85 px-2 py-1 text-[10px] text-bb-muted tabular-nums">
+      <div className="pointer-events-none absolute left-3 top-3 z-10 max-w-[230px] truncate rounded border border-bb-line bg-white/85 px-2 py-1 text-[10px] text-bb-muted tabular-nums">
         <span>{webgl === 'webgl2' ? 'WebGL2' : 'WebGL'}</span>
         {gpu !== '' && <span> · {gpu}</span>}
         {fps !== null && <span> · {fps} FPS</span>}
@@ -659,7 +729,7 @@ const container: CSSProperties = {
   minWidth: 0,
   minHeight: 0,
   overflow: 'hidden',
-  background: '#dfe6ef',
+  background: '#eaf0f8',
 };
 
 const actionBtn =
