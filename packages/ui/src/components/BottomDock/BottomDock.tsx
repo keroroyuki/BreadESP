@@ -16,6 +16,7 @@ import {
   toggleDockPanel,
   type DockPanelId,
 } from './dockPrefs';
+import { Icon } from '../ui/Icon';
 import { SerialConsole } from '../SerialConsole/SerialConsole';
 import { Oscilloscope } from '../Oscilloscope/Oscilloscope';
 import { ScreenView } from '../ScreenView/ScreenView';
@@ -73,10 +74,10 @@ export function BottomDock() {
         <button
           type="button"
           onClick={() => setCollapsed((v) => !v)}
-          className="mr-1 inline-flex h-6 items-center gap-1 rounded px-1.5 text-xs font-medium text-bb-ink cursor-pointer hover:bg-slate-100"
+          className="mr-1 inline-flex h-6 cursor-pointer items-center gap-1 rounded border-0 bg-transparent px-1.5 text-xs font-medium text-bb-ink hover:bg-slate-100"
           title={collapsed ? t('dock.expand') : t('dock.collapse')}
         >
-          <span aria-hidden>{collapsed ? '▸' : '▾'}</span>
+          <Icon name={collapsed ? 'chevronRight' : 'chevronDown'} size={12} />
           {collapsed ? t('dock.expand') : t('dock.collapse')}
         </button>
         {DOCK_PANEL_ORDER.map((id) => {

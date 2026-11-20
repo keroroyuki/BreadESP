@@ -18,11 +18,13 @@ export function RightPanel() {
     if (instanceId !== null) setTab('properties');
   }, [instanceId]);
 
+  // Segmented control rather than underline tabs: two peers in a 300 px column
+  // read better as one switch than as two half-width strips with a rule.
   const triggerClass = (activeFor: string): string =>
-    `flex-1 h-8 cursor-pointer border-b-2 text-xs font-medium ${
+    `h-6 flex-1 cursor-pointer rounded border-0 text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-bb-primary/40 ${
       tab === activeFor
-        ? 'border-bb-primary text-bb-ink'
-        : 'border-transparent text-bb-muted hover:text-bb-ink'
+        ? 'bg-white font-medium text-bb-ink shadow-sm'
+        : 'bg-transparent text-bb-muted hover:text-bb-ink'
     }`;
 
   return (
@@ -31,7 +33,7 @@ export function RightPanel() {
       onValueChange={setTab}
       className="flex h-full min-h-0 w-[300px] shrink-0 flex-col border-l border-bb-line bg-white"
     >
-      <Tabs.List className="flex shrink-0 border-b border-bb-line">
+      <Tabs.List className="mx-2 mt-1.5 flex shrink-0 items-center gap-0.5 rounded-md bg-slate-200/70 p-0.5">
         <Tabs.Trigger value="properties" className={triggerClass('properties')}>
           {t('props.title')}
         </Tabs.Trigger>

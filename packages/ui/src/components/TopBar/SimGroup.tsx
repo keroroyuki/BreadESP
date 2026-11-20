@@ -9,22 +9,12 @@ import { selectCanRedo, selectCanUndo, useProjectStore } from '../../store/proje
 import { toast } from '../../store/toastStore';
 import { useT } from '../../i18n';
 import { Button } from '../ui/Button';
+import { Icon } from '../ui/Icon';
+import { Select } from '../ui/Select';
 import { canRunSimulation, runSimulation } from './simRun';
 
 /** PRD §F-SIM-2 range 0.1x–10x; > 1x saturates at host wall clock. */
 const SPEED_CHOICES = [0.1, 0.25, 0.5, 1, 2, 4, 10];
-
-const PlayIcon = () => (
-  <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden>
-    <path d="M2 1.4v7.2l6.2-3.6z" fill="currentColor" />
-  </svg>
-);
-
-const PauseIcon = () => (
-  <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden>
-    <path d="M2.2 1.6h2v6.8h-2zM5.8 1.6h2v6.8h-2z" fill="currentColor" />
-  </svg>
-);
 
 export function SimGroup() {
   const status = useSimulationStore((s) => s.status);
@@ -75,20 +65,22 @@ export function SimGroup() {
       {/* Icon-only history controls: the bar has to fit the primary Run action
           on a 1080 px window. The tooltip keeps the label discoverable. */}
       <Button
-        className="w-7 px-0 text-sm"
+        className="w-7 px-0"
         title={`${t('common.undo')} (Ctrl+Z)`}
+        aria-label={t('common.undo')}
         disabled={!canUndo}
         onClick={undo}
       >
-        ↶
+        <Icon name="undo" size={14} />
       </Button>
       <Button
-        className="w-7 px-0 text-sm"
+        className="w-7 px-0"
         title={`${t('common.redo')} (Ctrl+Y)`}
+        aria-label={t('common.redo')}
         disabled={!canRedo}
         onClick={redo}
       >
-        ↷
+        <Icon name="redo" size={14} />
       </Button>
       <span className="w-px self-stretch bg-bb-line" />
       {runnable ? (
@@ -99,7 +91,7 @@ export function SimGroup() {
           title={firmwareElf === null ? t('toast.needFirmware') : (firmwareElf ?? undefined)}
           onClick={onRun}
         >
-          <PlayIcon /> {t('toolbar.run')}
+          <Icon name="play" size={11} /> {t('toolbar.run')}
         </Button>
       ) : (
         <Button
@@ -109,29 +101,26 @@ export function SimGroup() {
           disabled={!live}
           onClick={onTogglePause}
         >
-          {status === 'running' ? <PauseIcon /> : <PlayIcon />}
+          <Icon name={status === 'running' ? 'pause' : 'play'} size={11} />
           {status === 'running' ? t('toolbar.pause') : t('toolbar.resume')}
         </Button>
       )}
       <Button
-        className="w-7 px-0 text-sm"
+        className="w-7 px-0"
         title={t('toolbar.reset')}
+        aria-label={t('toolbar.reset')}
         disabled={status === 'idle'}
         onClick={() => run('reset', () => bridge.sim.reset())}
       >
-        ⟲
+        <Icon name="reset" size={14} />
       </Button>
       <label className="flex items-center gap-1 text-xs text-bb-ink">
         {t('toolbar.speed')}
-        <select
-          className="h-7 rounded border border-bb-line bg-white px-1 text-xs"
-          value={speed}
-          onChange={(e) => onSpeed(Number(e.target.value))}
-        >
+        <Select value={speed} onChange={(e) => onSpeed(Number(e.target.value))}>
           {SPEED_CHOICES.map((f) => (
             <option key={f} value={f}>{f}x</option>
           ))}
-        </select>
+        </Select>
       </label>
     </div>
   );

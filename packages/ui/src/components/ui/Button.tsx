@@ -2,6 +2,12 @@
 // (Tailwind v4; no preflight needed since classes are self-contained).
 // Variants map onto the bb-* design tokens from styles/global.css; `busy`
 // shows a spinner and disables interaction without moving the layout.
+//
+// forwardRef is required, not cosmetic: Radix triggers (`<Popover.Trigger
+// asChild>`, `Tooltip.Trigger asChild`) clone their child with a ref and anchor
+// the floating panel to it. A plain function component drops that ref, so the
+// popover opened with no anchor and rendered off-screen.
+import { forwardRef } from 'react';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -22,13 +28,18 @@ const VARIANT_CLASSES: Record<NonNullable<ButtonProps['variant']>, string> = {
     'bg-transparent text-bb-ink border border-transparent hover:bg-slate-100 active:bg-slate-200 disabled:text-bb-muted',
 };
 
-export function Button({ variant = 'default', busy = false, disabled, className = '', children, ...rest }: ButtonProps) {
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  { variant = 'default', busy = false, disabled, className = '', children, ...rest },
+  ref,
+) {
   return (
     <button
+      ref={ref}
       type="button"
       disabled={disabled === true || busy}
       className={`inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded px-2.5 h-7 text-xs font-medium cursor-pointer select-none
         transition-colors duration-75 disabled:cursor-not-allowed
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-bb-primary/40 focus-visible:ring-offset-1
         ${VARIANT_CLASSES[variant]} ${className}`}
       {...rest}
     >
@@ -41,4 +52,4 @@ export function Button({ variant = 'default', busy = false, disabled, className 
       {children}
     </button>
   );
-}
+});

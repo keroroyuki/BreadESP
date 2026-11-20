@@ -7,7 +7,7 @@ import {
   draftTemplates,
   patchWizardDraft,
   WIZARD_CHIPS,
-  wizardDraftError,
+  wizardDraftProblem,
 } from '../src/components/ProjectWizard/wizardDraft';
 
 describe('wizardDraft (P4.2)', () => {
@@ -40,19 +40,23 @@ describe('wizardDraft (P4.2)', () => {
     // falls back to 'empty' rather than leaving a dangling selection.
     const d = patchWizardDraft(createWizardDraft(), { chip: 'esp32h2' as ChipKind, templateId: 'blink-led' });
     expect(d.templateId).toBe('empty');
-    expect(wizardDraftError({ ...d, dir: '/tmp/x' })).toBe('template "empty" is not available for esp32h2');
+    expect(wizardDraftProblem({ ...d, dir: '/tmp/x' })).toEqual({
+      kind: 'templateUnavailable',
+      templateId: 'empty',
+      chip: 'esp32h2',
+    });
   });
 
   it('blocks Create on an empty directory and clears once filled', () => {
-    expect(wizardDraftError(createWizardDraft())).toBe('project directory is required');
-    expect(wizardDraftError(createWizardDraft('   '))).toBe('project directory is required');
-    expect(wizardDraftError(createWizardDraft('/tmp/proj'))).toBeNull();
+    expect(wizardDraftProblem(createWizardDraft())).toEqual({ kind: 'dirRequired' });
+    expect(wizardDraftProblem(createWizardDraft('   '))).toEqual({ kind: 'dirRequired' });
+    expect(wizardDraftProblem(createWizardDraft('/tmp/proj'))).toBeNull();
   });
 
   it('accepts every chip × template combination the registry offers', () => {
     for (const chip of WIZARD_CHIPS) {
       for (const t of draftTemplates({ dir: '/tmp/p', chip, templateId: 'empty' })) {
-        expect(wizardDraftError({ dir: '/tmp/p', chip, templateId: t.id })).toBeNull();
+        expect(wizardDraftProblem({ dir: '/tmp/p', chip, templateId: t.id })).toBeNull();
       }
     }
   });

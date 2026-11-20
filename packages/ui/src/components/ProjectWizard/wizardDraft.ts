@@ -38,15 +38,20 @@ export function patchWizardDraft(draft: WizardDraft, patch: Partial<WizardDraft>
   return next;
 }
 
+/** Why Create is blocked. A code, not a sentence: the component localizes it. */
+export type WizardDraftProblem =
+  | { kind: 'dirRequired' }
+  | { kind: 'templateUnavailable'; templateId: string; chip: ChipKind };
+
 /**
  * First blocking problem with the draft, or null when Create may fire.
  * dir is only checked for non-emptiness here; existence/clobber rules are
  * enforced by the Bridge ([BB-124]/[BB-125] surface in the wizard on reject).
  */
-export function wizardDraftError(draft: WizardDraft): string | null {
-  if (draft.dir.trim() === '') return 'project directory is required';
+export function wizardDraftProblem(draft: WizardDraft): WizardDraftProblem | null {
+  if (draft.dir.trim() === '') return { kind: 'dirRequired' };
   if (!templatesForChip(draft.chip).some((t) => t.id === draft.templateId)) {
-    return `template "${draft.templateId}" is not available for ${draft.chip}`;
+    return { kind: 'templateUnavailable', templateId: draft.templateId, chip: draft.chip };
   }
   return null;
 }
