@@ -3,7 +3,7 @@
 All notable changes to BreadESP are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.2.1] - 2026-11-20
 
 ### Added
 - **Shared control primitives**: `ui/Icon` (one 24×24 line-icon set, `currentColor`, 1.8 stroke) and `ui/Select` (a native `<select>` with the platform chrome replaced by our chevron) replace the mix of text glyphs (`↶ ↷ ⟲ ▸ ▾`) and unstyled dropdowns, so the same action looks identical in every panel and both locales. `Button` gained a `focus-visible` ring so keyboard focus is visible without the browser's default outline.
@@ -27,6 +27,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 ### Fixed
 - **"More actions" menu never opened**: `Button` was a plain function component, so `<Popover.Trigger asChild>` could not attach its ref and the floating panel had no anchor — it opened off-screen. `Button` now forwards its ref (and does not need to for any other Radix trigger yet, but the next one will).
 - **Native button chrome leaking into the dialog**: the app imports Tailwind without preflight, so a raw `<button>` keeps the browser's `border: 2px outset`. New controls in the wizard, the segmented tabs and the menus were drawing their own dark outlines until they got an explicit `border-0`.
+
+### Notes
+- **This release ships the Windows installer only.** The Linux AppImage/deb were not rebuilt in this pass (the packaging host cannot run the Linux target); the v0.2.0 Linux packages stay available on their release page. No application change is platform-specific, so a Linux package built from this tag behaves identically.
+- Development now requires **Node ≥ 22.12** (Electron 42). Installed builds bundle their own runtime and are unaffected.
 
 ## [0.2.0] - 2026-10-27
 
