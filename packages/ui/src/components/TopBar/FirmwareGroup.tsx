@@ -11,6 +11,8 @@ import { useProjectStore } from '../../store/projectStore';
 import { toast } from '../../store/toastStore';
 import { useT } from '../../i18n';
 import { Button } from '../ui/Button';
+import { Icon, type IconName } from '../ui/Icon';
+import { Select } from '../ui/Select';
 import {
   candidateLabel,
   formatAge,
@@ -184,7 +186,7 @@ export function FirmwareGroup() {
       <Popover.Trigger asChild>
         <button
           type="button"
-          className="inline-flex h-7 items-center gap-1.5 rounded border border-bb-line bg-white px-2.5 text-xs font-medium text-bb-ink cursor-pointer hover:bg-slate-50"
+          className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded border border-bb-line bg-white px-2.5 text-xs font-medium text-bb-ink hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-bb-primary/40 "
           title={firmwareElf !== null ? t('firmware.current', { path: firmwareElf }) : t('firmware.none')}
         >
           <span
@@ -193,94 +195,136 @@ export function FirmwareGroup() {
           />
           {t('firmware.title')}
           {external !== null && (
-            <span className="rounded bg-indigo-50 border border-indigo-200 px-1 text-[10px] text-indigo-800">
+            <span className="rounded border border-indigo-200 bg-indigo-50 px-1 text-[10px] text-indigo-800">
               {kindLabel(external.kind)}
             </span>
           )}
+          <Icon name="chevronDown" size={11} className="text-bb-muted" />
         </button>
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
           sideOffset={6}
           align="start"
-          className="z-50 w-[420px] rounded-md border border-bb-line bg-white p-3 shadow-lg text-xs text-bb-ink"
+          className="z-50 w-[460px] max-w-[calc(100vw-16px)] overflow-hidden rounded-lg border border-bb-line bg-white text-xs text-bb-ink shadow-xl"
         >
-          <Popover.Arrow className="fill-bb-line" />
-          {dir === null ? (
-            // The feature is project-scoped; mirror the old panel's behavior.
-            <p className="text-bb-muted">{t('toolbar.noProject')}</p>
-          ) : external === null ? (
-            <div className="flex items-center gap-2">
-              <input
-                className="h-7 flex-1 rounded border border-bb-line px-2 font-mono text-xs"
-                value={input}
-                placeholder="PlatformIO/ESP-IDF project directory"
-                spellCheck={false}
-                onChange={(e) => setInput(e.target.value)}
-              />
-              <Button disabled={busy} onClick={onLink}>Link</Button>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="rounded bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 font-semibold text-indigo-800">
-                  {kindLabel(external.kind)}
-                </span>
-                <span className="truncate font-mono text-bb-muted" title={external.dir}>{external.dir}</span>
-              </div>
-              {scan !== null && scan.candidates.length > 0 && (
-                <select
-                  className="h-7 rounded border border-bb-line bg-white px-1 text-xs"
-                  value={selected ?? importPick?.path ?? ''}
-                  onChange={(e) => setSelected(e.target.value)}
+          <div className="flex flex-col divide-y divide-bb-line">
+            {/* What the VM would boot right now — the answer to "will Run work?" */}
+            <section className="px-3 py-2.5">
+              <SectionTitle icon="chip" text={t('firmware.section.current')} />
+              <div className="flex items-center gap-1.5">
+                <span
+                  aria-hidden
+                  className={`h-2 w-2 shrink-0 rounded-full ${firmwareElf !== null ? 'bg-bb-ok' : 'bg-slate-300'}`}
+                />
+                <span
+                  className={`truncate ${firmwareElf === null ? 'text-bb-muted' : 'font-mono text-bb-ink'}`}
+                  title={firmwareElf ?? undefined}
                 >
-                  {scan.candidates.map((c) => (
-                    <option key={c.path} value={c.path}>
-                      {candidateLabel(c)} · {formatBytes(c.sizeBytes)} · {formatAge(c.mtimeMs, Date.now())}
-                      {c.archOk === false ? ' · wrong arch' : ''}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {scan !== null && <span className="text-bb-muted">{scanSummary(scan, Date.now())}</span>}
-              <div className="flex items-center gap-2">
-                <Button variant="primary" disabled={busy || importPick === null} onClick={onImport}>Import</Button>
-                <Button disabled={busy} onClick={onRescan}>Rescan</Button>
-                <Button variant="danger" disabled={busy} onClick={onUnlink}>Unlink</Button>
+                  {firmwareElf ?? t('firmware.none')}
+                </span>
               </div>
-            </div>
-          )}
-          <p className="mt-2 truncate text-bb-muted">
-            {firmwareElf !== null ? t('firmware.current', { path: firmwareElf }) : t('firmware.none')}
-          </p>
-          {dir !== null && (
-            <div className="flex flex-col gap-2 border-t border-bb-line pt-2">
-              <span className="font-medium">{t('firmware.examples')}</span>
-              {chipExamples.length > 0 ? (
-                <div className="flex items-center gap-2">
-                  <select
-                    className="h-7 min-w-0 flex-1 rounded border border-bb-line bg-white px-1 text-xs"
-                    value={examplePick ?? chipExamples[0]?.path ?? ''}
-                    onChange={(e) => setExamplePick(e.target.value)}
-                  >
-                    {chipExamples.map((e) => (
-                      <option key={e.path} value={e.path} title={e.note}>
-                        {e.name}{e.note !== undefined ? ` — ${e.note}` : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <Button variant="primary" disabled={busy} onClick={onImportExample}>
-                    {t('firmware.importExample')}
-                  </Button>
+            </section>
+
+            <section className="px-3 py-2.5">
+              <SectionTitle icon="link" text={t('firmware.section.link')} />
+              {dir === null ? (
+                // The feature is project-scoped; mirror the old panel's behavior.
+                <p className="m-0 text-bb-muted">{t('toolbar.noProject')}</p>
+              ) : external === null ? (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    className="h-7 min-w-0 flex-1 rounded border border-bb-line px-2 font-mono text-xs text-bb-ink placeholder:font-sans placeholder:text-bb-muted focus:border-bb-primary focus:outline-none"
+                    value={input}
+                    placeholder={t('firmware.linkPlaceholder')}
+                    spellCheck={false}
+                    onChange={(e) => setInput(e.target.value)}
+                  />
+                  <Button disabled={busy} onClick={onLink}>{t('firmware.link')}</Button>
                 </div>
               ) : (
-                <span className="text-bb-muted">{t('firmware.noExamples', { chip })}</span>
+                <div className="flex flex-col gap-2">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 font-semibold text-indigo-800">
+                      {kindLabel(external.kind)}
+                    </span>
+                    <span className="truncate font-mono text-bb-muted" title={external.dir}>{external.dir}</span>
+                  </div>
+                  {scan !== null && scan.candidates.length > 0 && (
+                    <Select
+                      block
+                      value={selected ?? importPick?.path ?? ''}
+                      onChange={(e) => setSelected(e.target.value)}
+                    >
+                      {scan.candidates.map((c) => (
+                        <option key={c.path} value={c.path}>
+                          {candidateLabel(c)} · {formatBytes(c.sizeBytes)} · {formatAge(c.mtimeMs, Date.now())}
+                          {c.archOk === false ? ` · ${t('firmware.wrongArch')}` : ''}
+                        </option>
+                      ))}
+                    </Select>
+                  )}
+                  {scan !== null && <span className="text-bb-muted">{scanSummary(scan, Date.now())}</span>}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Button variant="primary" disabled={busy || importPick === null} onClick={onImport}>
+                      <Icon name="import" size={12} />
+                      {t('firmware.import')}
+                    </Button>
+                    <Button disabled={busy} onClick={onRescan}>
+                      <Icon name="refresh" size={12} />
+                      {t('firmware.rescan')}
+                    </Button>
+                    <Button variant="danger" disabled={busy} onClick={onUnlink}>
+                      <Icon name="unlink" size={12} />
+                      {t('firmware.unlink')}
+                    </Button>
+                  </div>
+                </div>
               )}
-              <Button disabled={busy} onClick={onImportFile}>{t('firmware.importFile')}</Button>
-            </div>
-          )}
+            </section>
+
+            {dir !== null && (
+              <section className="px-3 py-2.5">
+                <SectionTitle icon="folderOpen" text={t('firmware.examples')} />
+                {chipExamples.length > 0 ? (
+                  <div className="flex items-center gap-1.5">
+                    <Select
+                      block
+                      value={examplePick ?? chipExamples[0]?.path ?? ''}
+                      onChange={(e) => setExamplePick(e.target.value)}
+                    >
+                      {chipExamples.map((e) => (
+                        <option key={e.path} value={e.path} title={e.note}>
+                          {e.name}{e.note !== undefined ? ` — ${e.note}` : ''}
+                        </option>
+                      ))}
+                    </Select>
+                    <Button variant="primary" className="shrink-0" disabled={busy} onClick={onImportExample}>
+                      {t('firmware.importExample')}
+                    </Button>
+                  </div>
+                ) : (
+                  <span className="text-bb-muted">{t('firmware.noExamples', { chip })}</span>
+                )}
+                <Button className="mt-2 w-full justify-start" disabled={busy} onClick={onImportFile}>
+                  <Icon name="import" size={12} />
+                  {t('firmware.importFile')}
+                </Button>
+              </section>
+            )}
+          </div>
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
+  );
+}
+
+/** Section heading inside the popover: icon + quiet uppercase label. */
+function SectionTitle({ icon, text }: { icon: IconName; text: string }) {
+  return (
+    <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-bb-muted">
+      <Icon name={icon} size={12} />
+      {text}
+    </div>
   );
 }

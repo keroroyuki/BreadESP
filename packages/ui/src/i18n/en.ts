@@ -34,6 +34,7 @@ export const en = {
   'toolbar.dirPlaceholder': 'project directory (.breadesp)',
   'toolbar.noProject': 'no project open',
   'toolbar.project': 'project: {dir}',
+  'toolbar.more': 'More actions',
 
   // toasts
   'toast.newOk': 'Project created.',
@@ -153,6 +154,14 @@ export const en = {
 
   // firmware group (popover trigger label)
   'firmware.title': 'Firmware',
+  'firmware.link': 'Link',
+  'firmware.import': 'Import',
+  'firmware.rescan': 'Rescan',
+  'firmware.unlink': 'Unlink',
+  'firmware.linkPlaceholder': 'PlatformIO / ESP-IDF project directory',
+  'firmware.section.link': 'External project',
+  'firmware.section.current': 'Loaded firmware',
+  'firmware.wrongArch': 'wrong arch',
 
   // bottom dock
   'dock.serial': 'Serial',
@@ -203,6 +212,10 @@ export const en = {
   'wavegen.mono': 'Mono',
   'wavegen.stereo': 'Stereo',
   'wavegen.captureNote': 'Live capture is overriding the synth waveform.',
+  'wavegen.wave.sine': 'Sine',
+  'wavegen.wave.square': 'Square',
+  'wavegen.wave.noise': 'Noise',
+  'wavegen.wave.silence': 'Silence',
 
   // debug panel (Inspector)
   'debug.title': 'Debug',
@@ -223,6 +236,10 @@ export const en = {
   'debug.noFrame': '(no frame)',
   'debug.registers': 'Registers',
   'debug.stopped': 'stopped: {info}',
+  'debug.phase.detached': 'not attached',
+  'debug.phase.connecting': 'connecting',
+  'debug.phase.attached': 'stopped',
+  'debug.phase.running': 'running',
 
   // marketplace panel
   'market.title': 'Peripheral catalog',
@@ -235,12 +252,21 @@ export const en = {
 
   // project wizard
   'wizard.title': 'New Project',
+  'wizard.subtitle': 'Pick a chip and a template, then name the folder.',
   'wizard.dir': 'Project directory',
   'wizard.dirPlaceholder': 'path/to/my-project (.breadesp)',
   'wizard.chip': 'Chip',
   'wizard.template': 'Template',
   'wizard.create': 'Create',
   'wizard.creating': 'Creating…',
+  'wizard.tpl.empty.name': 'Empty project',
+  'wizard.tpl.empty.desc': 'A blank breadboard — add parts and wires yourself.',
+  'wizard.tpl.blinkLed.name': 'Blink LED',
+  'wizard.tpl.blinkLed.desc': 'One LED on GPIO2 — the classic first firmware.',
+  'wizard.tpl.oled.name': 'SSD1306 OLED (I2C)',
+  'wizard.tpl.oled.desc': 'A 128×64 OLED on the chip default I2C pins.',
+  'wizard.error.dirRequired': 'Pick a project directory first.',
+  'wizard.error.templateUnavailable': 'Template "{template}" is not available for {chip}.',
 } as const;
 
 export type MessageKey = keyof typeof en;

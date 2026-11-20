@@ -33,6 +33,7 @@ export const zh: Record<MessageKey, string> = {
   'toolbar.dirPlaceholder': '工程目录（.breadesp）',
   'toolbar.noProject': '未打开工程',
   'toolbar.project': '工程：{dir}',
+  'toolbar.more': '更多操作',
 
   // toasts
   'toast.newOk': '工程已创建。',
@@ -152,6 +153,14 @@ export const zh: Record<MessageKey, string> = {
 
   // firmware group (popover trigger label)
   'firmware.title': '固件',
+  'firmware.link': '链接',
+  'firmware.import': '导入',
+  'firmware.rescan': '重新扫描',
+  'firmware.unlink': '解除链接',
+  'firmware.linkPlaceholder': 'PlatformIO / ESP-IDF 工程目录',
+  'firmware.section.link': '外部工程',
+  'firmware.section.current': '当前固件',
+  'firmware.wrongArch': '架构不匹配',
 
   // bottom dock
   'dock.serial': '串口',
@@ -202,6 +211,10 @@ export const zh: Record<MessageKey, string> = {
   'wavegen.mono': '单声道',
   'wavegen.stereo': '立体声',
   'wavegen.captureNote': '实时采集正在覆盖合成波形。',
+  'wavegen.wave.sine': '正弦波',
+  'wavegen.wave.square': '方波',
+  'wavegen.wave.noise': '噪声',
+  'wavegen.wave.silence': '静音',
 
   // debug panel (Inspector)
   'debug.title': '调试',
@@ -222,6 +235,10 @@ export const zh: Record<MessageKey, string> = {
   'debug.noFrame': '（无栈帧）',
   'debug.registers': '寄存器',
   'debug.stopped': '已停止：{info}',
+  'debug.phase.detached': '未连接',
+  'debug.phase.connecting': '连接中',
+  'debug.phase.attached': '已暂停',
+  'debug.phase.running': '运行中',
 
   // marketplace panel
   'market.title': '外设目录',
@@ -234,10 +251,19 @@ export const zh: Record<MessageKey, string> = {
 
   // project wizard
   'wizard.title': '新建工程',
+  'wizard.subtitle': '选芯片与模板，再填入目录即可开始。',
   'wizard.dir': '工程目录',
   'wizard.dirPlaceholder': 'path/to/my-project (.breadesp)',
   'wizard.chip': '芯片',
   'wizard.template': '模板',
   'wizard.create': '创建',
   'wizard.creating': '创建中…',
+  'wizard.tpl.empty.name': '空白工程',
+  'wizard.tpl.empty.desc': '一块空面包板——元件和连线都由你自己放。',
+  'wizard.tpl.blinkLed.name': 'LED 闪烁',
+  'wizard.tpl.blinkLed.desc': '一颗 LED 接在 GPIO2——最经典的第一段固件。',
+  'wizard.tpl.oled.name': 'SSD1306 OLED（I2C）',
+  'wizard.tpl.oled.desc': '一块 128×64 OLED，接在芯片默认的 I2C 引脚上。',
+  'wizard.error.dirRequired': '请先填写工程目录。',
+  'wizard.error.templateUnavailable': '模板「{template}」不适用于 {chip}。',
 };
