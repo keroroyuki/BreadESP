@@ -27,7 +27,7 @@ export function Button({ variant = 'default', busy = false, disabled, className 
     <button
       type="button"
       disabled={disabled === true || busy}
-      className={`inline-flex items-center justify-center gap-1.5 rounded px-2.5 h-7 text-xs font-medium cursor-pointer select-none
+      className={`inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded px-2.5 h-7 text-xs font-medium cursor-pointer select-none
         transition-colors duration-75 disabled:cursor-not-allowed
         ${VARIANT_CLASSES[variant]} ${className}`}
       {...rest}

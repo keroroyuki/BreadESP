@@ -195,5 +195,24 @@ export function PropsPanel() {
     );
   }
 
-  return <p className="p-3 text-xs text-bb-muted">{t('props.noneSelected')}</p>;
+  // Empty state doubles as a first-run hint: the panel is 300 px wide and sits
+  // beside the canvas, so it explains the two gestures a beginner needs instead
+  // of only reporting that nothing is selected.
+  return (
+    <div className="flex flex-col items-center gap-2 px-4 pt-10 text-center">
+      <span className="flex h-11 w-11 items-center justify-center rounded-xl border border-bb-line bg-bb-canvas text-bb-muted">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden>
+          <path d="M5 6h14M5 12h14M5 18h14" />
+          <circle cx="9" cy="6" r="2" fill="#fff" />
+          <circle cx="15" cy="12" r="2" fill="#fff" />
+          <circle cx="11" cy="18" r="2" fill="#fff" />
+        </svg>
+      </span>
+      <div className="text-[12px] font-medium text-bb-ink">{t('props.empty.title')}</div>
+      <p className="m-0 text-[11px] leading-4 text-bb-muted">{t('props.empty.hint')}</p>
+      <p className="m-0 mt-1 rounded-md bg-bb-canvas px-2 py-1.5 text-[10.5px] leading-4 text-bb-muted">
+        {t('props.empty.tip')}
+      </p>
+    </div>
+  );
 }

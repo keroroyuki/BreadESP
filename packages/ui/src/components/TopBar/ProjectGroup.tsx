@@ -86,7 +86,7 @@ export function ProjectGroup() {
   return (
     <div className="flex items-center gap-1.5">
       <input
-        className="h-7 w-44 rounded border border-bb-line bg-white px-2 font-mono text-xs text-bb-ink placeholder:text-bb-muted focus:border-bb-primary focus:outline-none"
+        className="h-7 w-40 rounded border border-bb-line bg-white px-2 font-mono text-xs text-bb-ink placeholder:text-bb-muted focus:border-bb-primary focus:outline-none"
         value={input}
         placeholder={t('toolbar.dirPlaceholder')}
         spellCheck={false}

@@ -22,22 +22,24 @@ export function SimStatusLight() {
   return (
     <span
       title={label}
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 }}
+      className="inline-flex items-center gap-1.5 rounded-full border bg-white px-2 py-[3px] text-[11px] leading-4"
+      style={{ borderColor: `${meta.color}55` }}
     >
       <span
         className={meta.pulse ? 'animate-pulse' : undefined}
         style={{ ...dot, background: meta.color } as CSSProperties}
         aria-label={label}
       />
-      {label}
+      <span className="text-bb-ink">{label}</span>
     </span>
   );
 }
 
 const dot: CSSProperties = {
-  width: 9,
-  height: 9,
+  width: 7,
+  height: 7,
   borderRadius: '50%',
   display: 'inline-block',
   flexShrink: 0,
+  boxShadow: '0 0 0 3px rgba(148, 163, 184, 0.16)',
 };
