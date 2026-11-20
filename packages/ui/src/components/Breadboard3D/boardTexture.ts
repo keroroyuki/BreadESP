@@ -1,12 +1,16 @@
 // 3D board surface — a procedural breadboard texture (no image assets, so the
 // app stays fully offline). It carries the cues the eye needs to read the slab
 // as a breadboard rather than a grey rectangle: a hole lattice on the same
-// 10-unit pitch the layout snaps to, an engineering grid, corner brackets and a
-// silkscreen mark.
+// 10-unit pitch the layout snaps to, a sparse major grid for scale, corner
+// brackets and a silkscreen mark.
+//
+// Only the *major* grid is drawn. A fine 10-unit grid lines up exactly with the
+// hole centres, and a dot on every grid intersection reads as graph paper — the
+// hole field has to stand alone for the surface to look like plastic.
 //
 // The texture is decorative only. Wiring is pin-to-pin (PRD §F-BB-2); the holes
-// are a placement grid, not electrical nodes, which is why they are drawn flat
-// and low-contrast instead of as metal contacts.
+// are a placement grid, not electrical nodes, which is why they are drawn as
+// recesses rather than as metal contacts.
 import { CanvasTexture, SRGBColorSpace } from 'three';
 import { GRID, GRID_MAJOR } from '../Breadboard/canvasView';
 import { WORLD_H, WORLD_W } from '../Breadboard/worldSize';
@@ -35,22 +39,9 @@ export function createBoardTexture(): CanvasTexture {
 
   const unit = PX_PER_UNIT;
 
-  // Fine (10) and major (50) grid, same pitch the layout snaps to. Baking both
-  // into the surface lets the slab be a single material — a separate grid plane
-  // would either z-fight with it or cover the printed pattern.
-  ctx.strokeStyle = 'rgba(148, 163, 184, 0.22)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let x = GRID * unit; x < TEX_W; x += GRID * unit) {
-    ctx.moveTo(Math.round(x) + 0.5, 0);
-    ctx.lineTo(Math.round(x) + 0.5, TEX_H);
-  }
-  for (let y = GRID * unit; y < TEX_H; y += GRID * unit) {
-    ctx.moveTo(0, Math.round(y) + 0.5);
-    ctx.lineTo(TEX_W, Math.round(y) + 0.5);
-  }
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(100, 116, 139, 0.3)';
+  // Major grid (50) only — scale reference without turning the surface into
+  // graph paper (see the header note).
+  ctx.strokeStyle = 'rgba(100, 116, 139, 0.2)';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   for (let x = GRID_MAJOR * unit; x < TEX_W; x += GRID_MAJOR * unit) {
@@ -63,16 +54,27 @@ export function createBoardTexture(): CanvasTexture {
   }
   ctx.stroke();
 
-  // Hole lattice on the layout pitch: the breadboard cue. Radius/opacity sit
-  // above "physically plausible" because the surface is viewed at ~45° and a
-  // real 1 mm hole would disappear after mipmapping.
+  // Hole lattice on the layout pitch: the breadboard cue. Each hole is an
+  // opening plus a lit inner wall nudged toward the key light, so the field
+  // reads as recesses rather than as printed dots. Radius sits above
+  // "physically plausible" because the surface is viewed at ~45° and a real
+  // 1 mm hole would disappear after mipmapping.
   const step = GRID * unit;
-  const radius = Math.max(2.6, 2.1 * unit);
-  ctx.fillStyle = 'rgba(120, 140, 165, 0.34)';
+  const radius = Math.max(3, 2.5 * unit);
+  const dark = 'rgba(96, 116, 143, 0.5)';
+  const lit = 'rgba(255, 255, 255, 0.36)';
   for (let y = step; y < TEX_H; y += step) {
     for (let x = step; x < TEX_W; x += step) {
       ctx.beginPath();
       ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = dark;
+      ctx.fill();
+
+      // The key light comes from -z (front-top), which on the texture is up, so
+      // the far wall of the recess is what catches it.
+      ctx.beginPath();
+      ctx.arc(x, y - radius * 0.26, radius * 0.46, 0, Math.PI * 2);
+      ctx.fillStyle = lit;
       ctx.fill();
     }
   }
