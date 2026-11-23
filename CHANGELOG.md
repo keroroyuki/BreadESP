@@ -3,10 +3,14 @@
 All notable changes to BreadESP are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.2.2] - 2026-11-23
 
 ### Fixed
 - **3D framing on non-default viewports**: the default camera distance was a constant calibrated for one viewport shape, so narrowing the window — or collapsing the bottom dock, which makes the canvas taller — lowered the canvas aspect and pushed the board's near corners out of frame. The distance is now solved from the measured aspect by projecting the four board corners and taking the closest camera that keeps the whole board visible; 0.87 of the frustum reproduces the shipped framing at the default 731×469 canvas, so the README screenshots stay valid. The camera re-frames on mount, on reset and on resize until the user first orbits or zooms — after that only the reset button moves it.
+
+### Notes
+- **Correction to the v0.2.1 release notes.** v0.2.1 stated that the board's near-right corner was cropped at the default window size. That was wrong: it came from a screenshot crop smaller than the canvas, and the board was fully visible at 1280×800 all along. The defect fixed here only appeared when the canvas aspect changed. The v0.2.1 release page has been edited to say so.
+- **This release ships the Windows installer only.** The Linux AppImage/deb were not rebuilt in this pass (the packaging host cannot run the Linux target); the v0.2.0 Linux packages stay available on their release page. No application change is platform-specific, so a Linux package built from this tag behaves identically.
 
 ## [0.2.1] - 2026-11-20
 

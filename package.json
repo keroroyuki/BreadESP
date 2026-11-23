@@ -1,6 +1,6 @@
 {
   "name": "breadesp",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "ESP32 virtual breadboard simulator (PRD §1.1)",
   "license": "MIT",
