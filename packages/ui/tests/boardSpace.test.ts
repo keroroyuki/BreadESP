@@ -3,12 +3,16 @@
 // environment with no WebGL, so the pure mapping is pinned here rather than
 // left to visual inspection.
 import { describe, expect, it } from 'vitest';
+import { PerspectiveCamera, Vector3 } from 'three';
 import {
   BOARD_THICKNESS,
+  CAMERA_FOV,
+  DEFAULT_CAMERA_ASPECT,
   MAX_CAMERA_DISTANCE,
   MIN_CAMERA_DISTANCE,
   boardCenter,
   boardPosition,
+  defaultCameraDistance,
   defaultCameraPosition,
   footprintBox,
 } from '../src/components/Breadboard3D/boardSpace';
@@ -32,6 +36,57 @@ describe('boardSpace (3D world mapping)', () => {
     const distance = Math.hypot(cam[0] - WORLD_W / 2, cam[1], cam[2] - WORLD_H / 2);
     expect(distance).toBeGreaterThan(MIN_CAMERA_DISTANCE);
     expect(distance).toBeLessThan(MAX_CAMERA_DISTANCE);
+  });
+
+  // The regression this fit exists for: a fixed camera distance framed one
+  // viewport shape and clipped the near corners on a narrower one (resizing the
+  // window, or collapsing the dock, which makes the canvas taller).
+  it('keeps the whole board inside the frustum on every canvas shape', () => {
+    for (const aspect of [1.0, 1.2, 1.32, 1.56, 2.0, 2.6]) {
+      const camera = new PerspectiveCamera(CAMERA_FOV, aspect, 1, 9000);
+      camera.position.set(...defaultCameraPosition(aspect));
+      camera.lookAt(new Vector3(...boardCenter()));
+      camera.updateProjectionMatrix();
+      camera.updateMatrixWorld(true);
+      for (const [x, z] of [
+        [0, 0],
+        [WORLD_W, 0],
+        [0, WORLD_H],
+        [WORLD_W, WORLD_H],
+      ]) {
+        const ndc = new Vector3(x, 0, z).project(camera);
+        expect(Math.abs(ndc.x), `x at aspect ${aspect}`).toBeLessThan(0.9);
+        expect(Math.abs(ndc.y), `y at aspect ${aspect}`).toBeLessThan(0.9);
+      }
+    }
+  });
+
+  it('leaves the framing at the default window unchanged', () => {
+    // 0.87 of the frustum reproduces the shipped framing at the default canvas
+    // (731×469): the board keeps the margins the README screenshots show.
+    const cam = defaultCameraPosition(DEFAULT_CAMERA_ASPECT);
+    expect(cam[1]).toBeCloseTo(760, -1);
+    // The old position sat at z = WORLD_H + 440, i.e. 720 beyond the centre.
+    expect(cam[2] - WORLD_H / 2).toBeCloseTo(720, -1);
+  });
+
+  it('pulls back on a narrow canvas and moves in on a wide one', () => {
+    const base = defaultCameraDistance(DEFAULT_CAMERA_ASPECT);
+    expect(defaultCameraDistance(1.0)).toBeGreaterThan(base);
+    expect(defaultCameraDistance(2.6)).toBeLessThan(base);
+  });
+
+  it('falls back to the default aspect for degenerate input', () => {
+    const base = defaultCameraDistance(DEFAULT_CAMERA_ASPECT);
+    expect(defaultCameraDistance(Number.NaN)).toBe(base);
+    expect(defaultCameraDistance(0)).toBe(base);
+    expect(defaultCameraDistance(-3)).toBe(base);
+  });
+
+  it('never places the camera beyond the orbit limit', () => {
+    // An extremely narrow canvas asks for a distance the orbit limits forbid;
+    // clamping there keeps the camera and the controls in agreement.
+    expect(defaultCameraDistance(0.2)).toBeLessThanOrEqual(MAX_CAMERA_DISTANCE);
   });
 
   it('turns a footprint into a box centred on its own base', () => {

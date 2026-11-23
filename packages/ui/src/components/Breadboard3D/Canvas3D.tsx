@@ -9,7 +9,15 @@
 // them. Overlays (hint, badge, reset) stay in the DOM rather than in WebGL:
 // crisp text at any zoom, and no dependency on troika's CDN-hosted default font
 // (an offline desktop app must not fetch a font to draw a label).
-import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Component,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import type {
   CSSProperties,
   DragEvent as ReactDragEvent,
@@ -44,6 +52,8 @@ import { isEditableTarget } from '../HelpDialog/shortcuts';
 import { WORLD_H, WORLD_W } from '../Breadboard/worldSize';
 import {
   BOARD_THICKNESS,
+  CAMERA_FOV,
+  DEFAULT_CAMERA_ASPECT,
   MAX_CAMERA_DISTANCE,
   MIN_CAMERA_DISTANCE,
   boardCenter,
@@ -66,16 +76,40 @@ import { describeRenderer, detectWebGL, type WebGLVersion } from './webglSupport
 interface OrbitLike {
   target: { set: (x: number, y: number, z: number) => void };
   update: () => void;
+  addEventListener?: (type: 'start', listener: () => void) => void;
+  removeEventListener?: (type: 'start', listener: () => void) => void;
 }
 
 /**
  * Keeps the orbit target on the board centre (the board starts at the world
- * origin, it is not centred on it) and applies the toolbar's reset request.
+ * origin, it is not centred on it) and frames the board for the canvas's shape.
+ *
+ * The camera distance cannot be a constant: perspective magnifies the near edge,
+ * so a distance that fits a wide canvas clips the board's near corners on a
+ * narrower one. The pure fit lives in boardSpace; this component only feeds it
+ * the measured aspect and applies the result.
+ *
+ * Re-framing happens on mount, on reset and on resize — but only while the user
+ * has not orbited or zoomed themselves, so resizing the window never throws away
+ * a camera the user aimed at a pin.
  */
 function CameraRig({ resetToken }: { resetToken: number }) {
   const camera = useThree((s) => s.camera);
+  const size = useThree((s) => s.size);
   const controls = useThree((s) => s.controls) as unknown as OrbitLike | null;
   const lastToken = useRef(resetToken);
+  const touched = useRef(false);
+
+  const aspect =
+    size.width > 0 && size.height > 0 ? size.width / size.height : DEFAULT_CAMERA_ASPECT;
+
+  const frame = useCallback(() => {
+    camera.position.set(...defaultCameraPosition(aspect));
+    if (controls !== null) {
+      controls.target.set(...boardCenter());
+      controls.update();
+    }
+  }, [aspect, camera, controls]);
 
   // `makeDefault` publishes the controls into the r3f store a tick after mount,
   // so the target is (re)applied whenever that reference arrives.
@@ -85,15 +119,32 @@ function CameraRig({ resetToken }: { resetToken: number }) {
     controls.update();
   }, [controls]);
 
+  // A user-initiated orbit/zoom pins the camera: from then on only the reset
+  // button moves it.
+  useEffect(() => {
+    if (controls === null) return undefined;
+    const onStart = (): void => {
+      touched.current = true;
+    };
+    controls.addEventListener?.('start', onStart);
+    return () => controls.removeEventListener?.('start', onStart);
+  }, [controls]);
+
+  // Frame once the canvas has a real size (r3f reports 0×0 on the first commit),
+  // and again whenever the shape changes while the camera is still ours.
+  useLayoutEffect(() => {
+    if (size.width === 0 || size.height === 0 || touched.current) return;
+    frame();
+  }, [frame, size]);
+
+  // Explicit reset from the overlay button: re-aim at the board for the current
+  // shape, even if the user had moved the camera.
   useEffect(() => {
     if (lastToken.current === resetToken) return;
     lastToken.current = resetToken;
-    camera.position.set(...defaultCameraPosition());
-    if (controls !== null) {
-      controls.target.set(...boardCenter());
-      controls.update();
-    }
-  }, [resetToken, camera, controls]);
+    touched.current = false;
+    frame();
+  }, [resetToken, frame]);
 
   return null;
 }
@@ -669,7 +720,7 @@ export function Canvas3D() {
           // laptops that have one.
           dpr={[1, 1.75]}
           gl={{ antialias: true, powerPreference: 'high-performance' }}
-          camera={{ position: defaultCameraPosition(), fov: 45, near: 1, far: 9000 }}
+          camera={{ position: defaultCameraPosition(), fov: CAMERA_FOV, near: 1, far: 9000 }}
           onCreated={(state) => {
             // Filmic tone mapping keeps highlights on the steel/epoxy parts from
             // clipping to white, which is what makes the models read as materials.
