@@ -52,7 +52,17 @@ jobs:
       # The device build patches hw/misc into the pinned espressif QEMU and
       # compiles it inside the ubuntu:22.04 image the script builds itself, so
       # the resulting binary matches the Windows one feature-for-feature.
+      # It is ~20 min of the job and depends only on the two inputs below, so a
+      # retry after a packaging/verification failure must not repeat it.
+      - name: Restore QEMU device build
+        id: qemu-cache
+        uses: actions/cache@v4
+        with:
+          path: packages/sim-core/bin/qemu-breadesp
+          key: qemu-breadesp-${{ runner.os }}-${{ hashFiles('packages/sim-core/device/breadesp_dbus.c', 'scripts/build-qemu-device.mjs') }}
+
       - name: Build QEMU (breadesp-dbus, linux-x64)
+        if: steps.qemu-cache.outputs.cache-hit != 'true'
         run: node scripts/build-qemu-device.mjs --target linux-docker
 
       - name: Build workspace + pack AppImage/deb
@@ -66,7 +76,6 @@ jobs:
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
           DIST=build/installer/dist
-          APPDIR=build/installer/app
           APPIMAGE="$DIST/BreadESP-$VERSION.AppImage"
           DEB="$DIST/BreadESP-$VERSION.deb"
 
@@ -83,7 +92,12 @@ jobs:
             echo "::error::deb Version mismatch"; dpkg-deb -f "$DEB" Version; exit 1; }
 
           # app.asar header: [uint32 4][uint32 headerSize][uint32 jsonLen][json...]
-          node - "$APPDIR/resources/app.asar" "$VERSION" <<'EOF'
+          # The packed tree lives under dist/linux-unpacked/, not in the staging
+          # dir handed to electron-builder (which holds package.json + packages/).
+          ASAR="$(find "$DIST" -maxdepth 3 -path '*linux-unpacked/resources/app.asar' -print -quit)"
+          [ -n "$ASAR" ] || { echo "::error::no app.asar under $DIST"; find "$DIST" -maxdepth 3 -name app.asar; exit 1; }
+          echo "asar: $ASAR"
+          node - "$ASAR" "$VERSION" <<'EOF'
           const fs = require('node:fs');
           const [file, version] = process.argv.slice(2);
           const buf = fs.readFileSync(file);
