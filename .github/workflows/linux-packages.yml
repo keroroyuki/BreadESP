@@ -1,0 +1,127 @@
+# PRD: §5, §10.6 — Linux packages (AppImage + deb) for a release.
+#
+# scripts/build-installer.mjs can target Linux, but the packaging toolchain
+# (AppImage runtime, dpkg/fpm) only runs on Linux, and the bundle needs the
+# breadesp-dbus QEMU device build for that target. This workflow does both on
+# ubuntu-latest, then attaches the artifacts to the release named by the
+# `release_tag` input.
+#
+# workflow_dispatch only: Linux packages belong to the release checklist, not
+# the per-PR gate — ci.yml stays the single merge gate (docs/dev-plan.md §6).
+# The deb needs fakeroot/dpkg, the AppImage its runtime, and the docker build
+# needs ~2 GB of scratch space, so the job is deliberately not sharded.
+
+name: Linux packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to attach artifacts to (e.g. v0.2.2; empty = build only)'
+        required: false
+        default: ''
+
+concurrency:
+  group: linux-packages-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # reads the repo, uploads release assets
+
+jobs:
+  linux:
+    name: AppImage + deb
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # The device build patches hw/misc into the pinned espressif QEMU and
+      # compiles it inside the ubuntu:22.04 image the script builds itself, so
+      # the resulting binary matches the Windows one feature-for-feature.
+      - name: Build QEMU (breadesp-dbus, linux-x64)
+        run: node scripts/build-qemu-device.mjs --target linux-docker
+
+      - name: Build workspace + pack AppImage/deb
+        run: node scripts/build-installer.mjs --target linux
+
+      # Guard the failure mode hit on Windows: a stale unpacked dir reused after
+      # a failed download shipped an older UI under a new version number. Assert
+      # the version inside app.asar, not just the artifact filename.
+      - name: Verify artifacts
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          DIST=build/installer/dist
+          APPDIR=build/installer/app
+          APPIMAGE="$DIST/BreadESP-$VERSION.AppImage"
+          DEB="$DIST/BreadESP-$VERSION.deb"
+
+          for f in "$APPIMAGE" "$DEB"; do
+            [ -f "$f" ] || { echo "::error::missing $f"; exit 1; }
+            size=$(stat -c %s "$f")
+            [ "$size" -gt 50000000 ] || { echo "::error::$f is only $size bytes"; exit 1; }
+            echo "$f  $((size / 1024 / 1024)) MB"
+          done
+
+          file "$APPIMAGE" | grep -q 'ELF 64-bit LSB' || {
+            echo "::error::AppImage is not an x86-64 ELF"; file "$APPIMAGE"; exit 1; }
+          [ "$(dpkg-deb -f "$DEB" Version)" = "$VERSION" ] || {
+            echo "::error::deb Version mismatch"; dpkg-deb -f "$DEB" Version; exit 1; }
+
+          # app.asar header: [uint32 4][uint32 headerSize][uint32 jsonLen][json...]
+          node - "$APPDIR/resources/app.asar" "$VERSION" <<'EOF'
+          const fs = require('node:fs');
+          const [file, version] = process.argv.slice(2);
+          const buf = fs.readFileSync(file);
+          const headerSize = buf.readUInt32LE(4);
+          const jsonLen = buf.readUInt32LE(12);
+          const header = JSON.parse(buf.subarray(16, 16 + jsonLen).toString('utf8'));
+          const base = 8 + headerSize;
+          const entry = header.files?.['package.json'];
+          if (!entry) throw new Error('app.asar has no package.json');
+          const at = base + Number(entry.offset);
+          const pkg = JSON.parse(buf.subarray(at, at + entry.size).toString('utf8'));
+          if (pkg.version !== version) {
+            throw new Error(`app.asar version ${pkg.version} != ${version}`);
+          }
+          if (!header.files?.packages?.files?.ui) throw new Error('app.asar has no renderer');
+          console.log(`app.asar: ${pkg.name} ${pkg.version}, renderer present`);
+          EOF
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: breadesp-linux-${{ github.sha }}
+          path: |
+            build/installer/dist/*.AppImage
+            build/installer/dist/*.deb
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Attach to release
+        if: inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          gh release upload "$TAG" \
+            "build/installer/dist/BreadESP-$VERSION.AppImage" \
+            "build/installer/dist/BreadESP-$VERSION.deb" \
+            --clobber
+          gh release view "$TAG" --json assets --jq '.assets[] | "\(.name) \(.size)"'
