@@ -10,7 +10,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adhering to [Se
 
 ### Notes
 - **Correction to the v0.2.1 release notes.** v0.2.1 stated that the board's near-right corner was cropped at the default window size. That was wrong: it came from a screenshot crop smaller than the canvas, and the board was fully visible at 1280×800 all along. The defect fixed here only appeared when the canvas aspect changed. The v0.2.1 release page has been edited to say so.
-- **This release ships the Windows installer only.** The Linux AppImage/deb were not rebuilt in this pass (the packaging host cannot run the Linux target); the v0.2.0 Linux packages stay available on their release page. No application change is platform-specific, so a Linux package built from this tag behaves identically.
+- **Linux packages rebuilt for this tag.** `BreadESP-0.2.2.AppImage` and `BreadESP-0.2.2.deb` ship alongside the Windows installer, built on `ubuntu-latest` by the dispatch-only `.github/workflows/linux-packages.yml` — the patched `breadesp-dbus` QEMU through `--target linux-docker`, then `scripts/build-installer.mjs --target linux`. The job asserts the ELF header, the deb `Version` and the version read out of the packed `app.asar` before uploading, so a Linux artifact cannot repeat the 0.2.1 mix-up of a stale app under a new version number. Both packages bundle `resources/qemu/` and `resources/examples/`, same as the Windows installer.
 
 ## [0.2.1] - 2026-11-20
 
