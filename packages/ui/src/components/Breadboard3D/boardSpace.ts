@@ -24,12 +24,71 @@ export function boardCenter(): [number, number, number] {
   return [WORLD_W / 2, 0, WORLD_H / 2];
 }
 
-/** Default camera: elevated above the viewer-side edge, looking at the board.
- *  Slightly higher than the first pass (38° → ~46°) so the board reads as a
- *  surface seen from above rather than a wall, and leaves headroom for the
- *  nameplates that sit above each part. */
-export function defaultCameraPosition(): [number, number, number] {
-  return [WORLD_W / 2, 760, WORLD_H + 440];
+/** Vertical field of view of the 3D camera (degrees). Canvas3D passes the same
+ *  value to <Canvas>, so the framing below and the renderer cannot drift apart. */
+export const CAMERA_FOV = 45;
+
+/** Aspect ratio (width / height) assumed before the canvas has been measured —
+ *  r3f reports 0×0 on its first commit. Equals the canvas of the default
+ *  1280×800 window (731×469). */
+export const DEFAULT_CAMERA_ASPECT = 1.56;
+
+/** Fraction of the frustum the board may fill; the rest is the margin that keeps
+ *  the near corners off the viewport edge. 0.87 reproduces the framing the app
+ *  shipped with at the default window, so existing screenshots stay valid. */
+const FRAME_FILL = 0.87;
+
+/** Camera elevation above the board plane (degrees): ~46.5° shows the surface as
+ *  a surface seen from above rather than a wall, with headroom for nameplates. */
+const CAMERA_ELEVATION_DEG = 46.5;
+
+function elevationBasis(): { sin: number; cos: number } {
+  const rad = (CAMERA_ELEVATION_DEG * Math.PI) / 180;
+  return { sin: Math.sin(rad), cos: Math.cos(rad) };
+}
+
+/**
+ * Distance from the board centre at which the whole board fits a canvas of
+ * `aspect` (width / height).
+ *
+ * Perspective magnifies the near edge, so this is solved per corner instead of
+ * from a bounding sphere (a sphere fit would pull back far more than needed).
+ * A corner at offset (x, 0, z) from the board centre projects inside the frustum
+ * when |x| ≤ tanH·(d − along) and |up| ≤ tanV·(d − along), where `along` is its
+ * offset along the view ray and `up` its offset along the camera's up axis.
+ * Solving for d and taking the maximum over the four corners yields the closest
+ * camera that keeps the board whole.
+ *
+ * The old fixed distance was correct for one viewport shape only: narrowing the
+ * window (or collapsing the dock, which makes the canvas taller) lowered the
+ * aspect and pushed the near corners out of frame.
+ */
+export function defaultCameraDistance(aspect: number = DEFAULT_CAMERA_ASPECT): number {
+  const a = Number.isFinite(aspect) && aspect > 0 ? aspect : DEFAULT_CAMERA_ASPECT;
+  const tanV = Math.tan((CAMERA_FOV * Math.PI) / 360) * FRAME_FILL;
+  const tanH = tanV * a;
+  const { sin, cos } = elevationBasis();
+  let distance = MIN_CAMERA_DISTANCE;
+  for (const x of [0, WORLD_W]) {
+    const dx = x - WORLD_W / 2;
+    for (const z of [0, WORLD_H]) {
+      const dz = z - WORLD_H / 2;
+      const along = dz * cos;
+      const up = -dz * sin;
+      distance = Math.max(distance, along + Math.abs(dx) / tanH, along + Math.abs(up) / tanV);
+    }
+  }
+  return Math.min(distance, MAX_CAMERA_DISTANCE);
+}
+
+/** Default camera: elevated above the viewer-side edge, framing the whole board
+ *  for the canvas's current shape. */
+export function defaultCameraPosition(
+  aspect: number = DEFAULT_CAMERA_ASPECT,
+): [number, number, number] {
+  const distance = defaultCameraDistance(aspect);
+  const { sin, cos } = elevationBasis();
+  return [WORLD_W / 2, distance * sin, WORLD_H / 2 + distance * cos];
 }
 
 /** Orbit distance limits (world units) — close enough to inspect a part,
